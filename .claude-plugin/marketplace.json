@@ -1,0 +1,17 @@
+{
+  "name": "cynap-operator-plugin",
+  "description": "Public distribution marketplace for the Cynap operator plugin — connects Claude Code / Codex to a customer org workspace over MCP.",
+  "owner": {
+    "name": "Cynap",
+    "url": "https://cynap.ai"
+  },
+  "plugins": [
+    {
+      "name": "cynap-operator",
+      "source": "./",
+      "description": "Cynap operator plane plugin — per-org working directory + loopback mint-proxy for the Cynap operator MCP endpoint.",
+      "version": "0.12.0"
+    }
+  ],
+  "renames": {}
+}
