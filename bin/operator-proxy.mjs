@@ -290,6 +290,12 @@ export const SESSION_END_PATH = '/session-end';
 /** Liveness/identity probe path (GET). Carries no secret — see the handler. */
 export const HEALTH_PATH = '/health';
 
+/** Managed local shutdown path. The proxy performs its own credential revocation and
+ * returns the outcome before exiting; callers never signal a health-supplied PID. */
+export const DISCONNECT_PATH = '/disconnect';
+export const CONTROL_HEADER = 'x-cynap-operator-control';
+export const CONTROL_FILE = '.operator-control';
+
 /** Reported by /health so a caller can tell a stale proxy build from a current one. */
 export const PROXY_VERSION = '0.9.0';
 
@@ -882,9 +888,9 @@ export const REVOKE_ON_EXIT_TIMEOUT_MS = 5000;
  * Time-bounded so a hung portal can never wedge the exit — on timeout the credential
  * still self-expires within its absolute ≤48h TTL. */
 export async function revokeCliCredential({ mintHost, credential, fetchImpl = fetch }) {
-  if (!credential) return;
+  if (!credential) return true;
   try {
-    await fetchImpl(`${mintHost}/api/auth/operator-cli/logout`, {
+    const response = await fetchImpl(`${mintHost}/api/auth/operator-cli/logout`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -894,8 +900,10 @@ export async function revokeCliCredential({ mintHost, credential, fetchImpl = fe
       body: JSON.stringify({ credential }),
       signal: AbortSignal.timeout(REVOKE_ON_EXIT_TIMEOUT_MS),
     });
+    return response.ok === true;
   } catch {
     // best-effort — a lingering credential still self-expires within its absolute ≤48h TTL
+    return false;
   }
 }
 
@@ -1005,12 +1013,91 @@ export async function uploadSessionTrail({
  * @param {(ms: number) => Promise<void>} [opts.sleep] - injectable delay, for tests
  * @param {() => number} [opts.rng] - injectable rng for jitter, for tests
  */
+/**
+ * Bind the stable local port before browser authorization starts. This single listener
+ * is the cross-process startup lease: concurrent connectors observe `authorizing` and
+ * wait, while SessionStart sees a live control plane and does not launch a twin.
+ * Once ready, non-control requests are delegated to the full proxy server.
+ */
+export function createLifecycleServer({
+  getHealth,
+  onDisconnect,
+  getReadyServer,
+  controlNonce,
+  exitAfterResponse = () => {},
+}) {
+  return createServer(async (req, res) => {
+    if (req.method === 'GET' && req.url === HEALTH_PATH) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(getHealth()));
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === DISCONNECT_PATH) {
+      if (!controlNonce || req.headers[CONTROL_HEADER] !== controlNonce) {
+        res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: 'invalid_local_control_nonce' }));
+        return;
+      }
+      try {
+        const outcome = await onDisconnect();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(outcome), () => exitAfterResponse(outcome));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(
+          JSON.stringify({
+            stopped: false,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        );
+      }
+      return;
+    }
+
+    const readyServer = getReadyServer();
+    if (readyServer) {
+      readyServer.emit('request', req, res);
+      return;
+    }
+
+    res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '1' });
+    res.end(JSON.stringify({ error: 'operator_authorization_pending' }));
+  });
+}
+
+/** Publish the local control nonce only after this process owns the stable port. */
+export async function listenWithControlAuthority({
+  server,
+  port,
+  controlPath,
+  controlNonce,
+  host = '127.0.0.1',
+  writeControl = writeFileSync,
+}) {
+  await new Promise((resolve, reject) => {
+    const onError = (error) => reject(error);
+    server.once('error', onError);
+    server.listen(port, host, () => {
+      server.off('error', onError);
+      try {
+        writeControl(controlPath, `${controlNonce}\n`, { mode: 0o600 });
+        resolve();
+      } catch (error) {
+        server.close();
+        reject(error);
+      }
+    });
+  });
+}
+
 export function createProxyServer({
   mcpHost,
   mcpPath,
   tokenManager,
   orgSlug,
   orgId,
+  authMode,
   mintHost,
   sessionTokenManager,
   getAuthHeaders,
@@ -1081,6 +1168,8 @@ export function createProxyServer({
           orgId: orgId ?? null,
           env: mcpHost && mcpHost.includes('staging') ? 'staging' : 'prod',
           version: PROXY_VERSION,
+          authMode: authMode ?? null,
+          status: 'ready',
           pid: process.pid,
           startedAt: PROCESS_STARTED_AT,
           // CYN-1080: the credential's absolute expiry — a timestamp, never a
@@ -1478,6 +1567,72 @@ async function main() {
   // CLI-scoped credential, `{ Cookie: … }` for the staging e2e-session leg.
   let getAuthHeaders;
   let revokeOnExit = null;
+  let readyProxyServer = null;
+  let lifecycleStatus = 'authorizing';
+  let shutdownPromise = null;
+  const controlNonce = randomBytes(32).toString('base64url');
+  const controlPath = join(process.cwd(), CONTROL_FILE);
+
+  const disconnect = () => {
+    if (!shutdownPromise) {
+      lifecycleStatus = 'disconnecting';
+      shutdownPromise = (async () => {
+        const credentialIssued = typeof revokeOnExit === 'function';
+        const credentialRevoked = credentialIssued ? await revokeOnExit() : true;
+        return { stopped: true, credentialIssued, credentialRevoked };
+      })();
+    }
+    return shutdownPromise;
+  };
+
+  const closeAndExit = (outcome) => {
+    const exitCode = outcome.credentialRevoked ? 0 : 1;
+    try {
+      unlinkSync(controlPath);
+    } catch {
+      // The nonce is not a credential and is overwritten on next launch; cleanup is best-effort.
+    }
+    lifecycleServer.close(() => process.exit(exitCode));
+    setTimeout(() => process.exit(exitCode), 1000).unref();
+  };
+
+  const lifecycleServer = createLifecycleServer({
+    getHealth: () => ({
+      ok: lifecycleStatus === 'ready',
+      status: lifecycleStatus,
+      org: opts.orgSlug ?? null,
+      orgId: lifecycleStatus === 'ready' ? (opts.targetOrgId ?? null) : null,
+      env: opts.env,
+      version: PROXY_VERSION,
+      authMode: opts.authMode,
+      pid: process.pid,
+      startedAt: PROCESS_STARTED_AT,
+      credExpiresAt: credentialExpiresAt,
+      credExpiresInHours: hoursUntil(credentialExpiresAt, Date.now()),
+    }),
+    onDisconnect: disconnect,
+    getReadyServer: () => readyProxyServer,
+    controlNonce,
+    exitAfterResponse: closeAndExit,
+  });
+
+  await listenWithControlAuthority({
+    server: lifecycleServer,
+    port: opts.port,
+    controlPath,
+    controlNonce,
+  });
+  process.stderr.write(
+    `[operator-proxy] control plane listening on http://127.0.0.1:${opts.port} ` +
+      `(status: authorizing, auth: ${opts.authMode}).\n`
+  );
+
+  const shutdownFromSignal = (signal) => {
+    process.stderr.write(`[operator-proxy] ${signal} — disconnecting managed proxy…\n`);
+    disconnect().then(closeAndExit, () => closeAndExit({ credentialRevoked: false }));
+  };
+  process.on('SIGINT', () => shutdownFromSignal('SIGINT'));
+  process.on('SIGTERM', () => shutdownFromSignal('SIGTERM'));
 
   if (opts.authMode === 'e2e') {
     // The staging e2e-session cookie survives ONLY as the headless-e2e path — cynap-e2e +
@@ -1540,20 +1695,6 @@ async function main() {
     setCredentialExpiresAt(result.expiresAt);
   }
 
-  // Revoke-on-exit: a clean shutdown revokes the CLI credential server-side so nothing is
-  // left minting after the session ends (a crash still self-expires within the ≤48h TTL).
-  if (revokeOnExit) {
-    let exiting = false;
-    const shutdown = (sig) => {
-      if (exiting) return;
-      exiting = true;
-      process.stderr.write(`[operator-proxy] ${sig} — revoking credential (revoke-on-exit)…\n`);
-      revokeOnExit().finally(() => process.exit(0));
-    };
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-  }
-
   const tokenManager = createTokenManager({
     mintHost,
     targetOrgId: opts.targetOrgId,
@@ -1564,7 +1705,12 @@ async function main() {
 
   // Prime the cache with one mint so the first MCP call doesn't pay the
   // latency, and so a bad credential/grant fails loudly at startup.
-  await tokenManager.getToken();
+  try {
+    await tokenManager.getToken();
+  } catch (error) {
+    await disconnect();
+    throw error;
+  }
   process.stderr.write('[operator-proxy] initial token minted successfully.\n');
 
   // CYN-801: resolves a Claude Code session id to its transcript file. Sessions
@@ -1586,22 +1732,22 @@ async function main() {
     throw new Error(`transcript not found for session ${sessionId}`);
   };
 
-  const server = createProxyServer({
+  readyProxyServer = createProxyServer({
     mcpHost,
     mcpPath: UPSTREAM_MCP_PATH,
     tokenManager,
     orgSlug: opts.orgSlug,
     orgId: opts.targetOrgId,
+    authMode: opts.authMode,
     mintHost,
     getAuthHeaders,
     readTranscriptFor,
   });
-  server.listen(opts.port, '127.0.0.1', () => {
-    process.stderr.write(
-      `[operator-proxy] listening on http://127.0.0.1:${opts.port}${LOCAL_MCP_PATH} ` +
-        `→ ${mcpHost}${UPSTREAM_MCP_PATH} (session-end: http://127.0.0.1:${opts.port}${SESSION_END_PATH})\n`
-    );
-  });
+  lifecycleStatus = 'ready';
+  process.stderr.write(
+    `[operator-proxy] ready on http://127.0.0.1:${opts.port}${LOCAL_MCP_PATH} ` +
+      `→ ${mcpHost}${UPSTREAM_MCP_PATH} (session-end: http://127.0.0.1:${opts.port}${SESSION_END_PATH})\n`
+  );
 }
 
 // Only run when invoked directly (not when imported for tests). Compare via

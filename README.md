@@ -4,7 +4,7 @@
 
 # Cynap Operator Plugin
 
-Version 0.12.0. A Claude Code / Codex plugin that connects a working
+Version 0.13.0. A Claude Code / Codex plugin that connects a working
 directory to the Cynap operator plane — one organization per directory, over
 MCP.
 
@@ -29,6 +29,17 @@ Claude Code / Codex at that proxy. Reconnecting with a different org slug
 creates another independent directory + proxy port — you can work across
 multiple orgs side by side.
 
+The command uses the dedicated operator browser-PKCE route and returns only
+after the local tenant-bound MCP health check passes. It never asks for a
+generic Cynap app reauthentication, a session cookie, a bearer token, an org
+id, a proxy path, or a hand-written MCP URL.
+
+Disconnect and revoke the local connection with:
+
+```text
+/cynap-disconnect <org-slug>
+```
+
 ## What ships here
 
 - `bin/operator-proxy.mjs` — the loopback mint-proxy. `.mcp.json` never
@@ -36,7 +47,10 @@ multiple orgs side by side.
   server-side as it approaches expiry.
 - `lib/connect.mjs` — the `/cynap-connect` mechanics (org resolution, port
   selection, working-directory + `.mcp.json` materialization).
+- `lib/operator-connect.mjs` and `lib/operator-disconnect.mjs` — the stable
+  managed lifecycle seams used by the slash commands.
 - `commands/cynap-connect.md` — the `/cynap-connect` slash command.
+- `commands/cynap-disconnect.md` — the tenant-checked disconnect command.
 - `hooks/` — a fail-open `SessionEnd` hook that signals the proxy so it can
   record a session trail if this session touched the operator plane.
 - `skills/` — authoring skills that teach an AI operator how to build
@@ -48,9 +62,10 @@ multiple orgs side by side.
 
 ## Access
 
-Connecting to a real organization requires an owner-issued access grant. Ask
-your Cynap contact to grant you access — you'll receive an invite email to
-accept before your first `/cynap-connect`.
+Owners and members can connect their own organization as Internal operators.
+An External operator needs an owner-issued grant; accept its invite before the
+first `/cynap-connect`. The browser consent page identifies which basis and
+bounded capability will be used.
 
 ## Support
 

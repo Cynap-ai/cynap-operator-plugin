@@ -74,11 +74,30 @@ test('probeProxyHealth returns null (never throws) when the port is dead', async
   assert.equal(await probeProxyHealth({ port: 39001, fetchImpl }), null);
 });
 
-test('probeProxyHealth returns null on a non-200 or a non-ok body', async () => {
+test('probeProxyHealth returns null on a non-200 or an unrecognized non-ok body', async () => {
   const notOk = async () => ({ ok: false, json: async () => ({ ok: true }) });
   assert.equal(await probeProxyHealth({ port: 39001, fetchImpl: notOk }), null);
   const bodyNotOk = async () => ({ ok: true, json: async () => ({ ok: false }) });
   assert.equal(await probeProxyHealth({ port: 39001, fetchImpl: bodyNotOk }), null);
+});
+
+test('probeProxyHealth preserves the managed authorizing phase as a startup lease', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => ({
+      ok: false,
+      status: 'authorizing',
+      org: 'cynap',
+      env: 'prod',
+      authMode: 'interactive',
+    }),
+  });
+  const health = await probeProxyHealth({ port: 39001, fetchImpl });
+  assert.equal(health.status, 'authorizing');
+  assert.equal(
+    decideProxyAction({ health, slug: 'cynap', env: 'prod', orgId: null }).action,
+    'wait'
+  );
 });
 
 // ---------------------------------------------------------------------------
