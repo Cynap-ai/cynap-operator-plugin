@@ -9,17 +9,15 @@ You are about to author a new automation, bot, or scheduled job for a
 customer org. **Pick the mode before writing any config or code.** Read
 `platform-invariants` first if you haven't this session.
 
-## ⛔ `mode:agent` and `mode:handler` are RETIRED — they no longer validate
+## Retired modes
 
-[internal reference omitted from public mirror]'s
-`RETIRED_EXECUTION_MODES` map rejects both loudly at the config trust
-boundary (`agent`: CYN-1045 — agent-runner and the Daytona agent dispatch
-arm are deleted; `handler`: CYN-729 — the Daytona handler dispatch arm and
-`HandlerExecutionSchema` are deleted). If you find either mode name in an
-old doc, ticket, or config, it is stale — do not author it, and do not
-"restore" it. Everything both modes used to cover is now `code_execution`
-(single-file handler contract, TypeScript, selective LLM calls, browser/
-filesystem/multi-turn agent sessions) — see `author-a-code-execution`.
+`mode:agent` and `mode:handler` are RETIRED — migrate to `mode:code_execution`.
+The `RETIRED_EXECUTION_MODES` map in
+[internal reference omitted from public mirror] rejects them
+at the config trust boundary (CYN-1045 and CYN-729).
+Do not restore the removed dispatch paths when reading old docs, tickets,
+or configs. Use the single-file TypeScript handler or headless agent
+entrypoint described in `author-a-code-execution`.
 
 ## The 3 live modes, cost-ordered (cheapest last, most expensive first)
 

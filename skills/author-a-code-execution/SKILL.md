@@ -7,8 +7,8 @@ description: Author a mode:code_execution automation — a single-file TypeScrip
 
 You are authoring a **`mode:code_execution` automation** for one customer
 org — the live, single code-bearing mode on this platform ([internal reference omitted from public mirror]
-§Architecture: `mode:handler` and `mode:agent` are both **REMOVED**, they no
-longer validate). It runs in a per-run AWS Lambda MicroVM (Firecracker), not
+§Architecture: `mode:handler` and `mode:agent` are **REMOVED** — migrate to
+`mode:code_execution`). It runs in a per-run AWS Lambda MicroVM (Firecracker), not
 a Daytona sandbox. If you haven't confirmed this is the right mode, go read
 `choose-the-right-mode` first. Read `platform-invariants` before this skill
 if you haven't this session.
@@ -20,15 +20,14 @@ if you haven't this session.
 `customer-config-validator.ts` `validateCodeExecutionExecution`):
 
 - **`worker`** (default) — runs your single-file `handler.ts`, selective
-  `ctx.tools.llm.complete()` calls, no chat loop. This is the deliverable
-  shape RETIRED `mode:handler` used to cover, now folded into
-  `mode:code_execution`. Use for classification/extraction plus
+  `ctx.tools.llm.complete()` calls, no chat loop. `mode:handler` is RETIRED — migrate to
+  `mode:code_execution` for this deliverable shape. Use for classification/extraction plus
   deterministic TypeScript logic and Turso writes.
 - **`opencode`** — a headless agent chat session on the OpenCode microVM
   image. Add `capabilities: ['browser']` to get the glibc OpenCode +
   Chromium image (≥4GB tier, `resolveImageFamily`) for browser automation.
-  This is the workload RETIRED `mode:agent`'s browser/filesystem/multi-turn
-  case used to cover. **Prefer `worker` for classification/extraction** —
+  `mode:agent` is RETIRED — migrate to `mode:code_execution`
+  for browser/filesystem/multi-turn workloads. **Prefer `worker` for classification/extraction** —
   only reach for `opencode` when the task genuinely needs browser,
   filesystem, or a long-running multi-turn agent workflow.
 
@@ -72,8 +71,8 @@ nested bundle.)
 **No top-level `tools: []`.** `mode:code_execution` REJECTS it at parse time
 (`AutomationSchema.superRefine` in `unified-automation-types.ts`): "`tools[]`
 is ignored for mode:code_execution - declare callable ctx.tools in
-execution.allowed_tools instead." This is the one config-shape difference
-from the retired `mode:handler`, which allowed a top-level `tools[]`.
+execution.allowed_tools instead." `mode:handler` is retired — migrate to `mode:code_execution`
+and move the old top-level `tools[]` declarations to `execution.allowed_tools`.
 
 `handler.ts`:
 
@@ -175,7 +174,13 @@ export default async function handler(ctx: CynapContext): Promise<Record<string,
    `max_runtime_ms` realistically instead — it's clamped to `[1s, 2h]`
    (`MAX_RUNTIME_MS_FLOOR`..`MAX_RUNTIME_MS_CEILING`, default 60min), the
    same ceiling `worker.ts`'s `clampMaxRuntime()` enforces regardless of
-   the microVM platform's 8h lifetime max.
+   the microVM platform's 8h lifetime max. **The budget is a hard stop**
+   (ADR-0080): at `max_runtime_ms` the worker starts no new tool call,
+   cancels the handler, and records the run `timed_out` — or `unresolved`
+   (paging an operator) when a reply was owed or the run had attempted a
+   write. Set `execution.rerun_safe: true` only when re-running the
+   automation from the start is safe after a partial run (idempotent,
+   CAS-guarded writes); it lets a stopped run that wrote land `timed_out`.
 
 ## A minimal correct example (real, `cynap-e2e/e2e-lease-probe`)
 

@@ -1,12 +1,12 @@
 {
   "notice": "GENERATED MIRROR — do not edit directly. Produced by tooling/operator-plugin/scripts/publish-public-mirror.mjs.",
-  "sourceSha": "452849607d52ba51f7926affe32c8e851e7b0fc6",
+  "sourceSha": "f1bc3a6686266c58f71cdc3bcef8ae1b8e45cbfd",
   "transformVersion": 1,
   "generatedBy": "publish-public-mirror.mjs",
   "files": {
-    ".claude-plugin/marketplace.json": "018f9884e9b17ddba72f907f187cc64864a6eb3b8e6a19c31c527302045c96d2",
-    ".claude-plugin/plugin.json": "ff375e2f2d0049c724c0d46c2a248803002b1ccfd36ee29cc9d0cb8c6d3c08a2",
-    "README.md": "47c3911af6ff9d48daffcc7db07d7cf54d47cb4237f77f8ac75bf1ab2e646023",
+    ".claude-plugin/marketplace.json": "591f399f01c2e38a28806761ddfc91e8a19fa268c6c500766d976a9affcfa338",
+    ".claude-plugin/plugin.json": "9663ef8b17ae34295c1bd247167cd863e8867ca0241c6712cf60eda2d8542822",
+    "README.md": "050f15a8d512093d380baa4a49d05017ea2d0361e2c685dae3856ab5e19e6d55",
     "__tests__/connect-any-org.test.mjs": "2dbf3345348b73b44b6980e0e9ca4f9bddb6eca07a705ebd175450c1094c9c58",
     "__tests__/connect-supervision.test.mjs": "c1ef11113406ee497b6b7f08d249bc607dd0a0c238a67a0760bc510d37826451",
     "__tests__/connect.test.mjs": "3bd9eb3abf3f90e63142f81f547f99bd9c98760e0681c47ed3597b0a77149cc7",
@@ -18,7 +18,7 @@
     "__tests__/org-pin-refusal.test.mjs": "52c7f55d71eb7aa12af2d80cbf6e900967346db3ee617d753fc114d04606371c",
     "__tests__/session-end-hook.test.mjs": "0c5ea3a60069f8d5297bc56917ebc3c0066e69209a815afe87572540844357a3",
     "__tests__/workdir-base-parity.test.mjs": "da340180e5a51548b02ca85ce6233fb78bae6589820e1844f4ccc4a5cad29377",
-    "bin/cynap-checks-core.mjs": "3c5a6981d67a6700d0374d5b95a37a926b9d6c7ce0d44abdf6a44b0cc70aceef",
+    "bin/cynap-checks-core.mjs": "41a3219f951a5d511cde8c14ce86360f9412eb2172985441430fca5e49bad5f7",
     "bin/cynap-checks-runner.mjs": "ae80a80f3f1380944595f23fa05eb868c5fc6cec70d9862f4a4908101cad87a0",
     "bin/cynap-connect.mjs": "4d5d60ae71e0245f239e9483030d36d4dfdf213a52f2107f402ffcb4f656370b",
     "bin/cynap-disconnect.mjs": "b8239246f60833e7230a966411e362d3064f40961343599214ac94b3017af9ad",
@@ -37,7 +37,7 @@
     "lib/operator-disconnect.mjs": "273120645e201f1979922aa3a4c6b38e509e6d510eabca19e69ab65c2cc74535",
     "scripts/version-probe.mjs": "45203a20fb3354f66432f2210368ddb62f0224886e34122e40a6ae0897293078",
     "skills/author-a-code-execution/LEARNINGS.md": "fb3da50b0a0ca97693382c5bf3f24783b9b7e5e5b582eee710f3618dbc071271",
-    "skills/author-a-code-execution/SKILL.md": "26102924900b113b583fbda6b4b8f99329a6b79fd83135263d23bd1b2262e57d",
+    "skills/author-a-code-execution/SKILL.md": "bafd67928b1f54238d48741aecac3a97cf3f6f86db984fefd5e4c4dff3269b17",
     "skills/author-a-deterministic-automation/LEARNINGS.md": "361478f32d7bc5401fc1bdb0b5abe3d247c132f4420eb5ae6dac91271022a328",
     "skills/author-a-deterministic-automation/SKILL.md": "a813453db3378c2084226fa56b1aee614b30d0bd5bd3665e10700edb85a1f5c4",
     "skills/author-a-flow/LEARNINGS.md": "8c1ae4e9fce97ec703e588b2b4a3561cc1993f5c5bd63d38aa22e102f76ec2fc",
@@ -45,10 +45,10 @@
     "skills/author-a-schema-change/LEARNINGS.md": "94240e43ebd5fcbe3e9ca5c0560b537826af18f1e6d107184180e49d324818f5",
     "skills/author-a-schema-change/SKILL.md": "6bc876c8504bcb99381aa21c4de85346a40ede480065424b89b7d274066153a8",
     "skills/choose-the-right-mode/LEARNINGS.md": "e33e2538ef90b9a412bff42002babaae95127bada772222f189f0524b36c6e3a",
-    "skills/choose-the-right-mode/SKILL.md": "918ae8061861ba3ac0629ca28ca06f24b0703c45cf186caa72b97519b8207662",
+    "skills/choose-the-right-mode/SKILL.md": "cba78a6bd81fb6f46843a51e255fb663d8cfdfc0a63ff0e22c6a11eeff574bff",
     "skills/platform-invariants/LEARNINGS.md": "cab38142099a34676f6984b4a415c2f927e6ebd9f00f55f928ec395df1acf43a",
     "skills/platform-invariants/SKILL.md": "4cacb81c75b76a3ccf787483b8d4cb58f4de910393184b13e97cb195038e6c6a",
     "skills/summarize-your-change/LEARNINGS.md": "62b62554917124d652fc71e06ff9a0623c96a1e7a8a007ccb5da904db1257dc1",
-    "skills/summarize-your-change/SKILL.md": "49a5f2b810a5be7622536d58af7ae96a5cab29f96e981875dfe6002ca979eed9"
+    "skills/summarize-your-change/SKILL.md": "ef11684cea7d680d94a573cc756e8fdd679e5ffa51e8ba0d6ecc27a8f8cbc973"
   }
 }

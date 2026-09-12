@@ -10,7 +10,7 @@
       "name": "cynap-operator",
       "source": "./",
       "description": "Cynap operator plane plugin — per-org working directory + loopback mint-proxy for the Cynap operator MCP endpoint.",
-      "version": "0.13.0"
+      "version": "0.13.1"
     }
   ],
   "renames": {}

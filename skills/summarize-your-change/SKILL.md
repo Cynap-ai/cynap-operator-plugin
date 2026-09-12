@@ -60,7 +60,8 @@ object and pass it as an additional argument alongside `changes` / `message`
   this change falls under: one of `code_execution`, `flow`, `deterministic`,
   `schema`, or `mixed` (if the change spans more than one). Use
   `choose-the-right-mode`'s vocabulary — don't invent a new label, and
-  never author the retired `agent` or `handler` values.
+  use its live migration target: `agent` and `handler` are retired —
+  migrate to `code_execution`.
 
 ## The hard rule: NO PHI, NO row values, NO entity instances
 
