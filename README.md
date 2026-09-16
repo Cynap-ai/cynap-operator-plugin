@@ -4,16 +4,22 @@
 
 # Cynap Operator Plugin
 
-Version 0.13.1. A Claude Code / Codex plugin that connects a working
+Version 0.13.2. A Claude Code / Codex plugin that connects a working
 directory to the Cynap operator plane — one organization per directory, over
 MCP.
 
 ## Install
 
 ```
-/plugin marketplace add Cynap-ai/cynap-operator-plugin
-/plugin install cynap-operator
+/plugin marketplace add https://github.com/Cynap-ai/cynap-operator-plugin.git
+/plugin install cynap-operator@cynap-operator-plugin
 ```
+
+Always use the qualified `<plugin>@<marketplace>` install form shown above —
+an unqualified install reads a cached marketplace catalog without refreshing
+it, so a machine that cached an old release keeps installing that release and
+never notices an update exists. After installing, enable auto-update for the
+`cynap-operator-plugin` marketplace so this stays current automatically.
 
 ## Usage
 

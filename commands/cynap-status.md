@@ -31,7 +31,7 @@ This command reads liveness from the proxy itself rather than from a file.
    `lib/connect.mjs`. The probe is the source of truth; a `.mcp.json` on disk
    proves only that a connect once ran, never that anything is listening now.
 3. Report per org:
-   - **UP** — `{ok:true}`, with `org`, `env`, `port`, proxy `version`, `pid`,
+   - **UP** — `{ok:true}`, with `org`, `env`, `port`, `pluginVersion`, `pid`,
      and uptime derived from `startedAt`. Mark the row whose working directory
      matches `$PWD` with a trailing **`◀ attached in THIS session`** — that is
      the one org whose MCP tools are actually reachable from the session
@@ -40,7 +40,7 @@ This command reads liveness from the proxy itself rather than from a file.
    - **DOWN** — nothing healthy on the pinned port. Say what to do: open a
      session in that directory (the SessionStart hook relaunches the proxy from
      `proxy-launch.json` automatically), or re-run `/cynap-connect <org>`.
-   - **STALE BUILD** — up, but `version` is older than the installed plugin
+   - **STALE BUILD** — up, but `pluginVersion` is older than the installed plugin
      (`.claude-plugin/plugin.json`). A long-lived proxy keeps running the build
      it started with, so a plugin update does NOT reach it until it restarts.
      This is exactly how an operator ends up debugging a bug that is already

@@ -33,6 +33,7 @@ test('/cynap-connect cynap launches the operator PKCE connector and returns a he
   const result = await runOperatorConnect({
     slug: 'cynap',
     proxyPath: '/plugin/bin/operator-proxy.mjs',
+    pluginVersion: '0.9.0',
     plan: async (input) => {
       events.push(['plan', input]);
       return {
@@ -65,7 +66,7 @@ test('/cynap-connect cynap launches the operator PKCE connector and returns a he
         org: 'cynap',
         orgId: 'org-cynap',
         env: 'prod',
-        version: '0.9.0',
+        pluginVersion: '0.9.0',
         authMode: 'interactive',
         status: 'ready',
         pid: 4242,
@@ -106,7 +107,7 @@ test('/cynap-connect cynap launches the operator PKCE connector and returns a he
       org: 'cynap',
       orgId: 'org-cynap',
       env: 'prod',
-      version: '0.9.0',
+      pluginVersion: '0.9.0',
       authMode: 'interactive',
       status: 'ready',
       pid: 4242,
@@ -122,6 +123,7 @@ test('the managed connector refuses every non-PKCE production plan', async () =>
         runOperatorConnect({
           slug: 'cynap',
           proxyPath: '/plugin/bin/operator-proxy.mjs',
+          pluginVersion: '0.9.0',
           plan: async () => ({
             slug: 'cynap',
             env: 'prod',
@@ -150,11 +152,12 @@ test('a healthy PKCE proxy at the supported version is reused without launching 
     orgId: 'org-cynap',
     env: 'prod',
     authMode: 'interactive',
-    version: '0.9.0',
+    pluginVersion: '0.9.0',
   };
   const result = await runOperatorConnect({
     slug: 'cynap',
     proxyPath: '/plugin/bin/operator-proxy.mjs',
+    pluginVersion: '0.9.0',
     plan: async () => ({
       slug: 'cynap',
       env: 'prod',
@@ -184,12 +187,13 @@ test('an authorizing PKCE proxy is awaited instead of launching a second credent
     org: 'cynap',
     env: 'prod',
     authMode: 'interactive',
-    version: '0.9.0',
+    pluginVersion: '0.9.0',
     pid: 4242,
   };
   const result = await runOperatorConnect({
     slug: 'cynap',
     proxyPath: '/plugin/bin/operator-proxy.mjs',
+    pluginVersion: '0.9.0',
     plan: async () => ({
       slug: 'cynap',
       env: 'prod',
@@ -213,13 +217,13 @@ test('an authorizing PKCE proxy is awaited instead of launching a second credent
 
 test('reuse refuses missing or non-PKCE provenance instead of claiming operator PKCE', async () => {
   for (const health of [
-    { ok: true, status: 'ready', org: 'cynap', env: 'prod', version: '0.9.0' },
+    { ok: true, status: 'ready', org: 'cynap', env: 'prod', pluginVersion: '0.9.0' },
     {
       ok: true,
       status: 'ready',
       org: 'cynap',
       env: 'prod',
-      version: '0.9.0',
+      pluginVersion: '0.9.0',
       authMode: 'device',
     },
     {
@@ -227,7 +231,7 @@ test('reuse refuses missing or non-PKCE provenance instead of claiming operator 
       status: 'ready',
       org: 'cynap',
       env: 'prod',
-      version: '0.8.0',
+      pluginVersion: '0.8.0',
       authMode: 'interactive',
     },
   ]) {
@@ -236,6 +240,7 @@ test('reuse refuses missing or non-PKCE provenance instead of claiming operator 
         runOperatorConnect({
           slug: 'cynap',
           proxyPath: '/plugin/bin/operator-proxy.mjs',
+          pluginVersion: '0.9.0',
           plan: async () => ({
             slug: 'cynap',
             env: 'prod',
@@ -246,7 +251,7 @@ test('reuse refuses missing or non-PKCE provenance instead of claiming operator 
             health,
           }),
         }),
-      /PKCE proxy|supported proxy version/
+      /PKCE proxy|plugin version/
     );
   }
 });
@@ -257,6 +262,7 @@ test('a conflicting local proxy is refused instead of crossing org identity', as
       runOperatorConnect({
         slug: 'cynap',
         proxyPath: '/plugin/bin/operator-proxy.mjs',
+        pluginVersion: '0.9.0',
         plan: async () => ({
           slug: 'cynap',
           env: 'prod',

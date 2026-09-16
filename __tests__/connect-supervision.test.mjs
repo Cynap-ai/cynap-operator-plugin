@@ -198,3 +198,21 @@ test('planConnect DOES write the launch record when it is actually launching', a
   assert.equal(plan.action, 'launch');
   assert.equal(wrote, true, 'a real launch must record how to revive itself');
 });
+
+// CYN-1959 (Ship 3): /cynap-connect now passes operator-proxy-launcher.mjs as
+// proxyPath (never operator-proxy.mjs directly), so the launcher can reread
+// plugin.json's version fresh on every start/self-heal relaunch. connect.mjs
+// itself must stay entirely proxyPath-value-agnostic for this to be a
+// zero-change swap — this pins that a launcher path round-trips into the
+// recorded proxyArgv exactly like the direct proxy path always has.
+test('planConnect threads a LAUNCHER proxyPath into proxyArgv unchanged (the CYN-1959 swap needs no connect.mjs change)', async () => {
+  const { planConnect } = await import('../lib/connect.mjs');
+  const plan = await planConnect({
+    slug: 'cynap-e2e',
+    proxyPath: '/plugin/bin/operator-proxy-launcher.mjs',
+    materialize: ({ mcpJson }) => ({ dir: '/tmp/x', mcpJsonPath: '/tmp/x/.mcp.json', mcpJson }),
+    writeLaunch: () => ({ launchRecordPath: '/tmp/x/proxy-launch.json' }),
+    probeHealth: async () => null,
+  });
+  assert.equal(plan.proxyArgv[0], '/plugin/bin/operator-proxy-launcher.mjs');
+});

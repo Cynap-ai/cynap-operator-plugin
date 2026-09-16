@@ -297,7 +297,19 @@ export const CONTROL_HEADER = 'x-cynap-operator-control';
 export const CONTROL_FILE = '.operator-control';
 
 /** Reported by /health so a caller can tell a stale proxy build from a current one. */
-export const PROXY_VERSION = '0.9.0';
+// CYN-1959 (Ship 3): PROXY_VERSION is deleted — the plugin version comes
+// solely from .claude-plugin/plugin.json, read fresh on every start by
+// bin/operator-proxy-launcher.mjs and threaded through here as `pluginVersion`.
+export const OPERATOR_PLUGIN_VERSION_HEADER = 'x-cynap-plugin-version';
+
+/** Adds the plugin-version header to an outbound headers object when a
+ * version was supplied — never mutates the input. A standalone
+ * `node operator-proxy.mjs` invocation has no plugin manifest to read, so a
+ * missing version is legal here and simply omits the header (main() WARNs
+ * separately); it is never a reason to refuse to start. */
+export function upstreamHeaders(pluginVersion, headers = {}) {
+  return pluginVersion ? { ...headers, [OPERATOR_PLUGIN_VERSION_HEADER]: pluginVersion } : { ...headers };
+}
 
 /** CYN-1080: the MCP protocolVersion the locally-answered `initialize` falls
  * back to when the client's request omits `params.protocolVersion`. Mirrors
@@ -486,6 +498,7 @@ export function createTokenManager({
   getAuthHeaders,
   family = 'workspace',
   requestedScope,
+  pluginVersion,
   fetchImpl = fetch,
   now = () => Math.floor(Date.now() / 1000),
 }) {
@@ -513,11 +526,11 @@ export function createTokenManager({
     }
     const res = await fetchImpl(`${mintHost}/api/auth/operator-token`, {
       method: 'POST',
-      headers: {
+      headers: upstreamHeaders(pluginVersion, {
         'Content-Type': 'application/json',
         ...authHeaders,
         ...stagingProtectionBypassHeaders(),
-      },
+      }),
       body: JSON.stringify(
         requestedScope ? { targetOrgId, family, requestedScope } : { targetOrgId, family }
       ),
@@ -655,11 +668,12 @@ export function hydrateBypassSecretFromKeychain(env = process.env, reader = read
 export async function acquireStagingCookie({
   mintHost,
   orgSlug = DEFAULT_ORG_SLUG,
+  pluginVersion,
   fetchImpl = fetch,
 }) {
   const res = await fetchImpl(`${mintHost}/api/auth/e2e-session`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() },
+    headers: upstreamHeaders(pluginVersion, { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() }),
     body: JSON.stringify({ org_slug: orgSlug }),
   });
   if (!res.ok) {
@@ -775,6 +789,7 @@ export async function pkceLoopbackLogin({
   mintHost,
   orgSlug,
   clientId = OPERATOR_CLI_CLIENT_ID,
+  pluginVersion,
   fetchImpl = fetch,
   open = openBrowser,
   out = process.stderr,
@@ -805,7 +820,7 @@ export async function pkceLoopbackLogin({
 
   const res = await fetchImpl(`${mintHost}/api/auth/operator-cli/token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() },
+    headers: upstreamHeaders(pluginVersion, { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() }),
     body: JSON.stringify({
       grant_type: 'authorization_code',
       code,
@@ -831,6 +846,7 @@ export async function deviceCodeLogin({
   mintHost,
   orgSlug,
   clientId = OPERATOR_CLI_CLIENT_ID,
+  pluginVersion,
   fetchImpl = fetch,
   out = process.stderr,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -838,7 +854,7 @@ export async function deviceCodeLogin({
 }) {
   const startRes = await fetchImpl(`${mintHost}/api/auth/operator-cli/device/code`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() },
+    headers: upstreamHeaders(pluginVersion, { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() }),
     body: JSON.stringify({ client_id: clientId, org: orgSlug }),
   });
   if (!startRes.ok) {
@@ -856,7 +872,7 @@ export async function deviceCodeLogin({
     await sleep(interval);
     const pollRes = await fetchImpl(`${mintHost}/api/auth/operator-cli/device/token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() },
+      headers: upstreamHeaders(pluginVersion, { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() }),
       body: JSON.stringify({
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
         device_code: start.device_code,
@@ -887,16 +903,16 @@ export const REVOKE_ON_EXIT_TIMEOUT_MS = 5000;
 /** Revoke-on-exit: best-effort revoke the CLI credential server-side (proxy shutdown).
  * Time-bounded so a hung portal can never wedge the exit — on timeout the credential
  * still self-expires within its absolute ≤48h TTL. */
-export async function revokeCliCredential({ mintHost, credential, fetchImpl = fetch }) {
+export async function revokeCliCredential({ mintHost, credential, pluginVersion, fetchImpl = fetch }) {
   if (!credential) return true;
   try {
     const response = await fetchImpl(`${mintHost}/api/auth/operator-cli/logout`, {
       method: 'POST',
-      headers: {
+      headers: upstreamHeaders(pluginVersion, {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${credential}`,
         ...stagingProtectionBypassHeaders(),
-      },
+      }),
       body: JSON.stringify({ credential }),
       signal: AbortSignal.timeout(REVOKE_ON_EXIT_TIMEOUT_MS),
     });
@@ -951,6 +967,7 @@ export async function uploadSessionTrail({
   startedAt,
   sessionTokenManager,
   readTranscript,
+  pluginVersion,
   fetchImpl = fetch,
   now = () => new Date().toISOString(),
 }) {
@@ -967,10 +984,10 @@ export async function uploadSessionTrail({
   // portal (mintHost) by the session-family token manager; only this POST moves.
   const res = await fetchImpl(`${mcpHost}${SESSION_TRAIL_UPSTREAM_PATH}`, {
     method: 'POST',
-    headers: {
+    headers: upstreamHeaders(pluginVersion, {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
-    },
+    }),
     body: JSON.stringify({
       session_id: sessionId,
       runtime,
@@ -1103,6 +1120,7 @@ export function createProxyServer({
   getAuthHeaders,
   readTranscriptFor,
   baseDir,
+  pluginVersion,
   fetchImpl = fetch,
   counters = createColdStartCounters(),
   now = () => Math.floor(Date.now() / 1000),
@@ -1129,11 +1147,11 @@ export function createProxyServer({
       const token = await tokenManager.getToken();
       const warmRes = await fetchImpl(`${mcpHost}${mcpPath}`, {
         method: 'POST',
-        headers: {
+        headers: upstreamHeaders(pluginVersion, {
           'Content-Type': 'application/json',
           Accept: 'application/json, text/event-stream',
           Authorization: `Bearer ${token}`,
-        },
+        }),
         body: JSON.stringify({ jsonrpc: '2.0', id: 'cynap-operator-warm', method: 'tools/list', params: {} }),
       });
       try {
@@ -1167,7 +1185,7 @@ export function createProxyServer({
           org: orgSlug ?? null,
           orgId: orgId ?? null,
           env: mcpHost && mcpHost.includes('staging') ? 'staging' : 'prod',
-          version: PROXY_VERSION,
+          pluginVersion: pluginVersion ?? null,
           authMode: authMode ?? null,
           status: 'ready',
           pid: process.pid,
@@ -1196,6 +1214,7 @@ export function createProxyServer({
         getAuthHeaders,
         readTranscriptFor,
         baseDir,
+        pluginVersion,
         fetchImpl,
       });
       return;
@@ -1256,7 +1275,7 @@ export function createProxyServer({
         }
         sendJsonRpcResult(res, id, {
           protocolVersion,
-          serverInfo: { name: 'cynap-operator', version: PROXY_VERSION },
+          serverInfo: { name: 'cynap-operator', version: pluginVersion ?? 'unknown' },
           // CYN-1080 (review): mirror the REAL backend's full capability set
           // ([internal reference omitted from public mirror] registers a prompt via
           // registerPrompts + a resources/list handler, alongside tools). An
@@ -1276,11 +1295,11 @@ export function createProxyServer({
         const token = await tokenManager.getToken();
         return fetchImpl(upstreamUrl, {
           method: req.method,
-          headers: {
+          headers: upstreamHeaders(pluginVersion, {
             'Content-Type': req.headers['content-type'] || 'application/json',
             Accept: req.headers['accept'] || 'application/json, text/event-stream',
             Authorization: `Bearer ${token}`,
-          },
+          }),
           body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
         });
       }
@@ -1406,6 +1425,7 @@ async function handleSessionEnd(req, res, ctx) {
             allowedOrgId: ctx.orgId ?? ctx.orgSlug,
             getAuthHeaders: ctx.getAuthHeaders,
             family: 'session',
+            pluginVersion: ctx.pluginVersion,
             fetchImpl: ctx.fetchImpl,
           })
         : null);
@@ -1422,6 +1442,7 @@ async function handleSessionEnd(req, res, ctx) {
       startedAt: typeof payload.started_at === 'string' ? payload.started_at : marker.updatedAt,
       sessionTokenManager,
       readTranscript: () => ctx.readTranscriptFor(sessionId),
+      pluginVersion: ctx.pluginVersion,
       fetchImpl: ctx.fetchImpl,
     });
 
@@ -1458,6 +1479,12 @@ function parseArgs(argv) {
     authMode: 'interactive',
     // CYN-1411 W3: absent by default (unchanged single-scope execute-preview mint).
     requestedScope: undefined,
+    // CYN-1959: supplied by bin/operator-proxy-launcher.mjs on every plugin-managed
+    // start (rereading .claude-plugin/plugin.json fresh each time — never persisted
+    // into proxy-launch.json). Absent for a documented standalone
+    // `node tooling/operator/operator-proxy.mjs` invocation, which has no plugin
+    // manifest to read; that remains legal and just omits the header (WARN below).
+    pluginVersion: undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -1482,6 +1509,12 @@ function parseArgs(argv) {
       opts.orgPinnedExplicitly = true;
     } else if (arg === '--org-slug') {
       opts.orgSlug = argv[++i];
+    } else if (arg === '--plugin-version') {
+      if (opts.pluginVersion !== undefined) {
+        process.stderr.write('--plugin-version supplied more than once\n');
+        process.exit(1);
+      }
+      opts.pluginVersion = argv[++i];
     } else if (arg === '--profile') {
       // CYN-1411 W3: the only accepted value today is 'operate' (the cross-family
       // minting profile — {workspace:file-activate, workspace:read-ops}, handler_upload
@@ -1532,14 +1565,27 @@ function usage() {
     'run (journal_describe/journal_query/runs_query/journal_count/run_evidence_get) and',
     'ACTIVATE a config-kind commit (workspace_activate_commit), never handler_upload or',
     'the GDPR erase/propose tools. Requires org-owner membership.',
+    '',
+    '--plugin-version <semver> (CYN-1959): sent as x-cynap-plugin-version on every upstream',
+    'call and reported by /health and the local `initialize` handshake. A plugin-managed',
+    'launch always supplies it (bin/operator-proxy-launcher.mjs rereads plugin.json fresh on',
+    'every start); a standalone invocation may omit it and still starts, with a WARN.',
   ].join('\n');
 }
 
-async function main() {
-  const opts = parseArgs(process.argv.slice(2));
+export async function main(argv = process.argv.slice(2)) {
+  const opts = parseArgs(argv);
   if (opts.help) {
     process.stdout.write(`${usage()}\n`);
     process.exit(0);
+  }
+
+  if (!opts.pluginVersion) {
+    process.stderr.write(
+      '[operator-proxy] WARNING: no --plugin-version supplied — running without a plugin version. ' +
+        'A plugin-managed launch always supplies one (bin/operator-proxy-launcher.mjs); this is only ' +
+        'expected for a standalone `node tooling/operator/operator-proxy.mjs` invocation.\n'
+    );
   }
 
   const { mintHost, mcpHost } = HOSTS[opts.env];
@@ -1603,7 +1649,7 @@ async function main() {
       org: opts.orgSlug ?? null,
       orgId: lifecycleStatus === 'ready' ? (opts.targetOrgId ?? null) : null,
       env: opts.env,
-      version: PROXY_VERSION,
+      pluginVersion: opts.pluginVersion ?? null,
       authMode: opts.authMode,
       pid: process.pid,
       startedAt: PROCESS_STARTED_AT,
@@ -1645,14 +1691,14 @@ async function main() {
       );
       process.exit(1);
     }
-    const cookie = await acquireStagingCookie({ mintHost, orgSlug: opts.orgSlug });
+    const cookie = await acquireStagingCookie({ mintHost, orgSlug: opts.orgSlug, pluginVersion: opts.pluginVersion });
     getAuthHeaders = () => ({ Cookie: cookie });
     process.stderr.write('[operator-proxy] staging e2e-session cookie acquired.\n');
   } else {
     const login = opts.authMode === 'device' ? deviceCodeLogin : pkceLoopbackLogin;
     let result;
     try {
-      result = await login({ mintHost, orgSlug: opts.orgSlug });
+      result = await login({ mintHost, orgSlug: opts.orgSlug, pluginVersion: opts.pluginVersion });
     } catch (err) {
       process.stderr.write(
         `[operator-proxy] operator login failed: ${err instanceof Error ? err.message : String(err)}\n`
@@ -1661,7 +1707,7 @@ async function main() {
     }
     const credential = result.credential;
     getAuthHeaders = () => ({ Authorization: `Bearer ${credential}` });
-    revokeOnExit = () => revokeCliCredential({ mintHost, credential });
+    revokeOnExit = () => revokeCliCredential({ mintHost, credential, pluginVersion: opts.pluginVersion });
     // The credential is frozen to a server-resolved org — pin the proxy to it (the mint
     // route enforces this too), superseding the --org-slug default as source of truth.
     if (result.orgId) {
@@ -1683,7 +1729,7 @@ async function main() {
       // after we refused to start — a fail-closed guard that leaks the very
       // credential it declined to use. Best-effort: a revoke failure must not
       // mask the refusal itself.
-      await revokeCliCredential({ mintHost, credential }).catch(() => {});
+      await revokeCliCredential({ mintHost, credential, pluginVersion: opts.pluginVersion }).catch(() => {});
       process.exit(1);
     }
     process.stderr.write(
@@ -1701,6 +1747,7 @@ async function main() {
     allowedOrgId: opts.allowedOrgId,
     getAuthHeaders,
     requestedScope: opts.requestedScope,
+    pluginVersion: opts.pluginVersion,
   });
 
   // Prime the cache with one mint so the first MCP call doesn't pay the
@@ -1742,6 +1789,7 @@ async function main() {
     mintHost,
     getAuthHeaders,
     readTranscriptFor,
+    pluginVersion: opts.pluginVersion,
   });
   lifecycleStatus = 'ready';
   process.stderr.write(

@@ -80,6 +80,41 @@ overview means the owner sees "not yet available" instead of your summary.
 Write clean the first time rather than relying on the scrub as a safety
 net.
 
+## When to send `request_id`
+
+`request_id` is a **separate, optional** argument on the same
+`workspace_commit` call. Send it **only** while you are implementing a Request
+you have **already claimed** — it binds this commit to that Request, so the
+owner's audit trail records which Request, claim, credential and grant
+authorized the change.
+
+- **Omit it** for an ordinary commit that is not against a claimed Request.
+- It is **not an idempotency key.** It never dedupes, never replays, and never
+  makes a repeat commit a no-op. Do not generate one, and do not reuse one
+  from an earlier commit to "retry" this one.
+- Your live grant must carry **both** `workspace:commit` and
+  `workspace:request-claim`, and must hold that Request's claim. If it does
+  not, the commit is refused with `REQUEST_AUTHORITY_UNAVAILABLE`.
+
+A Request-bound commit with an overview looks like this:
+
+```json
+{
+  "changes": { "...": "..." },
+  "message": "fix: refresh the invoice-sync stale-token check",
+  "intent": "repair",
+  "expected_head_sha": "<sha>",
+  "request_id": "<the-request-you-claimed>",
+  "change_overview": {
+    "what_changed": "Updated the invoice-sync handler's WriteUpp token check.",
+    "why": "The prior check accepted an expired token and failed silently.",
+    "fix_summary": "Added a re-auth call before the token is used.",
+    "touched_automations": ["invoice-sync"],
+    "mode": "code_execution"
+  }
+}
+```
+
 ## What happens if you omit `change_overview`
 
 Nothing breaks. `change_overview` is **optional** — the commit succeeds
