@@ -311,6 +311,255 @@ export function upstreamHeaders(pluginVersion, headers = {}) {
   return pluginVersion ? { ...headers, [OPERATOR_PLUGIN_VERSION_HEADER]: pluginVersion } : { ...headers };
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// CYN-1959 (Ship 4, 2026-09-16 founder ruling) — SELF-UPDATE ON `plugin_outdated`
+//
+// The backend's floor is the LATEST published plugin version, so a
+// `plugin_outdated` answer always means exactly one thing: this proxy is running
+// an old build and the fix is to install the latest one. Before this, nothing
+// reacted — the update depended on the operator having enabled marketplace
+// auto-update, and even then a running proxy kept the old code until it
+// restarted. So the answer was correct and inert.
+//
+// Now the proxy performs the fix itself. It is deliberately the SAME install
+// surface an operator would use by hand (`claude plugin marketplace update`,
+// then `claude plugin update <plugin>@<marketplace> --yes`) rather than a second,
+// proxy-private installer: one install path, one thing to trust, and it works on
+// a clean machine with zero cynap-monorepo context because the plugin is an
+// external client that only ever had the public mirror.
+//
+// `--yes` is REQUIRED here, not convenience: the CLI refuses the confirmation
+// prompt when stdout is not a TTY, which a detached proxy's stdout never is.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** The public mirror marketplace this plugin installs from. */
+export const PLUGIN_MARKETPLACE_NAME = 'cynap-operator-plugin';
+/** The QUALIFIED plugin id — never the bare name, which resolves against a
+ * cached catalog and would happily "update" to the release already on disk. */
+export const PLUGIN_QUALIFIED_ID = `cynap-operator@${PLUGIN_MARKETPLACE_NAME}`;
+
+/** The two argv vectors, in order. Data, not a shell string: no quoting, no
+ * interpolation, nothing an answer body could influence. */
+export const PLUGIN_SELF_UPDATE_ARGV = [
+  ['plugin', 'marketplace', 'update', PLUGIN_MARKETPLACE_NAME],
+  ['plugin', 'update', PLUGIN_QUALIFIED_ID, '--yes'],
+];
+
+export const PLUGIN_OUTDATED_CODE = 'plugin_outdated';
+
+/** How much of a forwarded response body is scanned for the refusal. The answer
+ * is a small object at the head of a tool result; a bound keeps an SSE stream
+ * from accumulating without limit in a long-lived process. */
+export const PLUGIN_OUTDATED_SCAN_LIMIT_BYTES = 64 * 1024;
+
+// The answer travels JSON-encoded INSIDE a JSON string (an MCP tool result's
+// `content[].text`), so every quote may arrive backslash-escaped. Both forms are
+// matched; nothing is parsed, because the enclosing envelope is sometimes an SSE
+// frame rather than a JSON document.
+const PLUGIN_OUTDATED_MARKER_RE = /\\?"code\\?"\s*:\s*\\?"plugin_outdated\\?"/;
+const PLUGIN_OUTDATED_MINIMUM_RE = /\\?"minimum\\?"\s*:\s*\\?"([0-9]+\.[0-9]+\.[0-9]+)\\?"/;
+
+/**
+ * Returns `{ minimum }` when a forwarded response carries a `plugin_outdated`
+ * answer, else `null`. Pure and total — a body that is not JSON, is truncated
+ * mid-object, or carries the marker without a parseable `minimum` all return
+ * `null` rather than triggering an update against a version we cannot name.
+ */
+export function detectPluginOutdated(responseText) {
+  const text = String(responseText ?? '');
+  if (!PLUGIN_OUTDATED_MARKER_RE.test(text)) return null;
+  const match = PLUGIN_OUTDATED_MINIMUM_RE.exec(text);
+  return match ? { minimum: match[1] } : null;
+}
+
+/**
+ * Runs the update. Returns `{ ok, reason }` — never throws, because the caller
+ * runs it off the back of a response that has already been delivered.
+ *
+ * A missing `claude` binary (ENOENT) is a distinct, expected outcome, not an
+ * error: the plugin also runs under Codex, where there is no Claude Code CLI to
+ * drive. That case reports `cli_absent` and leaves the operator with the
+ * self-describing answer they already received.
+ */
+export function runPluginSelfUpdate({ execFileImpl = execFileSync, out = process.stderr } = {}) {
+  for (const argv of PLUGIN_SELF_UPDATE_ARGV) {
+    try {
+      execFileImpl('claude', argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+      out.write(`[operator-proxy] self-update: claude ${argv.join(' ')} OK\n`);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') {
+        out.write(
+          '[operator-proxy] self-update SKIPPED: the `claude` CLI is not on PATH, so this proxy cannot install ' +
+            'its own update. The plugin_outdated answer carries the manual steps.\n'
+        );
+        return { ok: false, reason: 'cli_absent' };
+      }
+      out.write(
+        `[operator-proxy] self-update FAILED at \`claude ${argv.join(' ')}\`: ` +
+          `${err instanceof Error ? err.message : String(err)}\n`
+      );
+      return { ok: false, reason: 'update_failed' };
+    }
+  }
+  return { ok: true, reason: 'updated' };
+}
+
+/**
+ * Reads the version the plugin is at on disk RIGHT NOW, from the same launch
+ * record's plugin root the launcher reads. `null` when it cannot be read.
+ *
+ * This is what makes the guard honest rather than optimistic: an update command
+ * can exit 0 having installed nothing (already-current cache, a marketplace that
+ * did not actually move), and restarting into the same version would produce the
+ * identical refusal on the next call — a loop. The restart only happens when the
+ * on-disk version actually changed.
+ */
+export function readInstalledPluginVersion({ launchRecord, readFileImpl = readFileSync } = {}) {
+  const proxyPath = launchRecord?.proxyArgv?.[0];
+  if (typeof proxyPath !== 'string' || proxyPath.length === 0) return null;
+  // proxyArgv[0] is <pluginRoot>/bin/operator-proxy-launcher.mjs.
+  const manifestPath = join(proxyPath, '..', '..', '.claude-plugin', 'plugin.json');
+  try {
+    const version = JSON.parse(readFileImpl(manifestPath, 'utf8')).version;
+    return typeof version === 'string' && version.length > 0 ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The per-PROCESS loop guard: at most one self-update attempt per target
+ * version. A second `plugin_outdated` naming the same minimum — which is exactly
+ * what a failed update or a still-outdated install produces — is a no-op, so the
+ * operator gets the answer and its instructions instead of an update storm.
+ */
+export function createPluginSelfUpdateGuard() {
+  const attempted = new Set();
+  let inFlight = false;
+  return {
+    /** True exactly once per target version, and never while one is running. */
+    claim(minimum) {
+      if (inFlight || attempted.has(minimum)) return false;
+      attempted.add(minimum);
+      inFlight = true;
+      return true;
+    },
+    release() {
+      inFlight = false;
+    },
+    attempted: () => new Set(attempted),
+  };
+}
+
+/**
+ * Replays the RECORDED relaunch command for this working directory — the exact
+ * mechanism `hooks/session-start.sh` already uses to revive a dead proxy. Reusing
+ * it means there is one restart path, and the successor is launched the way
+ * `/cynap-connect` launched this process: detached, logging to proxy.log, with
+ * proxy.pid rewritten.
+ *
+ * Returns `{ ok, reason }`; never throws.
+ */
+export function relaunchFromLaunchRecord({
+  launchRecord,
+  cwd = process.cwd(),
+  spawnImpl = spawn,
+  out = process.stderr,
+}) {
+  const command = launchRecord?.launchCommand;
+  if (typeof command !== 'string' || command.length === 0) {
+    out.write(
+      '[operator-proxy] restart SKIPPED: proxy-launch.json carries no launchCommand. Refusing to guess an ' +
+        'org, port or auth mode — a wrong guess here mints against the wrong tenant.\n'
+    );
+    return { ok: false, reason: 'no_launch_record' };
+  }
+  try {
+    const child = spawnImpl('/bin/sh', ['-c', command], { cwd, detached: true, stdio: 'ignore' });
+    child.unref();
+    return { ok: true, reason: 'relaunched' };
+  } catch (err) {
+    out.write(
+      `[operator-proxy] restart FAILED: ${err instanceof Error ? err.message : String(err)}\n`
+    );
+    return { ok: false, reason: 'spawn_failed' };
+  }
+}
+
+/** Reads `<cwd>/proxy-launch.json`, or `null` when absent/unparseable. */
+export function readLaunchRecord({ cwd = process.cwd(), readFileImpl = readFileSync } = {}) {
+  try {
+    return JSON.parse(readFileImpl(join(cwd, 'proxy-launch.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decides what to do about a `plugin_outdated` answer: update, then verify the
+ * on-disk version actually moved. Every step is a guard, and every refusal leaves
+ * the operator exactly where they already were — holding the self-describing
+ * answer with its manual steps.
+ *
+ * Returns an outcome string. `'ready_to_restart'` is the ONLY one that means
+ * "restart now"; the caller owns the restart because the port must be released
+ * before the successor can bind it, and only the caller holds the listener.
+ */
+export function handlePluginOutdated({
+  minimum,
+  pluginVersion,
+  guard,
+  launchRecord,
+  runUpdate = runPluginSelfUpdate,
+  readInstalled = readInstalledPluginVersion,
+  out = process.stderr,
+}) {
+  if (!guard.claim(minimum)) return 'already_attempted';
+  try {
+    out.write(
+      `[operator-proxy] the operator plane refused this call: plugin ${pluginVersion ?? '<none>'} is below the ` +
+        `required ${minimum}. Installing the latest build from the public mirror…\n`
+    );
+
+    const updated = runUpdate({ out });
+    if (!updated.ok) return updated.reason;
+
+    const installed = readInstalled({ launchRecord });
+    if (installed === null) {
+      out.write(
+        '[operator-proxy] self-update: could not read the installed plugin version after updating — not ' +
+          'restarting, because a restart into an unknown version can loop.\n'
+      );
+      return 'version_unreadable';
+    }
+    if (installed === pluginVersion) {
+      out.write(
+        `[operator-proxy] self-update: the installed version is still ${installed} after the update — not ` +
+          'restarting. A restart would produce this same refusal on the next call. Follow the update steps in ' +
+          'the answer body by hand.\n'
+      );
+      return 'still_outdated';
+    }
+
+    if (typeof launchRecord?.launchCommand !== 'string' || launchRecord.launchCommand.length === 0) {
+      out.write(
+        '[operator-proxy] self-update: the plugin is updated on disk, but proxy-launch.json carries no ' +
+          'launchCommand, so this proxy cannot restart itself into it. Refusing to guess an org, port or auth ' +
+          'mode — a wrong guess mints against the wrong tenant. Restart it from its working directory.\n'
+      );
+      return 'no_launch_record';
+    }
+
+    out.write(
+      `[operator-proxy] self-update: plugin ${pluginVersion ?? '<none>'} -> ${installed}. Restarting this proxy ` +
+        'so the new build is what serves the next call; it will re-authenticate on start.\n'
+    );
+    return 'ready_to_restart';
+  } finally {
+    guard.release();
+  }
+}
+
 /** CYN-1080: the MCP protocolVersion the locally-answered `initialize` falls
  * back to when the client's request omits `params.protocolVersion`. Mirrors
  * the backend's own pinned version (MCP_PROTOCOL_VERSION,
@@ -1121,6 +1370,12 @@ export function createProxyServer({
   readTranscriptFor,
   baseDir,
   pluginVersion,
+  // CYN-1959 (Ship 4): called with `{ minimum }` after a forwarded response
+  // carrying a `plugin_outdated` answer has been fully delivered. Optional — a
+  // standalone `node operator-proxy.mjs` run passes nothing and simply forwards
+  // the answer, which is the correct behaviour for a proxy that is not a
+  // plugin-managed install and therefore has nothing to update.
+  onPluginOutdated,
   fetchImpl = fetch,
   counters = createColdStartCounters(),
   now = () => Math.floor(Date.now() / 1000),
@@ -1355,7 +1610,28 @@ export function createProxyServer({
       if (!outHeaders['content-type']) outHeaders['content-type'] = 'application/json';
       res.writeHead(upstreamRes.status, outHeaders);
       if (upstreamRes.body) {
-        Readable.fromWeb(upstreamRes.body).pipe(res);
+        const downstream = Readable.fromWeb(upstreamRes.body);
+        // CYN-1959 (Ship 4): pipe FIRST, then tee. The client's bytes are never
+        // buffered, reordered or delayed — the scan is a bounded side channel
+        // over the same chunks, attached in the SAME tick so it cannot miss one.
+        // Deliberately after delivery: the operator keeps the self-describing
+        // answer regardless of whether the update below works.
+        downstream.pipe(res);
+        if (onPluginOutdated && pluginVersion) {
+          let scanned = '';
+          downstream.on('data', (chunk) => {
+            if (scanned.length < PLUGIN_OUTDATED_SCAN_LIMIT_BYTES) scanned += chunk.toString('utf8');
+          });
+          downstream.on('end', () => {
+            const outdated = detectPluginOutdated(scanned);
+            // A `minimum` equal to what we already declare is not an upgrade —
+            // it would mean the backend refused a version it also names as the
+            // floor, which is a backend bug, not a stale plugin.
+            if (outdated && outdated.minimum !== pluginVersion) {
+              onPluginOutdated(outdated);
+            }
+          });
+        }
       } else {
         res.end();
       }
@@ -1779,6 +2055,43 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`transcript not found for session ${sessionId}`);
   };
 
+  // CYN-1959 (Ship 4): react to a `plugin_outdated` answer by installing the
+  // latest mirror build and restarting into it. Wired here rather than inside
+  // createProxyServer because the RESTART needs the listening server — the
+  // lifecycle server owns the port, and the successor cannot bind it until this
+  // process lets go.
+  const selfUpdateGuard = createPluginSelfUpdateGuard();
+  const onPluginOutdated = ({ minimum }) => {
+    const launchRecord = readLaunchRecord();
+    const outcome = handlePluginOutdated({
+      minimum,
+      pluginVersion: opts.pluginVersion,
+      guard: selfUpdateGuard,
+      launchRecord,
+    });
+    if (outcome !== 'ready_to_restart') return;
+    // Order matters: the successor binds the SAME port, so this process must
+    // release it first. Close the listener, then relaunch, then leave.
+    //
+    // Deliberately WITHOUT disconnect(): revoking here would burn a credential
+    // that is simply being handed on in time, and the successor mints its own on
+    // start anyway. The successor DOES re-authenticate — the operator credential
+    // is process-scoped and never persisted, which is the cost of restarting and
+    // is stated in the log line above.
+    lifecycleStatus = 'disconnecting';
+    // Single-shot: close() and the fallback timer can both fire, and spawning
+    // two successors on one port would leave one of them dead on arrival.
+    let left = false;
+    const leave = () => {
+      if (left) return;
+      left = true;
+      relaunchFromLaunchRecord({ launchRecord });
+      process.exit(0);
+    };
+    lifecycleServer.close(leave);
+    setTimeout(leave, 1000).unref();
+  };
+
   readyProxyServer = createProxyServer({
     mcpHost,
     mcpPath: UPSTREAM_MCP_PATH,
@@ -1790,6 +2103,7 @@ export async function main(argv = process.argv.slice(2)) {
     getAuthHeaders,
     readTranscriptFor,
     pluginVersion: opts.pluginVersion,
+    onPluginOutdated,
   });
   lifecycleStatus = 'ready';
   process.stderr.write(

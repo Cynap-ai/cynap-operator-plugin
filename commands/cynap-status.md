@@ -44,7 +44,12 @@ This command reads liveness from the proxy itself rather than from a file.
      (`.claude-plugin/plugin.json`). A long-lived proxy keeps running the build
      it started with, so a plugin update does NOT reach it until it restarts.
      This is exactly how an operator ends up debugging a bug that is already
-     fixed on disk — call it out explicitly.
+     fixed on disk — call it out explicitly. Since CYN-1959 Ship 4 the proxy
+     closes this itself the moment the operator plane answers `plugin_outdated`
+     (it installs the latest mirror build and restarts into it), so a STALE BUILD
+     row that persists means either the proxy never made a refused call, or the
+     self-update declined — `proxy.log` names which, on the `[operator-proxy]
+     self-update` lines.
    - **Credential expiry** — every UP row also carries `credExpiresAt` /
      `credExpiresInHours` from the same `/health` probe (CYN-1080; `null` for
      an `--e2e` cookie-leg connection, which has no absolute credential TTL).
