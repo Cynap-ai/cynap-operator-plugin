@@ -14,16 +14,16 @@ Read `platform-invariants` before this skill if you haven't this session.
 ## Deliverable shape
 
 ```
-[internal reference omitted from public mirror]{org}/communication/flows/{flow-id}/flow.json
-[internal reference omitted from public mirror]{org}/communication/flows/{flow-id}/bots.json   (optional — channel binding)
+communication/flows/{flow-id}/flow.json
+communication/flows/{flow-id}/bots.json   (optional — channel binding)
 ```
 
-The runner is [internal reference omitted from public mirror]. You are
+The runner is the platform validator. You are
 authoring the config only — never touch backend runner code.
 
 ## The schema (quote verbatim, do not paraphrase)
 
-`flowConfigSchema`, [internal reference omitted from public mirror]:
+`flowConfigSchema`, the platform validator:
 
 ```typescript
 export const flowConfigSchema = z.object({
@@ -103,7 +103,7 @@ schema-parse rejection, not a silently-ignored key.
 
 ## A minimal correct example (real, from `cynap-e2e`)
 
-[internal reference omitted from public mirror]:
+`communication/flows/async-bake/flow.json`:
 
 ```json
 {
@@ -135,7 +135,7 @@ Note how gotchas 1 and 2 are both satisfied together: `tools` includes
 `async` → `async_ack_text` is set.
 
 A simpler sync, no-automation-tool example is
-[internal reference omitted from public mirror] — no
+`communication/flows/default/flow.json` — no
 `allowed_automations` needed because `tools` contains no automation-invoking
 tool, and `dispatch` defaults to `sync` so `async_ack_text` is unnecessary.
 
@@ -160,4 +160,4 @@ tool, and `dispatch` defaults to `sync` so `async_ack_text` is unnecessary.
 
 ---
 
-**Spec references:** CYN-768 P2 §2.5 · [internal reference omitted from public mirror] (schema) · [internal reference omitted from public mirror] (resolve-time gates) · [internal reference omitted from public mirror] §Architecture "Flow" mode · [internal reference omitted from public mirror] §I-12.
+**Spec references:** CYN-768 P2 §2.5 · the platform validator (schema) · the platform validator,65-108,148-167` (resolve-time gates) · the workspace instructions.

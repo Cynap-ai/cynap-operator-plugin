@@ -21,16 +21,16 @@ import {
   CYNAP_E2E_SLUG,
   CYNAP_E2E_ORG_ID,
 } from '../lib/connect.mjs';
-import { DEFAULT_TARGET_ORG_ID } from '../bin/operator-proxy.mjs';
+import { CYNAP_E2E_ORG_ID as PROXY_CYNAP_E2E_ORG_ID } from '../bin/operator-proxy.mjs';
 
 test('CYNAP_E2E_ORG_ID is imported from the proxy, not an independent literal (FIX 4)', () => {
-  // A change to the proxy's DEFAULT_TARGET_ORG_ID must be reflected here
+  // A change to the proxy's CYNAP_E2E_ORG_ID must be reflected here
   // automatically — asserting equality alone would still pass if both were
   // independent copies; asserting identity via reference-equal string value
   // sourced from the SAME import is the actual regression guard (see the
-  // `import { DEFAULT_TARGET_ORG_ID } from '../bin/operator-proxy.mjs'` in
+  // `import { CYNAP_E2E_ORG_ID } from '../bin/operator-proxy.mjs'` in
   // lib/connect.mjs — no second literal exists to drift).
-  assert.equal(CYNAP_E2E_ORG_ID, DEFAULT_TARGET_ORG_ID);
+  assert.equal(CYNAP_E2E_ORG_ID, PROXY_CYNAP_E2E_ORG_ID);
 });
 
 test('resolveOrgId maps cynap-e2e to its known org id', () => {

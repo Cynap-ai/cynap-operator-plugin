@@ -89,25 +89,50 @@ test('the proxy updates through the SAME qualified plugin id the install command
   assert.ok(PLUGIN_QUALIFIED_ID.endsWith(`@${PLUGIN_MARKETPLACE_NAME}`));
 });
 
-test('the update refreshes the marketplace BEFORE updating the plugin, and is non-interactive', () => {
-  assert.deepEqual(PLUGIN_SELF_UPDATE_ARGV[0], ['plugin', 'marketplace', 'update', PLUGIN_MARKETPLACE_NAME]);
-  assert.deepEqual(PLUGIN_SELF_UPDATE_ARGV[1], ['plugin', 'update', PLUGIN_QUALIFIED_ID, '--yes']);
+test('the update executes the full state-aware CLI plan, and is non-interactive', () => {
+  assert.deepEqual(PLUGIN_SELF_UPDATE_ARGV, [
+    ['plugin', 'marketplace', 'list', '--json'],
+    ['plugin', 'marketplace', 'add', 'https://github.com/Cynap-ai/cynap-operator-plugin.git'],
+    ['plugin', 'marketplace', 'update', PLUGIN_MARKETPLACE_NAME],
+    ['plugin', 'list', '--json'],
+    ['plugin', 'install', PLUGIN_QUALIFIED_ID, '--yes'],
+    ['plugin', 'update', PLUGIN_QUALIFIED_ID, '--yes'],
+    ['plugin', 'list', '--json'],
+    ['plugin', 'uninstall', 'cynap-operator@cynap-plugins', '--yes'],
+  ]);
   // `claude plugin update` refuses its confirmation prompt when stdout is not a
   // TTY, which a detached proxy's stdout never is. Without --yes this is dead.
-  assert.ok(PLUGIN_SELF_UPDATE_ARGV[1].includes('--yes'));
+  assert.ok(PLUGIN_SELF_UPDATE_ARGV[5].includes('--yes'));
 });
 
-test('runPluginSelfUpdate runs both commands in order and reports success', () => {
+test('runPluginSelfUpdate runs the full plan and accepts only a listed target version', () => {
   const calls = [];
   const result = runPluginSelfUpdate({
+    minimum: '0.14.0',
     execFileImpl: (bin, argv) => {
       calls.push([bin, ...argv]);
-      return '';
+      return argv.join(' ') === 'plugin list --json'
+        ? JSON.stringify([{ id: PLUGIN_QUALIFIED_ID, version: '0.14.0' }])
+        : '';
     },
     out: sink(),
   });
   assert.deepEqual(result, { ok: true, reason: 'updated' });
   assert.deepEqual(calls, PLUGIN_SELF_UPDATE_ARGV.map((argv) => ['claude', ...argv]));
+});
+
+test('runPluginSelfUpdate fails closed when the final plugin list does not prove the target version', () => {
+  const result = runPluginSelfUpdate({
+    minimum: '0.14.0',
+    execFileImpl: () => JSON.stringify([{ id: PLUGIN_QUALIFIED_ID, version: '0.13.9' }]),
+    out: sink(),
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'verification_failed',
+    step: 'claude plugin list --json',
+  });
 });
 
 test('a missing `claude` CLI is a distinct, non-error outcome (Codex has no Claude Code CLI)', () => {
@@ -124,7 +149,7 @@ test('a missing `claude` CLI is a distinct, non-error outcome (Codex has no Clau
   assert.match(out.text(), /not on PATH/);
 });
 
-test('a failing update stops at the failing command and does not run the next one', () => {
+test('a failing update stops at the failing command and identifies it', () => {
   const calls = [];
   const result = runPluginSelfUpdate({
     execFileImpl: (bin, argv) => {
@@ -133,7 +158,11 @@ test('a failing update stops at the failing command and does not run the next on
     },
     out: sink(),
   });
-  assert.deepEqual(result, { ok: false, reason: 'update_failed' });
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'update_failed',
+    step: 'claude plugin marketplace list --json',
+  });
   assert.equal(calls.length, 1);
 });
 

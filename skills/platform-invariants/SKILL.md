@@ -14,13 +14,13 @@ re-derive these constraints from scratch every session. When in doubt, open
 the canonical file and quote it verbatim; do not paraphrase from memory.
 
 **Canonical sources (read these, don't just trust this digest):**
-- [internal reference omitted from public mirror] §I-1 through §I-17 + §8 (spec-review compliance check)
-- [internal reference omitted from public mirror] §Data Boundaries (Non-Obvious) + §Tool Allowlists
+- the operator safety rules
+- the workspace instructions
 
 ## I-17 — Customer Configuration Trust Boundary (the load-bearing one)
 
-> "Customer-owned files under [internal reference omitted from public mirror] declare business
-> intent. They do not own platform decisions." — [internal reference omitted from public mirror] §I-17
+> "Customer-owned files under `` declare business
+> intent. They do not own platform decisions." — the operator safety rules
 
 This governs every file you author. Concretely:
 
@@ -29,7 +29,7 @@ This governs every file you author. Concretely:
   customer decision** (the customer cannot declare it at all — e.g.
   `execution.max_concurrent`, per-org `code_execution` concurrency).
 - The full field-by-field classification table lives in
-  [internal reference omitted from public mirror] §I-17 — check it before inventing a new
+  the operator safety rules
   config field. If your field isn't in that table and it would affect
   platform resources, tool grants, concurrency, scheduling, provider
   routing, credentials, or isolation, **it needs a table row and a platform
@@ -81,7 +81,7 @@ out of scope entirely.
 - **I-14:** Business logic, classification rules, pricing/commission math,
   template maps, state machines — anything describing how *one specific
   customer's business works* — belongs under
-  [internal reference omitted from public mirror], never in [internal reference omitted from public mirror]. You are already
+  workspace configuration, never platform internals. You are already
   authoring inside the customer org directory, so this mostly just confirms
   you're in the right place; it also means don't propose backend changes as
   part of an authoring task.
@@ -95,11 +95,11 @@ out of scope entirely.
 
 You are not expected to add new MCP-level tools in ordinary org-authoring
 work — that is backend platform work. If a task ever asks you to, per
-[internal reference omitted from public mirror] §Tool Allowlists, a new MCP-level tool must be added to ALL 8
+the workspace instructions
 allowlists (`tool-registry.ts`, `authorization.ts`, `mcp-schemas.ts`,
 `mcp-server.ts`, `semantic-model.ts`, `mcp.ts` FAST_PATH_TOOLS, portal
 `query-schema.ts`, the acme `no-new-exports.test.js` snapshot) plus the
-parity test in [internal reference omitted from public mirror]. A
+parity test in the platform validator. A
 **sub-tool** dispatched through `knowledge_query_data` needs only 2:
 `knowledge-handlers.ts` `QUERY_DATA_ALLOWLIST` + the portal
 `TOOL_ALLOWLIST`. Flag this as backend platform work rather than attempting
@@ -108,7 +108,7 @@ it from the org directory.
 ## I-12 — Access control is resolved by one layer, never re-derived
 
 All access facts (caller-kind × org-capability × scope) are computed by the
-capability-resolution layer ([internal reference omitted from public mirror]). If an
+capability-resolution layer (the platform validator). If an
 authoring task promises "user A can only see rows they own," the only
 structural mechanism is the scope-token primitive (`subject_scope`) —
 **agent-prompt discipline is not platform enforcement** and must never be
@@ -130,4 +130,4 @@ presented as such in your authoring output. See `author-a-flow` for the
 
 ---
 
-**Spec references:** CYN-768 P2 §2.5 · [internal reference omitted from public mirror] §I-1–§I-17, §8 · [internal reference omitted from public mirror] §Data Boundaries (Non-Obvious), §Tool Allowlists.
+**Spec references:** CYN-768 P2 §2.5 · the operator safety rulesthe workspace instructions.

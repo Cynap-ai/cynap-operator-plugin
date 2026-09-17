@@ -32,7 +32,7 @@ start; append at task end. No customer-specific strings.
 
 - The six-step vocabulary is intentionally closed — resist any urge to
   propose a 7th step kind (e.g. "just let me run raw JS") as part of an
-  authoring task. That's an invariant change ([internal reference omitted from public mirror]
+  authoring task. That's an invariant change (`the operator safety rules`
   §9), not something an authoring session can add ad hoc.
 - `sync` and `land` look similar (both land external data into Turso) but
   serve different layers: `sync` does per-record incremental upsert into a

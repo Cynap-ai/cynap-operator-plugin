@@ -1,6 +1,6 @@
 // CYN-1094 / ADR-0059 — drift guard for the operator-local checks core.
 //
-// bin/cynap-checks-core.mjs is a builtins-only MIRROR of [internal reference omitted from public mirror]*. This test
+// bin/cynap-checks-core.mjs is a builtins-only MIRROR of the operator tool contract This test
 // PINS it to golden vectors computed from the SDK (the source of truth). If the plugin core drifts
 // from the SDK's canonical fingerprint rule, this REDs — and since the backend recomputes the SAME
 // fingerprint server-side (W2) and refuses on mismatch, a drift would silently brick every

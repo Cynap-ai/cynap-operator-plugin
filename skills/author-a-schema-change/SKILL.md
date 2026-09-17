@@ -14,11 +14,11 @@ automations may read/write entities whose shape you define here. Read
 ## Deliverable shape
 
 ```
-[internal reference omitted from public mirror]{org}/context/schema.json
+context/schema.json
 ```
 
 The `entities[]` array, each entry an `EntitySchema`
-([internal reference omitted from public mirror]):
+(the platform validator):
 
 ```typescript
 export interface EntitySchema {
@@ -130,7 +130,7 @@ export interface EntitySchemaField {
    const table = route?.dedicatedTable ?? 'entities';
    ```
 
-   ([internal reference omitted from public mirror] §I-10, `schema-registry.ts:145-150`.)
+   (the operator safety rules`schema-registry.ts:145-150`.)
    This applies to every other skill's deliverables too — if you're
    authoring a handler or deterministic sync that targets an entity type
    you just defined here, resolve the table through the registry, not a
@@ -201,4 +201,4 @@ stored.
 
 ---
 
-**Spec references:** CYN-768 P2 §2.5 · [internal reference omitted from public mirror] (BLOCKED_PATTERNS/SANITIZABLE_PATTERNS) · [internal reference omitted from public mirror] (EntitySchema/EntitySchemaField shape) · [internal reference omitted from public mirror] (bootstrapSchemasFromS3 fail-closed pre-check + per-entity skip behavior) · [internal reference omitted from public mirror] (CREATE TABLE IF NOT EXISTS no-op-on-exists) · [internal reference omitted from public mirror] §I-9, §I-10 · [internal reference omitted from public mirror] §Schema Sync Tripwires, §Dedicated Entity Tables.
+**Spec references:** CYN-768 P2 §2.5 · the platform validator (BLOCKED_PATTERNS/SANITIZABLE_PATTERNS) · the platform validator (EntitySchema/EntitySchemaField shape) · the platform validator (bootstrapSchemasFromS3 fail-closed pre-check + per-entity skip behavior) · the platform validator (CREATE TABLE IF NOT EXISTS no-op-on-exists) · the operator safety rulesthe workspace instructions.

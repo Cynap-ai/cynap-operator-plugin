@@ -103,7 +103,7 @@ test('the source package ships no installable marketplace.json (generated only b
   assert.ok(
     !existsSync(join(PLUGIN_ROOT, '.claude-plugin', 'marketplace.json')),
     'the source tree must not carry a marketplace.json — it is generated only by mirror-projection.mjs; ' +
-      'local development uses `claude --plugin-dir tooling/operator-plugin`',
+      'local development uses a direct plugin directory',
   );
   assert.ok(!existsSync(join(PLUGIN_ROOT, 'marketplace.json')));
 });

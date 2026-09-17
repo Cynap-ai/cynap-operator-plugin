@@ -1,13 +1,13 @@
 // CYN-785 (CYN-768 P0) — proves the PACKAGED proxy (bin/operator-proxy.mjs,
-// the build-copy of tooling/operator/operator-proxy.mjs) preserves the
+// the build-copy of the local proxy source/operator-proxy.mjs) preserves the
 // client-side org-pin refusal: createTokenManager throws when targetOrgId
 // !== allowedOrgId. This is defense-in-depth only (the authoritative
-// boundary is server-side in [internal reference omitted from public mirror]
+// boundary is server-side in the platform service
 // resolveOrgAccess), but the packaged copy must not silently drop it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTokenManager, DEFAULT_TARGET_ORG_ID } from '../bin/operator-proxy.mjs';
+import { createTokenManager, CYNAP_E2E_ORG_ID } from '../bin/operator-proxy.mjs';
 
 test('createTokenManager throws when targetOrgId does not match allowedOrgId', () => {
   assert.throws(
@@ -15,7 +15,7 @@ test('createTokenManager throws when targetOrgId does not match allowedOrgId', (
       createTokenManager({
         mintHost: 'https://staging.cynap.ai',
         targetOrgId: 'some-other-org-id',
-        allowedOrgId: DEFAULT_TARGET_ORG_ID,
+        allowedOrgId: CYNAP_E2E_ORG_ID,
         getCookie: () => 'better-auth.session_token=abc',
       }),
     /Refusing targetOrgId/
@@ -33,11 +33,12 @@ test('createTokenManager allows targetOrgId when it matches an explicit --allow-
   );
 });
 
-test('createTokenManager allows the default cynap-e2e org id with no override', () => {
+test('createTokenManager allows the cynap-e2e org id when it is pinned explicitly', () => {
   assert.doesNotThrow(() =>
     createTokenManager({
       mintHost: 'https://staging.cynap.ai',
-      targetOrgId: DEFAULT_TARGET_ORG_ID,
+      targetOrgId: CYNAP_E2E_ORG_ID,
+      allowedOrgId: CYNAP_E2E_ORG_ID,
       getCookie: () => 'better-auth.session_token=abc',
     })
   );

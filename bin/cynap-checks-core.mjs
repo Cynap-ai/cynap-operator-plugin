@@ -1,4 +1,4 @@
-// GENERATED — DO NOT EDIT. Rebuild with: node tooling/operator-plugin/scripts/build-checks-core.mjs
+// GENERATED — DO NOT EDIT. Rebuild with the plugin package build script.
 // An esbuild bundle of the SDK org-checks interpreter + the pinned `yaml` parser, so the
 // operator-local runner evaluates a check byte-identically to the backend activation gate.
 // __tests__/checks-core-parity.test.mjs REDs if these bytes drift from a fresh rebuild.

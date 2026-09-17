@@ -17,9 +17,8 @@ materializes `~/CynapOperator/<org-slug>/`, launches or reuses the managed local
 credential-refresh proxy, opens the Cynap Operator CLI browser-PKCE approval,
 and waits for the org-pinned local MCP health check.
 
-When it reports `Connected`, tell the operator to open the printed workspace in
-a new Claude Code session. The new session reads the project-scoped `.mcp.json`
-that the connector wrote; no credential or hand-written MCP URL is required.
+Relay the connector's printed result verbatim. Do not add session instructions
+of your own.
 
 Production is the default. `--staging` is supported only for Cynap's test flow:
 

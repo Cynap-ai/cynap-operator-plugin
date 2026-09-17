@@ -6,7 +6,7 @@ description: Compose the change_overview argument for workspace_commit — the s
 # summarize-your-change — Compose `change_overview` Before You Commit
 
 You are Claude Code (or Codex) acting as the operator. Per ADR
-[internal reference omitted from public mirror]: **you** are the frontier
+the operator architecture rule: **you** are the frontier
 model in the loop that just authored this change and knows its intent
 first-hand — the backend does **not** re-derive "what changed / why" from
 your diff with a second, cheaper model. Instead, **you** produce the
@@ -139,8 +139,8 @@ call.
 ---
 
 **Spec references:** CYN-768 P4 §2.7/§6-P4 ·
-[internal reference omitted from public mirror] (the in-loop-model
-decision this skill implements) · [internal reference omitted from public mirror]
+the operator architecture rule (the in-loop-model
+decision this skill implements) · the platform validator
 (the backend validation/scrub `change_overview` passes through) ·
-[internal reference omitted from public mirror] (`workspaceCommit.change_overview` —
+the platform validator (`workspaceCommit.change_overview` —
 the wire schema).

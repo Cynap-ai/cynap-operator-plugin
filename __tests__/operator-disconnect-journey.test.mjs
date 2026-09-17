@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runOperatorDisconnect } from '../lib/operator-disconnect.mjs';
+import { requestProxyDisconnect, runOperatorDisconnect } from '../lib/operator-disconnect.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -99,4 +99,11 @@ test('disconnect preserves an unconfirmed revocation outcome', async () => {
     waitUntilDown: async () => true,
   });
   assert.equal(result.credentialRevoked, false);
+});
+
+test('a missing local control nonce names its file and tells the operator how to restore it', async () => {
+  await assert.rejects(
+    () => requestProxyDisconnect({ slug: 'cynap', controlPath: '/tmp/cynap/.operator-control' }),
+    /\/tmp\/cynap\/\.operator-control.*restore the control file/i
+  );
 });

@@ -13,7 +13,7 @@ customer org. **Pick the mode before writing any config or code.** Read
 
 `mode:agent` and `mode:handler` are RETIRED — migrate to `mode:code_execution`.
 The `RETIRED_EXECUTION_MODES` map in
-[internal reference omitted from public mirror] rejects them
+the platform validator rejects them
 at the config trust boundary (CYN-1045 and CYN-729).
 Do not restore the removed dispatch paths when reading old docs, tickets,
 or configs. Use the single-file TypeScript handler or headless agent
@@ -21,8 +21,8 @@ entrypoint described in `author-a-code-execution`.
 
 ## The 3 live modes, cost-ordered (cheapest last, most expensive first)
 
-Per ADR [internal reference omitted from public mirror] and
-[internal reference omitted from public mirror] §Architecture "Automation System — 3 authorable modes":
+Per ADR the operator architecture rule and
+the workspace instructions
 
 | Mode | Runtime | LLM | Runtime→COGS | Deliverable shape |
 |---|---|---|---|---|
@@ -101,4 +101,4 @@ action is `code_execution` (`entrypoint: 'opencode'`) or `flow`. See
 
 ---
 
-**Spec references:** CYN-768 P2 §2.5 · CYN-1457 · [internal reference omitted from public mirror] §Architecture "Automation System — 3 authorable modes" · [internal reference omitted from public mirror] · [internal reference omitted from public mirror] (`RETIRED_EXECUTION_MODES`, `ExecutionSchema`).
+**Spec references:** CYN-768 P2 §2.5 · CYN-1457 · the workspace instructions`RETIRED_EXECUTION_MODES`, `ExecutionSchema`).

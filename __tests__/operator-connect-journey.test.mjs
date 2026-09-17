@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runOperatorConnect } from '../lib/operator-connect.mjs';
-import { parseConnectArgs } from '../bin/cynap-connect.mjs';
+import { formatConnectMessage, parseConnectArgs } from '../bin/cynap-connect.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +18,38 @@ test('/cynap-connect delegates to the executable product seam, not agent-authore
   assert.doesNotMatch(command, /generic Cynap app|app connector|mcp-token/i);
 });
 
+test('a lower-version same-org connector is launched only after its credential revocation is proven', async () => {
+  const events = [];
+  const plan = {
+    slug: 'cynap', env: 'prod', authMode: 'interactive', action: 'reuse', port: 39123,
+    workingDir: '/tmp/CynapOperator/cynap', mcpJsonPath: '/tmp/CynapOperator/cynap/.mcp.json',
+    proxyArgv: ['/plugin/bin/operator-proxy.mjs', '--port', '39123'],
+    health: { ok: true, status: 'ready', org: 'cynap', env: 'prod', authMode: 'interactive', pluginVersion: '0.14.0' },
+  };
+  const result = await runOperatorConnect({
+    slug: 'cynap', proxyPath: '/plugin/bin/operator-proxy.mjs', pluginVersion: '0.15.0',
+    plan: async () => plan,
+    disconnect: async () => { events.push('revoke'); return { status: 'disconnected', credentialIssued: true, credentialRevoked: true }; },
+    launch: async () => { events.push('launch'); return { pid: 4242 }; },
+    waitForHealth: async () => ({ ...plan.health, pluginVersion: '0.15.0', pid: 4242 }),
+  });
+  assert.deepEqual(events, ['revoke', 'launch']);
+  assert.deepEqual(result.replaced, { from: '0.14.0', to: '0.15.0', credentialRevoked: true });
+});
+
+test('a failed revoke never launches a replacement connector', async () => {
+  let launched = false;
+  await assert.rejects(() => runOperatorConnect({
+    slug: 'cynap', proxyPath: '/plugin/bin/operator-proxy.mjs', pluginVersion: '0.15.0',
+    plan: async () => ({ slug: 'cynap', env: 'prod', authMode: 'interactive', action: 'reuse', port: 39123,
+      workingDir: '/tmp/CynapOperator/cynap', mcpJsonPath: '/tmp/CynapOperator/cynap/.mcp.json', proxyArgv: ['/p'],
+      health: { ok: true, status: 'ready', org: 'cynap', env: 'prod', authMode: 'interactive', pluginVersion: '0.14.0' } }),
+    disconnect: async () => ({ status: 'disconnected', credentialIssued: true, credentialRevoked: false, credExpiresAt: 'later' }),
+    launch: async () => { launched = true; },
+  }), /Could not revoke/);
+  assert.equal(launched, false);
+});
+
 test('the executable accepts one server-resolved org slug and production defaults', () => {
   assert.deepEqual(parseConnectArgs(['cynap']), { slug: 'cynap', env: 'prod' });
   assert.deepEqual(parseConnectArgs(['cynap', '--staging']), {
@@ -26,6 +58,16 @@ test('the executable accepts one server-resolved org slug and production default
   });
   assert.throws(() => parseConnectArgs([]), /Usage/);
   assert.throws(() => parseConnectArgs(['cynap', '--device']), /Usage/);
+});
+
+test('connect copy is cwd-realpath aware and never advises a new session', () => {
+  const result = { slug: 'cynap', workingDir: '/real/CynapOperator/cynap', health: {} };
+  const realpath = (path) => path === '/symlink/cynap' ? '/real/CynapOperator/cynap' : path;
+  const inside = formatConnectMessage(result, { cwd: '/symlink/cynap', realpath });
+  const outside = formatConnectMessage(result, { cwd: '/elsewhere', realpath });
+  assert.match(inside, /^Reconnected to cynap\. If operator tools don't respond in this session, run \/mcp\./);
+  assert.match(outside, /^Connected to cynap\. Open ~\/CynapOperator\/cynap\/ in Claude Code/);
+  assert.doesNotMatch(`${inside}\n${outside}`, /new (Claude Code )?session/i);
 });
 
 test('/cynap-connect cynap launches the operator PKCE connector and returns a healthy workspace', async () => {
@@ -225,14 +267,6 @@ test('reuse refuses missing or non-PKCE provenance instead of claiming operator 
       env: 'prod',
       pluginVersion: '0.9.0',
       authMode: 'device',
-    },
-    {
-      ok: true,
-      status: 'ready',
-      org: 'cynap',
-      env: 'prod',
-      pluginVersion: '0.8.0',
-      authMode: 'interactive',
     },
   ]) {
     await assert.rejects(

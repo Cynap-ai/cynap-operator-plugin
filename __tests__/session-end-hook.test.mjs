@@ -1,7 +1,7 @@
 // CYN-801 — hooks/hooks.json shape + hooks/session-end.sh fail-open contract.
 // Zero network for the fail-open cases (no proxy listening); the "fires only
 // for operator-MCP-touched sessions" gate lives in the PROXY's /session-end
-// handler (see tooling/operator/__tests__/session-trail-proxy.test.mjs) — this
+// handler (see the local proxy source/__tests__/session-trail-proxy.test.mjs) — this
 // suite only proves the HOOK itself never blocks/fails termination and only
 // signals when a `.mcp.json` naming `cynap-operator` actually exists in cwd.
 

@@ -16,7 +16,7 @@ session.
 ## Deliverable shape — ONE file
 
 ```
-[internal reference omitted from public mirror]{org}/automations/{automation-id}.json
+automations/{automation-id}.json
 ```
 
 ```json
@@ -37,7 +37,7 @@ session.
 
 ## The step vocabulary — CLOSED, interpreted by trusted platform code
 
-Read [internal reference omitted from public mirror] (step
+Read the platform validator (step
 schemas ~162-339) and `customer-config-validator.ts` (deterministic arm,
 ~262-392). Exactly six step kinds:
 
@@ -162,7 +162,7 @@ expression on a field path, deterministic mode is the wrong tool — that's
 in any org's committed config. For a real **`land`**-step example (note:
 `land`, not `sync` — a different, simpler schema with no
 `external_key`/`field_map`/`watermark`), read
-[internal reference omitted from public mirror]:
+`automations/superchat-contact-ingest.json`:
 its `execution.steps[0]` is `{ "land": { "source": "superchat.contacts",
 "event_id_path": "_webhook_event_id", "event_type_path": "event" } }`.
 
@@ -187,4 +187,4 @@ its `execution.steps[0]` is `{ "land": { "source": "superchat.contacts",
 
 ---
 
-**Spec references:** CYN-768 P2 §2.5 · [internal reference omitted from public mirror] (step vocabulary + sync/land schemas) · [internal reference omitted from public mirror] (deterministic arm: retired-impl rejection, Turso-write guard, tool-reference integrity, nested-sync rejection) · [internal reference omitted from public mirror] §I-17 (`execution.steps` row) · [internal reference omitted from public mirror] §Architecture "Deterministic" mode.
+**Spec references:** CYN-768 P2 §2.5 · the platform validator (step vocabulary + sync/land schemas) · the platform validator (deterministic arm: retired-impl rejection, Turso-write guard, tool-reference integrity, nested-sync rejection) · the operator safety rules`execution.steps` row) · the workspace instructions.

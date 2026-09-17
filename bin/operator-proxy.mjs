@@ -4,8 +4,7 @@
 // A local stdio-adjacent (actually: loopback HTTP) MCP proxy that lets an
 // operator run a long session from a directory ISOLATED from this monorepo
 // against the live operator MCP endpoint, whose token has a hard 900s TTL
-// and NO refresh path (see [internal reference omitted from public mirror]
-// gaps #3 no-refresh + #4 session-cookie mint).
+// and no refresh path.
 //
 // The proxy:
 //   1. Holds ONE better-auth session cookie (minted via the headless
@@ -22,8 +21,7 @@
 //      signals to mint a FRESH operator token (session-capture scope) and upload
 //      the session's transcript to the backend session-trail endpoint.
 //
-// Zero external dependencies — Node built-ins only, per
-// tooling/sandbox/run-params-json.mjs convention. Single file, build-copied
+// Zero external dependencies — Node built-ins only. Single file, build-copied
 // byte-for-byte into the plugin package (scripts/build-copy-proxy.mjs) — so
 // the CYN-801 marker/session-end logic below is INLINED here rather than
 // split into a sibling module the copy mechanism doesn't know about.
@@ -48,17 +46,13 @@ import { createHash, randomBytes } from 'node:crypto';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** The TEXT organization.id for cynap-e2e (NOT the slug). The only compliant
- * default target — see [internal reference omitted from public mirror]
- * §Risks & rules: "Real-org exposure is one wrong ID away." */
-export const DEFAULT_TARGET_ORG_ID = 'cynap-e2e-test-org-00000000';
-export const DEFAULT_ORG_SLUG = 'cynap-e2e';
+/** The TEXT organization.id for the dedicated e2e org (NOT the slug). */
+export const CYNAP_E2E_ORG_ID = 'cynap-e2e-test-org-00000000';
 
-/** expires_in from POST /api/auth/operator-token ([internal reference omitted from public mirror]). */
+/** The token endpoint returns an expiry measured in seconds. */
 export const OPERATOR_TTL_SECONDS = 15 * 60;
 
-/** CYN-901: the fixed PUBLIC operator-CLI client id + the CLI-credential wire prefix.
- * MUST match [internal reference omitted from public mirror] */
+/** CYN-901: the fixed public operator-CLI client id + CLI-credential prefix. */
 export const OPERATOR_CLI_CLIENT_ID = 'cynap-operator-cli';
 export const CLI_CREDENTIAL_PREFIX = 'octk_';
 
@@ -79,11 +73,8 @@ export const REMINT_SKEW_SECONDS = 60;
 // call is NEVER auto-retried — it is translated without retrying.
 // ---------------------------------------------------------------------------
 
-/** The read-only operator tools (docs/operator/operator-plane-contract.md §4)
- * — safe to retry blind on a 504 because they cannot have caused a mutation.
- * Mirrors WORKSPACE_READ_TOOLS ∪ OPS_READ_TOOLS (12 members: 7 + 5) from
- * [internal reference omitted from public mirror] (kept as a literal set here —
- * this tool is intentionally zero-dep and cannot import backend TS).
+/** The read-only operator tools are safe to retry blind on a 504 because they
+ * cannot have caused a mutation. This literal set is intentionally zero-dep.
  * CYN-1411 W3 U-12: `run_evidence_get` was missing — OPS_READ_TOOLS has been 5
  * members (not 4) since CYN-1078, and this list drifted from it. Harmless before W3
  * (no scope ever held both families at once, so the drift only meant one operator
@@ -323,6 +314,8 @@ export function refuseNonLocalCaller(req, res) {
 // solely from .claude-plugin/plugin.json, read fresh on every start by
 // bin/operator-proxy-launcher.mjs and threaded through here as `pluginVersion`.
 export const OPERATOR_PLUGIN_VERSION_HEADER = 'x-cynap-plugin-version';
+export const OPERATOR_PLUGIN_UPDATE_OUTCOME_HEADER = 'x-cynap-plugin-update-outcome';
+let lastPluginUpdateOutcome = null;
 
 /** Adds the plugin-version header to an outbound headers object when a
  * version was supplied — never mutates the input. A standalone
@@ -330,7 +323,11 @@ export const OPERATOR_PLUGIN_VERSION_HEADER = 'x-cynap-plugin-version';
  * missing version is legal here and simply omits the header (main() WARNs
  * separately); it is never a reason to refuse to start. */
 export function upstreamHeaders(pluginVersion, headers = {}) {
-  return pluginVersion ? { ...headers, [OPERATOR_PLUGIN_VERSION_HEADER]: pluginVersion } : { ...headers };
+  return {
+    ...headers,
+    ...(pluginVersion ? { [OPERATOR_PLUGIN_VERSION_HEADER]: pluginVersion } : {}),
+    ...(lastPluginUpdateOutcome ? { [OPERATOR_PLUGIN_UPDATE_OUTCOME_HEADER]: lastPluginUpdateOutcome } : {}),
+  };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -356,16 +353,29 @@ export function upstreamHeaders(pluginVersion, headers = {}) {
 
 /** The public mirror marketplace this plugin installs from. */
 export const PLUGIN_MARKETPLACE_NAME = 'cynap-operator-plugin';
+export const PLUGIN_MARKETPLACE_URL = 'https://github.com/Cynap-ai/cynap-operator-plugin.git';
 /** The QUALIFIED plugin id — never the bare name, which resolves against a
  * cached catalog and would happily "update" to the release already on disk. */
 export const PLUGIN_QUALIFIED_ID = `cynap-operator@${PLUGIN_MARKETPLACE_NAME}`;
+export const PLUGIN_LEGACY_ID = 'cynap-operator@cynap-plugins';
 
-/** The two argv vectors, in order. Data, not a shell string: no quoting, no
- * interpolation, nothing an answer body could influence. */
+/**
+ * The CLI portion of the compiled-in update contract. Data, not a shell
+ * string: no quoting, no interpolation, nothing an answer body could
+ * influence. The terminal slash command is represented separately because
+ * this proxy reloads by restarting itself after a verified update.
+ */
 export const PLUGIN_SELF_UPDATE_ARGV = [
-  ['plugin', 'marketplace', 'update', PLUGIN_MARKETPLACE_NAME],
-  ['plugin', 'update', PLUGIN_QUALIFIED_ID, '--yes'],
+  ['plugin', 'marketplace', 'list', '--json'],
+  ['plugin', 'marketplace', 'add', 'https://github.com/Cynap-ai/cynap-operator-plugin.git'],
+  ['plugin', 'marketplace', 'update', 'cynap-operator-plugin'],
+  ['plugin', 'list', '--json'],
+  ['plugin', 'install', 'cynap-operator@cynap-operator-plugin', '--yes'],
+  ['plugin', 'update', 'cynap-operator@cynap-operator-plugin', '--yes'],
+  ['plugin', 'list', '--json'],
+  ['plugin', 'uninstall', 'cynap-operator@cynap-plugins', '--yes'],
 ];
+export const PLUGIN_SELF_UPDATE_RELOAD_COMMAND = '/reload-plugins';
 
 export const PLUGIN_OUTDATED_CODE = 'plugin_outdated';
 
@@ -403,11 +413,44 @@ export function detectPluginOutdated(responseText) {
  * drive. That case reports `cli_absent` and leaves the operator with the
  * self-describing answer they already received.
  */
-export function runPluginSelfUpdate({ execFileImpl = execFileSync, out = process.stderr } = {}) {
+function versionAtLeast(installed, minimum) {
+  const installedParts = /^(\d+)\.(\d+)\.(\d+)$/.exec(installed);
+  const minimumParts = /^(\d+)\.(\d+)\.(\d+)$/.exec(minimum);
+  if (!installedParts || !minimumParts) return false;
+  for (let index = 1; index <= 3; index += 1) {
+    const difference = Number(installedParts[index]) - Number(minimumParts[index]);
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
+
+function verifiedPluginVersion(pluginListOutput, minimum) {
+  try {
+    const records = JSON.parse(pluginListOutput);
+    if (!Array.isArray(records)) return null;
+    const installed = records.find(
+      (record) => record && record.id === PLUGIN_QUALIFIED_ID && typeof record.version === 'string'
+    );
+    return installed && versionAtLeast(installed.version, minimum) ? installed.version : null;
+  } catch {
+    return null;
+  }
+}
+
+export function runPluginSelfUpdate({ minimum, execFileImpl = execFileSync, out = process.stderr } = {}) {
+  let finalPluginListOutput = null;
   for (const argv of PLUGIN_SELF_UPDATE_ARGV) {
+    const step = `claude ${argv.join(' ')}`;
     try {
-      execFileImpl('claude', argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
-      out.write(`[operator-proxy] self-update: claude ${argv.join(' ')} OK\n`);
+      const output = execFileImpl('claude', argv, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 120_000,
+      });
+      if (argv[0] === 'plugin' && argv[1] === 'list' && argv[2] === '--json') {
+        finalPluginListOutput = output;
+      }
+      out.write(`[operator-proxy] self-update: ${step} OK\n`);
     } catch (err) {
       if (err && err.code === 'ENOENT') {
         out.write(
@@ -417,11 +460,18 @@ export function runPluginSelfUpdate({ execFileImpl = execFileSync, out = process
         return { ok: false, reason: 'cli_absent' };
       }
       out.write(
-        `[operator-proxy] self-update FAILED at \`claude ${argv.join(' ')}\`: ` +
+        `[operator-proxy] self-update FAILED at \`${step}\`: ` +
           `${err instanceof Error ? err.message : String(err)}\n`
       );
-      return { ok: false, reason: 'update_failed' };
+      return { ok: false, reason: 'update_failed', step };
     }
+  }
+  if (typeof minimum !== 'string' || !verifiedPluginVersion(finalPluginListOutput, minimum)) {
+    out.write(
+      `[operator-proxy] self-update FAILED at \`claude plugin list --json\`: ` +
+        `did not prove ${PLUGIN_QUALIFIED_ID} is at or above ${minimum ?? '<unknown>'}.\n`
+    );
+    return { ok: false, reason: 'verification_failed', step: 'claude plugin list --json' };
   }
   return { ok: true, reason: 'updated' };
 }
@@ -543,7 +593,7 @@ export function handlePluginOutdated({
         `required ${minimum}. Installing the latest build from the public mirror…\n`
     );
 
-    const updated = runUpdate({ out });
+    const updated = runUpdate({ minimum, out });
     if (!updated.ok) return updated.reason;
 
     const installed = readInstalled({ launchRecord });
@@ -583,10 +633,7 @@ export function handlePluginOutdated({
 }
 
 /** CYN-1080: the MCP protocolVersion the locally-answered `initialize` falls
- * back to when the client's request omits `params.protocolVersion`. Mirrors
- * the backend's own pinned version (MCP_PROTOCOL_VERSION,
- * [internal reference omitted from public mirror]) so a client that trusts our answer stays
- * aligned with what the real upstream actually speaks. */
+ * back to when the client's request omits `params.protocolVersion`. */
 export const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
 
 // MUST match connect.mjs OPERATOR_WORKDIR_BASE (kept in lockstep; see there).
@@ -765,7 +812,7 @@ export function deleteMarker(slug, sessionId, baseDir) {
 export function createTokenManager({
   mintHost,
   targetOrgId,
-  allowedOrgId = DEFAULT_TARGET_ORG_ID,
+  allowedOrgId = null,
   getAuthHeaders,
   family = 'workspace',
   requestedScope,
@@ -773,6 +820,9 @@ export function createTokenManager({
   fetchImpl = fetch,
   now = () => Math.floor(Date.now() / 1000),
 }) {
+  if (!targetOrgId || !allowedOrgId) {
+    throw new Error('org_unknown: operator login has not resolved an organization');
+  }
   if (targetOrgId !== allowedOrgId) {
     throw new Error(
       `Refusing targetOrgId "${targetOrgId}" — only "${allowedOrgId}" is permitted. ` +
@@ -933,15 +983,15 @@ export function hydrateBypassSecretFromKeychain(env = process.env, reader = read
 /**
  * POSTs { org_slug: 'cynap-e2e' } to /api/auth/e2e-session and returns a raw
  * Cookie header string reconstructed from the Set-Cookie response headers.
- * See [internal reference omitted from public mirror],117-144 — the route
- * is auto-on on preview/staging, HARD-OFF on prod.
+ * The route is enabled only outside production.
  */
 export async function acquireStagingCookie({
   mintHost,
-  orgSlug = DEFAULT_ORG_SLUG,
+  orgSlug,
   pluginVersion,
   fetchImpl = fetch,
 }) {
+  if (!orgSlug) throw new Error('org_unknown: --e2e requires --org-slug');
   const res = await fetchImpl(`${mintHost}/api/auth/e2e-session`, {
     method: 'POST',
     headers: upstreamHeaders(pluginVersion, { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() }),
@@ -1556,9 +1606,7 @@ export function createProxyServer({
         sendJsonRpcResult(res, id, {
           protocolVersion,
           serverInfo: { name: 'cynap-operator', version: pluginVersion ?? 'unknown' },
-          // CYN-1080 (review): mirror the REAL backend's full capability set
-          // ([internal reference omitted from public mirror] registers a prompt via
-          // registerPrompts + a resources/list handler, alongside tools). An
+          // CYN-1080: advertise the upstream's complete capability set. An
           // MCP client caches whatever this handshake advertises and never
           // re-polls it — declaring only `tools` would permanently disable
           // prompts/list + resources/list for the entire session, a silent
@@ -1717,13 +1765,17 @@ async function handleSessionEnd(req, res, ctx) {
       return respond(200, { status: 'skipped', reason: 'proxy_not_configured' });
     }
 
+    if (!ctx.orgId) {
+      return respond(400, { error: 'org_unknown' });
+    }
+
     const sessionTokenManager =
       ctx.sessionTokenManager ??
       (ctx.getAuthHeaders
         ? createTokenManager({
             mintHost: ctx.mintHost,
-            targetOrgId: ctx.orgId ?? ctx.orgSlug,
-            allowedOrgId: ctx.orgId ?? ctx.orgSlug,
+            targetOrgId: ctx.orgId,
+            allowedOrgId: ctx.orgId,
             getAuthHeaders: ctx.getAuthHeaders,
             family: 'session',
             pluginVersion: ctx.pluginVersion,
@@ -1761,19 +1813,14 @@ async function handleSessionEnd(req, res, ctx) {
 // CLI entrypoint
 // ---------------------------------------------------------------------------
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const opts = {
     env: 'prod',
     port: DEFAULT_PORT,
-    targetOrgId: DEFAULT_TARGET_ORG_ID,
-    allowedOrgId: DEFAULT_TARGET_ORG_ID,
-    /** True once --allow-org is supplied. False means targetOrgId is still the
-     * built-in default, which the post-login guard refuses to serve under. */
-    orgPinnedExplicitly: false,
-    // CYN-801: the marker directory key. v1 only ever pins one org per proxy
-    // instance (the DEFAULT_ORG_SLUG default matches the DEFAULT_TARGET_ORG_ID
-    // default) — --org-slug lets --allow-org callers supply the matching slug.
-    orgSlug: DEFAULT_ORG_SLUG,
+    targetOrgId: null,
+    allowedOrgId: null,
+    // The slug is a workspace routing key, not an implicit tenant pin.
+    orgSlug: null,
     // CYN-901: how to acquire the operator credential. Keyed on MODE, not env, so G2
     // bakes identically on staging + prod. interactive → PKCE loopback (default);
     // device → RFC 8628; e2e → the staging e2e-session cookie leg (cynap-e2e only).
@@ -1783,7 +1830,7 @@ function parseArgs(argv) {
     // CYN-1959: supplied by bin/operator-proxy-launcher.mjs on every plugin-managed
     // start (rereading .claude-plugin/plugin.json fresh each time — never persisted
     // into proxy-launch.json). Absent for a documented standalone
-    // `node tooling/operator/operator-proxy.mjs` invocation, which has no plugin
+    // standalone invocation, which has no plugin
     // manifest to read; that remains legal and just omits the header (WARN below).
     pluginVersion: undefined,
   };
@@ -1805,9 +1852,6 @@ function parseArgs(argv) {
       const orgId = argv[++i];
       opts.allowedOrgId = orgId;
       opts.targetOrgId = orgId;
-      // Distinguishes "operator pinned this org" from "still on the built-in
-      // default" — the post-login cross-tenant guard keys off this.
-      opts.orgPinnedExplicitly = true;
     } else if (arg === '--org-slug') {
       opts.orgSlug = argv[++i];
     } else if (arg === '--plugin-version') {
@@ -1885,13 +1929,13 @@ export async function main(argv = process.argv.slice(2)) {
     process.stderr.write(
       '[operator-proxy] WARNING: no --plugin-version supplied — running without a plugin version. ' +
         'A plugin-managed launch always supplies one (bin/operator-proxy-launcher.mjs); this is only ' +
-        'expected for a standalone `node tooling/operator/operator-proxy.mjs` invocation.\n'
+        'expected for a standalone proxy invocation.\n'
     );
   }
 
   const { mintHost, mcpHost } = HOSTS[opts.env];
   process.stderr.write(`[operator-proxy] env=${opts.env} mintHost=${mintHost} mcpHost=${mcpHost}\n`);
-  process.stderr.write(`[operator-proxy] targetOrgId=${opts.targetOrgId}\n`);
+  process.stderr.write(`[operator-proxy] awaiting operator login for org slug ${opts.orgSlug ?? '<unknown>'}\n`);
 
   // Resolve the staging SSO bypass secret: env wins, else the macOS Keychain (so a
   // GUI-launched Claude Desktop that inherits no shell env still finds it).
@@ -2014,15 +2058,9 @@ export async function main(argv = process.argv.slice(2)) {
     if (result.orgId) {
       opts.targetOrgId = result.orgId;
       opts.allowedOrgId = result.orgId;
-    } else if (!opts.orgPinnedExplicitly) {
-      // Fail closed. Without an explicit --allow-org, targetOrgId is still the
-      // built-in DEFAULT_TARGET_ORG_ID (cynap-e2e). Serving under that default
-      // after logging in for some OTHER org would silently point the operator at
-      // the wrong tenant — the exact failure this proxy's org-pin exists to
-      // prevent. A credential that carries no org is not something to paper over.
+    } else {
       process.stderr.write(
-        '[operator-proxy] operator login returned no org for the credential and no --allow-org was given — ' +
-          'refusing to serve under the built-in default org (cross-tenant guard).\n'
+        '[operator-proxy] operator login returned no organization for the credential — refusing to mint.\n'
       );
       // Revoke the credential we just obtained BEFORE bailing. This exit runs
       // long before the revoke-on-exit handler is installed further down, so
@@ -2094,27 +2132,31 @@ export async function main(argv = process.argv.slice(2)) {
       guard: selfUpdateGuard,
       launchRecord,
     });
+    lastPluginUpdateOutcome = outcome === 'ready_to_restart' ? 'updated' : outcome;
+    process.stderr.write(`[operator-proxy] lifecycle outcome=${lastPluginUpdateOutcome} pid=${process.pid} plugin=${opts.pluginVersion ?? 'unknown'}\n`);
     if (outcome !== 'ready_to_restart') return;
-    // Order matters: the successor binds the SAME port, so this process must
-    // release it first. Close the listener, then relaunch, then leave.
-    //
-    // Deliberately WITHOUT disconnect(): revoking here would burn a credential
-    // that is simply being handed on in time, and the successor mints its own on
-    // start anyway. The successor DOES re-authenticate — the operator credential
-    // is process-scoped and never persisted, which is the cost of restarting and
-    // is stated in the log line above.
-    lifecycleStatus = 'disconnecting';
-    // Single-shot: close() and the fallback timer can both fire, and spawning
-    // two successors on one port would leave one of them dead on arrival.
-    let left = false;
-    const leave = () => {
-      if (left) return;
-      left = true;
-      relaunchFromLaunchRecord({ launchRecord });
-      process.exit(0);
-    };
-    lifecycleServer.close(leave);
-    setTimeout(leave, 1000).unref();
+    // A successor may launch only after this process has proven its credential
+    // revoked. Credentials are process-memory state and are never handed over.
+    void (async () => {
+      const retired = await disconnect();
+      if (retired.credentialRevoked !== true) {
+        process.stderr.write('[operator-proxy] self-update: revoke_failed; successor not launched.\n');
+        process.exitCode = 1;
+        return;
+      }
+      let left = false;
+      const leave = () => {
+        if (left) return;
+        left = true;
+        const relaunched = relaunchFromLaunchRecord({ launchRecord });
+        process.exit(relaunched.ok ? 0 : 1);
+      };
+      lifecycleServer.close(leave);
+      setTimeout(leave, 1000).unref();
+    })().catch((error) => {
+      process.stderr.write(`[operator-proxy] self-update: revoke_failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
   };
 
   readyProxyServer = createProxyServer({
@@ -2138,7 +2180,7 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 // Only run when invoked directly (not when imported for tests). Compare via
-// pathToFileURL so a relative argv[1] (e.g. `node tooling/operator/operator-proxy.mjs`)
+// pathToFileURL so a relative argv[1]
 // still matches import.meta.url.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {

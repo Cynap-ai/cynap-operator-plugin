@@ -1,10 +1,10 @@
 <!-- GENERATED MIRROR — do not edit. This file is produced by
-     tooling/operator-plugin/scripts/publish-public-mirror.mjs from the
+     the mirror publisher from the
      private Cynap monorepo. Edits here are overwritten on the next publish. -->
 
 # Cynap Operator Plugin
 
-Version 0.14.1. A Claude Code / Codex plugin that connects a working
+Version 0.15.0. A Claude Code / Codex plugin that connects a working
 directory to the Cynap operator plane — one organization per directory, over
 MCP.
 

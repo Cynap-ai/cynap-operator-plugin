@@ -6,7 +6,7 @@ description: Author a mode:code_execution automation — a single-file TypeScrip
 # author-a-code-execution — Code-Execution-Mode Authoring
 
 You are authoring a **`mode:code_execution` automation** for one customer
-org — the live, single code-bearing mode on this platform ([internal reference omitted from public mirror]
+org — the live, single code-bearing mode on this platform (CLAUDE.md
 §Architecture: `mode:handler` and `mode:agent` are **REMOVED** — migrate to
 `mode:code_execution`). It runs in a per-run AWS Lambda MicroVM (Firecracker), not
 a Daytona sandbox. If you haven't confirmed this is the right mode, go read
@@ -39,8 +39,8 @@ drives an LLM chat turn directly.
 ## Deliverable shape (worker entrypoint) — exactly TWO files
 
 ```
-[internal reference omitted from public mirror]{org}/automations/handlers/{handler-id}/config.json
-[internal reference omitted from public mirror]{org}/automations/handlers/{handler-id}/handler.ts
+automations/handlers/{handler-id}/config.json
+automations/handlers/{handler-id}/handler.ts
 ```
 
 (Nested `handlers/<id>/config.json` layout takes precedence over the flat
@@ -87,12 +87,12 @@ export default async function handler(ctx: CynapContext): Promise<Record<string,
 
 ## Gotchas (verified against `unified-automation-types.ts`, `customer-config-validator.ts`, `handler-executor.ts`, `handler-storage.ts`, `entity-schemas.ts`/`knowledge-handlers.ts`)
 
-1. **NO `ctx.identity`.** [internal reference omitted from public mirror] §I-2: the
+1. **NO `ctx.identity`.** the operator safety rules
    `CynapContext` shape is `{ input, tools, step, meta: {id, name, orgSlug,
    orgId, runId, triggeredBy, triggeredAt}, log }`. There is no `identity`
    field — workers run with an org-scoped service token, never a
    user-scoped one. `tools` (`CynapTools`, the tool-surface source of
-   truth: [internal reference omitted from public mirror]) has **five** members —
+   truth: the operator tool contract) has **five** members —
    `{ http, knowledge, llm, automation, channel }` — not just the three
    most examples touch. `automation` is cross-automation dispatch (trigger
    another automation in this org); `channel` is a communication-channel
@@ -107,7 +107,7 @@ export default async function handler(ctx: CynapContext): Promise<Record<string,
    (`mcp-server.ts`'s `assertValidAutomationTriggerRequest` rejects any
    attempt to supply `channel_sender` in trigger_data and merges the
    server-resolved value last). Real pattern
-   ([internal reference omitted from public mirror]):
+   (`automations/handlers/whatsapp-facilitator/handler.ts:84-92`):
 
    ```typescript
    const senderObj = asObj(input.channel_sender);
@@ -141,7 +141,7 @@ export default async function handler(ctx: CynapContext): Promise<Record<string,
    **no module resolution**. A sibling relative import
    (`import { x } from './logic'`) throws "Cannot find module" at runtime
    or, worse, silently executes an older cached version
-   ([internal reference omitted from public mirror] §I-1). If your logic needs decomposition
+   (the operator safety rules. If your logic needs decomposition
    for testability, keep a sibling `.logic.ts` file as the **unit-tested
    source of truth** but **inline the same logic into `handler.ts`
    verbatim**, and add a test asserting the two stay byte/behavior-matched
@@ -162,7 +162,7 @@ export default async function handler(ctx: CynapContext): Promise<Record<string,
    (`customer-config-validator.ts` `validateCodeExecutionExecution`).
    Declare every `ctx.tools.X.Y` method the handler calls; the runtime
    enforces a strict allowlist via the sealed-tools IPC layer
-   ([internal reference omitted from public mirror] §I-16). A handler calling
+   (the operator safety rules. A handler calling
    `ctx.tools.knowledge.executeSql` without `"knowledge.executeSql"` in
    `allowed_tools` is denied at runtime, not at config-parse time — verify
    your allowlist matches your code by reading every `ctx.tools.` call site
@@ -213,7 +213,7 @@ export default async function handler(
 ```
 
 For a real example WITH `allowed_tools` populated and a knowledge write,
-see [internal reference omitted from public mirror]
+see `automations/handlers/acme-stage-evaluator/config.json`
 (`"allowed_tools": ["knowledge.advancedQuery", "knowledge.store",
 "knowledge.executeSql"]`) and its `handler.ts` for the `executeSql`
 UPDATE-by-id pattern. (That example predates the `mode:code_execution`
@@ -255,4 +255,4 @@ shipping).
 
 ---
 
-**Spec references:** CYN-768 P2 §2.5 · CYN-1457 · [internal reference omitted from public mirror] §I-1 (single-file bundling), §I-2 (no identity field), §I-16 (sealed-tools IPC allowlist) · [internal reference omitted from public mirror] (`CynapTools` — the five-member tool surface: http/knowledge/llm/automation/channel) · [internal reference omitted from public mirror] (`CodeExecutionSchema`, `RETIRED_EXECUTION_MODES`) · [internal reference omitted from public mirror] (`validateCodeExecutionExecution`) · [internal reference omitted from public mirror] (knowledge.store upsert-by-name gotcha) · [internal reference omitted from public mirror] (channel_sender pattern) · [internal reference omitted from public mirror] (batch cap transport selection) · [internal reference omitted from public mirror] (BATCH_TOO_LARGE guard).
+**Spec references:** CYN-768 P2 §2.5 · CYN-1457 · the operator safety rules`CynapTools` — the five-member tool surface: http/knowledge/llm/automation/channel) · the platform validator (`CodeExecutionSchema`, `RETIRED_EXECUTION_MODES`) · the platform validator (`validateCodeExecutionExecution`) · `automations/handlers/acme-stage-evaluator/handler.ts:345` (knowledge.store upsert-by-name gotcha) · `automations/handlers/whatsapp-facilitator/handler.ts:82-92` (channel_sender pattern) · the platform runtime (batch cap transport selection) · the platform validator (BATCH_TOO_LARGE guard).

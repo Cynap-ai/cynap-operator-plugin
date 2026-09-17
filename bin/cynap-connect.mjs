@@ -2,6 +2,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
 
 import { runOperatorConnect } from '../lib/operator-connect.mjs';
 import { readPluginVersion } from './operator-proxy-launcher.mjs';
@@ -14,6 +15,23 @@ export function parseConnectArgs(argv) {
     throw new Error('Usage: cynap-connect.mjs <org-slug> [--staging]');
   }
   return { slug, env: flags.includes('--staging') ? 'staging' : 'prod' };
+}
+
+export function formatConnectMessage(result, {
+  cwd = process.cwd(),
+  realpath = realpathSync.native,
+} = {}) {
+  const workspace = realpath(result.workingDir);
+  const current = realpath(cwd);
+  const inWorkspace = current === workspace || current.startsWith(`${workspace}/`);
+  const firstLine = inWorkspace
+    ? `Reconnected to ${result.slug}. If operator tools don't respond in this session, run /mcp.`
+    : `Connected to ${result.slug}. Open ~/CynapOperator/${result.slug}/ in Claude Code to use the operator tools. ` +
+      'The first time, approve the project MCP server when asked.';
+  const replacement = result.replaced
+    ? `Replaced connector running plugin ${result.replaced.from} with ${result.replaced.to}; previous credential revoked.`
+    : null;
+  return [replacement, firstLine, `Workspace: ${result.workingDir}`].filter(Boolean).join('\n');
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -31,14 +49,7 @@ export async function main(argv = process.argv.slice(2)) {
     pluginVersion,
   });
 
-  process.stdout.write(
-    [
-      `Connected to ${result.slug} as a Cynap operator.`,
-      `Workspace: ${result.workingDir}`,
-      `Credential expires: ${result.health.credExpiresAt ?? 'managed by the local connector'}`,
-      'Open that workspace in a new Claude Code session to use the operator tools.',
-    ].join('\n') + '\n'
-  );
+  process.stdout.write(`${formatConnectMessage(result)}\n`);
   return result;
 }
 

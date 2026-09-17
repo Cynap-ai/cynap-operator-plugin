@@ -4,7 +4,7 @@
 // Shows the correct loading mechanic for connecting an Agent SDK session to
 // this plugin: `plugins: [{ type: 'local', path: <pluginRoot> }]` — NOT the
 // CLI-only `--plugin-dir` flag, which the SDK does not accept (see
-// [internal reference omitted from public mirror] line 39).
+// the published operator contract line 39).
 //
 // This is a SKELETON: if @anthropic-ai/claude-agent-sdk isn't installed
 // anywhere in this monorepo (it is not, as of P0), it prints clear setup
