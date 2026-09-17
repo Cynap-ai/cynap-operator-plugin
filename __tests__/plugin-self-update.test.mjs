@@ -121,6 +121,55 @@ test('runPluginSelfUpdate runs the full plan and accepts only a listed target ve
   assert.deepEqual(calls, PLUGIN_SELF_UPDATE_ARGV.map((argv) => ['claude', ...argv]));
 });
 
+test('runPluginSelfUpdate tolerates the legacy uninstall step when there is nothing to remove', () => {
+  // Real \`claude\` CLI behavior (CYN-1999 fix-forward #2): a machine that never
+  // installed the pre-rename \`cynap-plugins\` marketplace -- the common case for
+  // anyone onboarded after the rename -- makes this cleanup step fail every
+  // time, even though the desired end state (no legacy install) already holds.
+  const calls = [];
+  const result = runPluginSelfUpdate({
+    minimum: '0.14.0',
+    execFileImpl: (bin, argv) => {
+      calls.push([bin, ...argv]);
+      if (argv[1] === 'uninstall') {
+        const err = new Error('Command failed');
+        err.stderr = 'Plugin "cynap-operator@cynap-plugins" not found in installed plugins';
+        throw err;
+      }
+      return argv.join(' ') === 'plugin list --json'
+        ? JSON.stringify([{ id: PLUGIN_QUALIFIED_ID, version: '0.14.0' }])
+        : '';
+    },
+    out: sink(),
+  });
+  assert.deepEqual(result, { ok: true, reason: 'updated' });
+  assert.deepEqual(calls, PLUGIN_SELF_UPDATE_ARGV.map((argv) => ['claude', ...argv]));
+});
+
+test('runPluginSelfUpdate still fails closed on a genuine legacy-uninstall failure', () => {
+  const out = sink();
+  const result = runPluginSelfUpdate({
+    minimum: '0.14.0',
+    execFileImpl: (bin, argv) => {
+      if (argv[1] === 'uninstall') {
+        const err = new Error('Command failed');
+        err.stderr = 'Plugin "cynap-operator@cynap-plugins" is locked by another process';
+        throw err;
+      }
+      return argv.join(' ') === 'plugin list --json'
+        ? JSON.stringify([{ id: PLUGIN_QUALIFIED_ID, version: '0.14.0' }])
+        : '';
+    },
+    out,
+  });
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'update_failed',
+    step: 'claude plugin uninstall cynap-operator@cynap-plugins --yes',
+  });
+  assert.match(out.text(), /locked by another process/);
+});
+
 test('runPluginSelfUpdate fails closed when the final plugin list does not prove the target version', () => {
   const result = runPluginSelfUpdate({
     minimum: '0.14.0',

@@ -459,10 +459,18 @@ export function runPluginSelfUpdate({ minimum, execFileImpl = execFileSync, out 
         );
         return { ok: false, reason: 'cli_absent' };
       }
-      out.write(
-        `[operator-proxy] self-update FAILED at \`${step}\`: ` +
-          `${err instanceof Error ? err.message : String(err)}\n`
-      );
+      const detail = String(err?.stderr ?? (err instanceof Error ? err.message : String(err)));
+      const isLegacyUninstallStep = argv[0] === 'plugin' && argv[1] === 'uninstall' && argv[2] === PLUGIN_LEGACY_ID;
+      // Most machines going forward never installed the pre-rename `cynap-plugins`
+      // marketplace at all, so this cleanup step legitimately has nothing to
+      // remove -- the CLI reports that as a failed uninstall, not a no-op. The
+      // desired end state (no legacy install) already holds; only a DIFFERENT
+      // uninstall failure (permissions, a stuck lock, etc.) should still fail closed.
+      if (isLegacyUninstallStep && /not (?:installed|found)/i.test(detail)) {
+        out.write(`[operator-proxy] self-update: ${step} OK (legacy marketplace was never installed)\n`);
+        continue;
+      }
+      out.write(`[operator-proxy] self-update FAILED at \`${step}\`: ${detail}\n`);
       return { ok: false, reason: 'update_failed', step };
     }
   }

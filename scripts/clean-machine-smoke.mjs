@@ -117,8 +117,14 @@ function expectCommandFailure(run, expected) {
 }
 
 function taggedMirrorUrl(mirrorRepo, tag) {
-  // PROBE OWED: a GitHub runner must confirm that `#vX` pins marketplace add
-  // to this exact immutable Git tag rather than the mirror's default branch.
+  // CONFIRMED on a real GitHub runner (publish run 35241891876, CYN-1999
+  // fix-forward #3): `#vX` pins marketplace add to this exact immutable Git
+  // tag, including for the ANNOTATED tags this repo actually creates
+  // (`.github/workflows/publish-operator-plugin.yml`'s `git tag -a`). The
+  // `claude` CLI logs a benign warning while resolving the tag object to its
+  // commit ("refs/tags/vX … is not a commit") but installs correctly — legs
+  // 1-3 of the post-publish journey passed against it. No code here needs to
+  // handle the peel; the CLI already does.
   return `https://github.com/${mirrorRepo}.git#${tag}`;
 }
 
@@ -296,7 +302,13 @@ async function runRefusalsLeg(ctx) {
     let proxy;
     try {
       proxy = await startAuthorizingProxy({ pluginPath: installed.installPath, port, homeDir, slug: 'different-org', expectedVersion: ctx.currentVersion });
-      expectCommandFailure(() => commandOutput(ctx.execFileSyncImpl, process.execPath, [connectPath, JOURNEY_SLUG], { env }), /identity mismatch/);
+      // A port already serving a DIFFERENT org is connect.mjs's own conflict
+      // refusal (lib/connect.mjs:212-253, spec §5.2) — "identity mismatch" is
+      // a distinct guard inside operator-disconnect.mjs, reached only during
+      // an explicit disconnect's nonce/identity check, never during a fresh
+      // connect against an occupied port (CYN-1999 fix-forward #3, run
+      // 35241891876). Assert the refusal connect.mjs actually emits.
+      expectCommandFailure(() => commandOutput(ctx.execFileSyncImpl, process.execPath, [connectPath, JOURNEY_SLUG], { env }), /port already serving org/);
       await stopOwnedProxy(proxy); proxy = undefined;
 
       // Direct launch supplies a future health version without inventing a future package.
@@ -328,6 +340,27 @@ async function runRefusalsLeg(ctx) {
   });
 }
 
+// CYN-1999 fix-forward #3 (spec 8.1): leg 5 only asserts against a previous
+// tag whose OWN published self-update plan is fixed -- v0.15.0/v0.15.1 ship
+// working `plugin_outdated` detection but their uninstall of the legacy
+// `cynap-plugins` marketplace fails closed when that marketplace was never
+// installed (the common case since the rename), and that is baked into an
+// immutable already-published tag no later fix can repair (PR #3145). This
+// mirrors the spec's existing 0.14->0.15 bootstrap carve-out (§10 point
+// 5): an unrepairable old self-update is NOT RUN, not a failure.
+export const SELF_UPDATE_CAPABLE_SINCE = '0.15.2';
+
+/** Returns the NOT RUN reason for leg 5, or null when it must execute for real. */
+export function autonomousUpdateLegSkipReason(previousTag, previousTagProxySource) {
+  if (!previousTagProxySource.includes('plugin_outdated') || !previousTagProxySource.includes('PLUGIN_SELF_UPDATE_ARGV')) {
+    return 'previous tag predates the §5.3 self-update';
+  }
+  if (compareVersions(previousTag.slice(1), SELF_UPDATE_CAPABLE_SINCE) < 0) {
+    return `previous tag ${previousTag} predates self-update fix ${SELF_UPDATE_CAPABLE_SINCE}`;
+  }
+  return null;
+}
+
 function clonePreviousTag(ctx, tag) {
   const dir = mkdtempSync(join(tmpdir(), 'cynap-operator-old-tag-'));
   try {
@@ -343,9 +376,8 @@ async function runAutonomousUpdateLeg(ctx, previousTag) {
   const previousDir = clonePreviousTag(ctx, previousTag);
   try {
     const source = readFileSync(join(previousDir, 'bin', 'operator-proxy.mjs'), 'utf8');
-    if (!source.includes('plugin_outdated') || !source.includes('PLUGIN_SELF_UPDATE_ARGV')) {
-      throw new NotRun('previous tag predates the §5.3 self-update');
-    }
+    const skipReason = autonomousUpdateLegSkipReason(previousTag, source);
+    if (skipReason) throw new NotRun(skipReason);
     await withFreshHome(async (homeDir) => {
       const env = withHome(homeDir, ctx.baseEnv);
       const oldVersion = previousTag.slice(1);
