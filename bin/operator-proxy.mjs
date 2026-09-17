@@ -296,6 +296,28 @@ export const DISCONNECT_PATH = '/disconnect';
 export const CONTROL_HEADER = 'x-cynap-operator-control';
 export const CONTROL_FILE = '.operator-control';
 
+/** Hostnames a native local client may name in `Host`. Anything else is a DNS-rebound
+ * browser page: it reached 127.0.0.1 under an attacker's name. */
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+/**
+ * Local-caller guard. Every request this listener accepts is forwarded with the
+ * operator's credential, so it must come from a native client on this machine —
+ * never from a browser page. MCP Streamable HTTP transport security requires
+ * Origin validation; native MCP clients send no Origin, so ANY Origin (including
+ * `null` and loopback origins of other local web apps) is refused. Host is checked
+ * separately because a DNS-rebound page makes same-origin requests with no Origin.
+ * Returns true when the request was refused and answered.
+ */
+export function refuseNonLocalCaller(req, res) {
+  const host = typeof req.headers.host === 'string' ? req.headers.host.toLowerCase() : '';
+  const hostname = host.replace(/:\d+$/, '');
+  if (LOOPBACK_HOSTNAMES.has(hostname) && req.headers.origin === undefined) return false;
+  res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify({ error: 'non_local_caller' }));
+  return true;
+}
+
 /** Reported by /health so a caller can tell a stale proxy build from a current one. */
 // CYN-1959 (Ship 3): PROXY_VERSION is deleted — the plugin version comes
 // solely from .claude-plugin/plugin.json, read fresh on every start by
@@ -1293,6 +1315,7 @@ export function createLifecycleServer({
   exitAfterResponse = () => {},
 }) {
   return createServer(async (req, res) => {
+    if (refuseNonLocalCaller(req, res)) return;
     if (req.method === 'GET' && req.url === HEALTH_PATH) {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(getHealth()));
@@ -1426,12 +1449,14 @@ export function createProxyServer({
   }
 
   return createServer(async (req, res) => {
+    if (refuseNonLocalCaller(req, res)) return;
+
     // Liveness/identity probe. `/cynap-connect` uses it to decide reuse-vs-launch
     // (so re-connecting an already-running org is idempotent instead of spawning
     // a second proxy), the SessionStart self-heal hook uses it to decide whether
     // to relaunch, and `/cynap-status` renders it. Deliberately carries NO token,
     // NO cookie and NO secret — only the pinned identity + liveness facts, so it
-    // is safe for any local caller that can already reach the loopback port.
+    // is safe for any native local caller the guard above admits.
     if (req.method === 'GET' && req.url === HEALTH_PATH) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
