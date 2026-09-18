@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CYN-1959 (Ship 3, Q20/ADR-0084 Decision 2) — thin launcher that rereads
+// Thin launcher that rereads
 // .claude-plugin/plugin.json's version FRESH on every start and threads it
 // into operator-proxy.mjs as --plugin-version.
 //

@@ -1,4 +1,4 @@
-// CYN-785 (CYN-768 P0) — lib/connect.mjs unit tests: slug->id resolution,
+// lib/connect.mjs unit tests: slug->id resolution,
 // port selection distinctness, generated .mcp.json shape (loopback + no
 // secret), per-org working-dir materialization, and org-pinned proxy argv
 // construction.
@@ -48,7 +48,7 @@ test('resolveOrgId returns null for empty/non-string input', () => {
   assert.equal(resolveOrgId(null), null);
 });
 
-test('CYN-901: resolveAuthMode is e2e only for cynap-e2e on staging, else interactive PKCE', () => {
+test('resolveAuthMode is e2e only for cynap-e2e on staging, else interactive PKCE', () => {
   assert.equal(resolveAuthMode(CYNAP_E2E_SLUG, 'staging'), 'e2e');
   // The default env is now PROD (production is the normal case; staging is the
   // exception and must be asked for), so omitting env yields the consent path
@@ -109,7 +109,7 @@ test('buildProjectMcpJson rejects an invalid port', () => {
   assert.throws(() => buildProjectMcpJson({ port: NaN }));
 });
 
-test('CYN-801: buildProjectMcpJson carries the X-Cynap-CC-Session header with a ${CLAUDE_SESSION_ID} placeholder (never a literal value)', () => {
+test('buildProjectMcpJson carries the X-Cynap-CC-Session header with a ${CLAUDE_SESSION_ID} placeholder (never a literal value)', () => {
   const mcpJson = buildProjectMcpJson({ port: 9123 });
   const server = mcpJson.mcpServers['cynap-operator'];
   assert.equal(server.headers['X-Cynap-CC-Session'], '${CLAUDE_SESSION_ID}');
@@ -155,7 +155,7 @@ test('buildProxyArgv rejects missing proxyPath, a missing e2e orgId, or an inval
   assert.throws(() => buildProxyArgv({ proxyPath: '/x.mjs', orgId: 'id', port: 0 }));
 });
 
-test('CYN-801: buildProxyArgv appends --org-slug when slug is supplied', () => {
+test('buildProxyArgv appends --org-slug when slug is supplied', () => {
   const argv = buildProxyArgv({
     proxyPath: '/plugin/bin/operator-proxy.mjs',
     orgId: CYNAP_E2E_ORG_ID,
@@ -175,7 +175,7 @@ test('CYN-801: buildProxyArgv appends --org-slug when slug is supplied', () => {
   ]);
 });
 
-test('CYN-801: buildProxyArgv omits --org-slug when slug is not supplied (backward-compatible)', () => {
+test('buildProxyArgv omits --org-slug when slug is not supplied (backward-compatible)', () => {
   const argv = buildProxyArgv({
     proxyPath: '/plugin/bin/operator-proxy.mjs',
     orgId: CYNAP_E2E_ORG_ID,
@@ -184,7 +184,7 @@ test('CYN-801: buildProxyArgv omits --org-slug when slug is not supplied (backwa
   assert.ok(!argv.includes('--org-slug'));
 });
 
-test('CYN-901: buildProxyArgv appends the auth-mode flag for e2e/device, nothing for interactive (proxy default)', () => {
+test('buildProxyArgv appends the auth-mode flag for e2e/device, nothing for interactive (proxy default)', () => {
   const base = {
     proxyPath: '/plugin/bin/operator-proxy.mjs',
     orgId: CYNAP_E2E_ORG_ID,
@@ -259,7 +259,7 @@ test('planConnect resolves a full plan for cynap-e2e, materializing into an inje
       materialize: fakeMaterialize,
     });
     assert.equal(plan.orgId, CYNAP_E2E_ORG_ID);
-    // cynap-e2e on staging stays headless (--e2e) — the pre-CYN-901 behavior.
+    // cynap-e2e on staging stays headless (--e2e) — the previous behavior.
     assert.equal(plan.authMode, 'e2e');
     assert.ok(plan.proxyArgv.includes('--e2e'));
     assert.ok(Number.isInteger(plan.port) && plan.port > 0);

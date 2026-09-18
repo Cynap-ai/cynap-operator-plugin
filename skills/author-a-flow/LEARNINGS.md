@@ -8,19 +8,19 @@ belongs in that org's own context files, not here.
 
 ## What worked
 
-- **Pairing the two hard resolve-time gates in one worked example**
-  (`async-bake/flow.json`) rather than describing them separately —
+- **Pairing the two hard load-time gates in one worked example**
+  (`example-flow/flow.json`) rather than describing them separately —
   operators copy the working shape instead of assembling the two
   constraints from prose.
-- **Quoting the exact resolver error strings.** When a flow fails to
-  resolve, the operator sees this literal message — showing it in the skill
+- **Quoting the exact validation error strings.** When a flow is rejected at
+  load time, the operator sees this literal message — showing it in the skill
   means the operator recognizes the failure immediately instead of treating
   it as an opaque backend error.
 
 ## What failed
 
 - Declaring `automation_run_sync` in `tools[]` "just in case" without
-  actually wiring `allowed_automations[]` — always fails resolve. The
+  actually wiring `allowed_automations[]` — always fails validation. The
   fix-forward pattern is: only declare a tool the flow's `instructions`
   actually direct the model to call.
 - Assuming a high `budget.max_usd` request would apply as written — it's

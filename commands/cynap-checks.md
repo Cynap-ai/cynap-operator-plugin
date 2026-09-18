@@ -5,8 +5,8 @@ argument-hint: "<commit-sha>"
 
 # /cynap-checks
 
-Runs the org's `checks/` suite — the per-org config-as-code invariants (CYN-1094 /
-ADR-0059) — **locally, against your LOCAL working-dir pending bytes**, and reports the
+Runs the org's `checks/` suite — the per-org config-as-code invariants —
+**locally, against your LOCAL working-dir pending bytes**, and reports the
 terminal verdict (bound to the committed content) so the platform can gate activation on it.
 
 This is the fast, preventive half of the org-checks gate: your local run produces an

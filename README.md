@@ -4,7 +4,7 @@
 
 # Cynap Operator Plugin
 
-Version 0.15.4. A Claude Code / Codex plugin that connects a working
+Version 0.16.0. A Claude Code / Codex plugin that connects a working
 directory to the Cynap operator plane — one organization per directory, over
 MCP.
 
@@ -57,6 +57,8 @@ Disconnect and revoke the local connection with:
   managed lifecycle seams used by the slash commands.
 - `commands/cynap-connect.md` — the `/cynap-connect` slash command.
 - `commands/cynap-disconnect.md` — the tenant-checked disconnect command.
+- `commands/cynap-checks.md` / `commands/cynap-status.md` — run the org's
+  config checks, and report the connection's state.
 - `hooks/` — a fail-open `SessionEnd` hook that signals the proxy so it can
   record a session trail if this session touched the operator plane.
 - `skills/` — authoring skills that teach an AI operator how to build
@@ -65,6 +67,9 @@ Disconnect and revoke the local connection with:
   platform's hard invariants.
 - `scripts/version-probe.mjs` — a conformance gate you can run yourself:
   `node scripts/version-probe.mjs`.
+- `scripts/clean-machine-smoke.mjs` — the clean-machine journey probe: proves
+  install, connect, disconnect and self-update work on a machine with no
+  other Cynap context.
 
 ## Access
 

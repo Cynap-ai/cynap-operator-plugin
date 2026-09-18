@@ -1,8 +1,8 @@
 # LEARNINGS — author-a-code-execution (cross-org)
 
 Cross-org procedural wisdom for `mode:code_execution` (`entrypoint:worker`)
-authoring — the mode `mode:handler` migrated into (CYN-729/CYN-1457). Read
-at task start; append at task end. No customer-specific strings.
+authoring — the mode `mode:handler` migrated into. Read at task start;
+append at task end. No customer-specific strings.
 
 ---
 
@@ -46,7 +46,7 @@ at task start; append at task end. No customer-specific strings.
 
 ## Open questions
 
-- (Resolved 2026-08-11, CYN-1457) `dispatch_mode` is fixed `'async'` for
+- (Resolved 2026-08-11) `dispatch_mode` is fixed `'async'` for
   `mode:code_execution` — there's no longer a sync-vs-async choice to
   document a worked example for; `max_runtime_ms` (clamped `[1s, 2h]`) is
   the only runtime-budget knob now.
@@ -58,5 +58,5 @@ at task start; append at task end. No customer-specific strings.
 
 ---
 
-**Last updated:** 2026-08-11 (CYN-1457 — migrated from `mode:handler` to
+**Last updated:** 2026-08-11 (migrated from `mode:handler` to
 `mode:code_execution`; dispatch_mode question resolved).

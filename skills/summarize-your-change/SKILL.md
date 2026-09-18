@@ -5,13 +5,11 @@ description: Compose the change_overview argument for workspace_commit — the s
 
 # summarize-your-change — Compose `change_overview` Before You Commit
 
-You are Claude Code (or Codex) acting as the operator. Per ADR
-the operator architecture rule: **you** are the frontier
-model in the loop that just authored this change and knows its intent
-first-hand — the backend does **not** re-derive "what changed / why" from
-your diff with a second, cheaper model. Instead, **you** produce the
-structured overview and pass it as an argument to `workspace_commit`; the
-backend only validates, scrubs, and stores it.
+You are Claude Code (or Codex) acting as the operator. You authored this
+change and know its intent first-hand; write the summary yourself. The
+platform does **not** re-derive "what changed / why" from your diff — it
+only validates, scrubs, and stores what you write. Pass the structured
+overview as an argument to `workspace_commit`.
 
 Read `platform-invariants` first if you haven't this session. This skill
 assumes you have already finished authoring the change (via
@@ -54,14 +52,11 @@ object and pass it as an additional argument alongside `changes` / `message`
   ids or names you edited (e.g. the `{handler-id}` from
   `automations/handlers/{handler-id}/`). Empty array for a schema-only or
   context-only change that touches no automation.
-- **`mode`** (required, up to 50 chars — free string on the wire schema,
-  `mcp-schemas.ts` `ChangeOverviewSchema.mode: z.string().max(50)`, but
-  authored from a closed vocabulary by convention) — the authoring mode
-  this change falls under: one of `code_execution`, `flow`, `deterministic`,
-  `schema`, or `mixed` (if the change spans more than one). Use
-  `choose-the-right-mode`'s vocabulary — don't invent a new label, and
-  use its live migration target: `agent` and `handler` are retired —
-  migrate to `code_execution`.
+- **`mode`** (required, up to 50 characters — a free string on the wire
+  schema, but authored from a closed vocabulary by convention) — the
+  authoring mode this change falls under: one of `code_execution`, `flow`,
+  `deterministic`, `schema`, or `mixed` (if the change spans more than one).
+  Use `choose-the-right-mode`'s vocabulary — don't invent a new label.
 
 ## The hard rule: NO PHI, NO row values, NO entity instances
 
@@ -135,12 +130,3 @@ call.
 4. If you genuinely can't summarize honestly (e.g. an automated/scripted
    commit with no real authoring intent), it's fine to omit the field
    entirely rather than write a vague/generic placeholder.
-
----
-
-**Spec references:** CYN-768 P4 §2.7/§6-P4 ·
-the operator architecture rule (the in-loop-model
-decision this skill implements) · the platform validator
-(the backend validation/scrub `change_overview` passes through) ·
-the platform validator (`workspaceCommit.change_overview` —
-the wire schema).

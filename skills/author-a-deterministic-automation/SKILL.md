@@ -1,17 +1,17 @@
 ---
 name: author-a-deterministic-automation
-description: Author a no-LLM scheduled sync, reconciler, or ETL automation using the deterministic step vocabulary — the cheapest mode (Lambda only, no sandbox, no AI credits). Use after choose-the-right-mode routes here.
+description: Author a no-LLM scheduled sync, reconciler, or ETL automation using the deterministic step vocabulary — the cheapest mode (no sandbox, no AI credits). Use after choose-the-right-mode routes here.
 ---
 
 # author-a-deterministic-automation — Deterministic-Mode Authoring
 
-You are authoring a **no-LLM, Lambda-only** automation for one customer
+You are authoring a **no-LLM** automation for one customer
 org — scheduled syncs, reconcilers, ETL. This is the **cheapest** mode; it
 is **not** a general workflow engine and **not** a home for platform infra
-jobs (reapers/drift-check/cleanup stay hardcoded backend Lambdas). If you
-haven't confirmed this is the right mode, go read `choose-the-right-mode`
-first. Read `platform-invariants` before this skill if you haven't this
-session.
+jobs (reapers/drift-check/cleanup belong to the platform, not to your org's
+config). If you haven't confirmed this is the right mode, go read
+`choose-the-right-mode` first. Read `platform-invariants` before this skill
+if you haven't this session.
 
 ## Deliverable shape — ONE file
 
@@ -37,37 +37,29 @@ automations/{automation-id}.json
 
 ## The step vocabulary — CLOSED, interpreted by trusted platform code
 
-Read the platform validator (step
-schemas ~162-339) and `customer-config-validator.ts` (deterministic arm,
-~262-392). Exactly six step kinds:
+Exactly six step kinds:
 
 - `{ tool, input?, output?, continue_on_error? }` — invoke a declared
   `tools[]` entry
 - `{ set, value }` — assign a variable
 - `{ condition, then: Step[], else?: Step[] }` — branch
 - `{ parallel: Step[], onFailure?: 'fail_fast'|'continue'|'collect_errors' }`
-- `{ sync: SyncSpec }` — integration → Turso incremental upsert (CYN-341)
+- `{ sync: SyncSpec }` — integration → org database incremental upsert
 - `{ land: LandSpec }` — raw webhook events → `source_events` Bronze table
-  (CYN-479)
 
 No other step kind parses. `tool`/`set`/`condition`/`parallel` are generic
-control flow; `sync`/`land` are the ONLY sanctioned deterministic Turso
-writes.
+control flow; `sync`/`land` are the ONLY sanctioned deterministic writes to
+the org database.
 
-### `sync` step field-path rule — the no-LLM closed-data trust boundary
+### `sync` step field-path rule — no templates, no expressions
 
-`SyncFieldPathSchema` (`unified-automation-types.ts:227-233`):
+A non-plain field path is rejected at parse time with:
 
-```typescript
-export const SyncFieldPathSchema = z.string().min(1).refine(
-  (s) => !s.includes('{{') && !s.includes('$'),
-  { message: "sync field paths must be plain field names — no templates ('{{') or expressions ('$')" }
-);
-```
+> "sync field paths must be plain field names — no templates ('{{') or expressions ('$')"
 
 **Every field path in `sync`/`land` is a plain field name — NEVER a
-template (`{{…}}`) or expression (`$var`).** This rejection at parse time
-**IS** the trust boundary: deterministic config carries data (field names +
+template (`{{…}}`) or expression (`$var`).** Rejection at parse time
+**IS** the safety check: deterministic config carries data (field names +
 closed enums), never operator code. If your task seems to need a computed
 expression on a field path, deterministic mode is the wrong tool — that's
 `code_execution` or `flow`.
@@ -75,8 +67,8 @@ expression on a field path, deterministic mode is the wrong tool — that's
 `sync` also carries:
 - `external_key.key_template` MUST contain a `{field}` placeholder — a
   constant template (e.g. a typo'd `'WU'` instead of `'WU{id}'`) collapses
-  every record onto ONE Turso entity, a permanent irreversible data-loss
-  bug. Rejected at parse time.
+  every record onto ONE entity in the org database, a permanent
+  irreversible data-loss bug. Rejected at parse time.
 - `watermark.business_date_field` — the incremental floor must be the SAME
   field the provider's `?from=` filter narrows on, or the floor and the
   filter silently drift (documented as a config-correctness invariant, not
@@ -85,49 +77,43 @@ expression on a field path, deterministic mode is the wrong tool — that's
   `string|int|bool|iso_date|date|pounds_to_pence` — no arbitrary
   transformation code.
 
-## Gotchas (verified against `customer-config-validator.ts`)
+## Gotchas (all verified against the live platform)
 
 1. **Retired tool-impl types `transform`/`code` are hard-rejected** at
-   config time (`RETIRED_DETERMINISTIC_TOOL_IMPL_TYPES`,
-   `customer-config-validator.ts:195`) — the deterministic runner explicitly
-   refuses to execute them:
+   config time — the deterministic runner explicitly refuses to execute
+   them:
 
    > "tools[N] '{name}' uses retired impl type '{type}', which the
    > deterministic runtime no longer executes (use 'llm', 'http', or
    > 'automation')."
 
-2. **Raw HTTP-to-Turso is retired.** An `http` tool whose `url` targets a
-   Turso/libsql write endpoint (`isTursoWriteUrl()`) is rejected — `sync`
-   and `land` are the ONLY sanctioned deterministic Turso writes
-   (CYN-479):
-
-   > "tools[N] '{name}' is an http tool targeting a Turso/libsql endpoint
-   > (…). Deterministic mode may write Turso ONLY via the closed 'sync' and
-   > 'land' steps — raw HTTP-to-Turso is retired."
+2. **Raw HTTP writes to the org database are retired.** An `http` tool
+   whose `url` targets a database write endpoint is rejected;
+   deterministic mode may write the org database only via the closed
+   `sync` and `land` steps.
 
 3. **Every `step.tool` reference must resolve to a declared `tools[]`
-   entry** — tool-reference integrity is checked at config time (lifting
-   the runner's runtime `TOOL_NOT_FOUND` to CI-time). A step referencing an
+   entry** — tool-reference integrity is checked at config time, not
+   discovered at run time. A step referencing an
    undeclared tool name is a hard config-time rejection.
 
 4. **WriteUpp `sync.nested` is rejected** — per-parent nested fetch
-   (invoice → its line items) is gated on CYN-341 Q3 and not wired to live
-   traffic. A `sync` step with `provider: 'writeupp'` and a `nested` field
+   (invoice → its line items) is not supported yet. A `sync` step with
+   `provider: 'writeupp'` and a `nested` field
    fails at parse time, not at runtime crash time.
 
 5. **`mode:deterministic` has NO execute-preview.** `workspace_validate`'s
-   static checks (the same `runChangesetValidation` core as the CI deploy
-   gate) are the ONLY pre-deploy proof available for a deterministic
-   candidate — there's no dry-run execution to sanity-check against. Treat
-   a clean `workspace_validate` as necessary, not sufficient; review the
-   step tree carefully by hand.
+   static checks are the ONLY pre-deploy proof available for a
+   deterministic candidate — there's no dry-run execution to sanity-check
+   against. Treat a clean `workspace_validate` as necessary, not
+   sufficient; review the step tree carefully by hand.
 
-## A minimal correct example (real, `cynap-e2e/e2e-deterministic.json`)
+## A minimal correct example
 
 ```json
 {
-  "id": "e2e-deterministic",
-  "name": "E2E Deterministic Test",
+  "id": "example-deterministic",
+  "name": "Example Deterministic Test",
   "version": "3.0",
   "enabled": true,
   "portal_visible": false,
@@ -137,7 +123,7 @@ expression on a field path, deterministic mode is the wrong tool — that's
   "execution": {
     "mode": "deterministic",
     "steps": [
-      { "set": "$greeting", "value": "hello from e2e-deterministic" },
+      { "set": "$greeting", "value": "hello from example-deterministic" },
       { "set": "$counter", "value": 42 },
       {
         "condition": { ">=": [{ "var": "$counter" }, 10] },
@@ -153,12 +139,12 @@ expression on a field path, deterministic mode is the wrong tool — that's
       { "set": "$result", "value": "all steps completed" }
     ]
   },
-  "metadata": { "tags": ["e2e", "deterministic", "test"], "created_at": "2026-03-31T00:00:00Z", "created_by": "e2e-setup" }
+  "metadata": { "tags": ["example", "deterministic", "test"], "created_at": "2026-03-31T00:00:00Z", "created_by": "example-setup" }
 }
 ```
 
-**Note: no live `sync`-step example exists in the repo yet** (verified
-2026-07-07) — the `sync` step is schema-defined (CYN-341) but not yet used
+**Note: no live `sync`-step example exists yet** (verified
+2026-07-07) — the `sync` step is schema-defined but not yet used
 in any org's committed config. For a real **`land`**-step example (note:
 `land`, not `sync` — a different, simpler schema with no
 `external_key`/`field_map`/`watermark`), read
@@ -172,8 +158,9 @@ its `execution.steps[0]` is `{ "land": { "source": "superchat.contacts",
    (`choose-the-right-mode`) — if it needs classification/extraction, this
    is the wrong mode.
 2. Use only the six step kinds; never invent a step shape.
-3. If writing to Turso, use `sync` (incremental, watermarked) or `land`
-   (raw Bronze capture) — never an `http` tool at a Turso endpoint.
+3. If writing to the org database, use `sync` (incremental, watermarked) or
+   `land` (raw Bronze capture) — never an `http` tool at a database
+   endpoint.
 4. Every field path in a `sync`/`land` step is a bare name — no `{{`, no
    `$`.
 5. Verify `external_key.key_template` contains a real `{field}`
@@ -184,7 +171,3 @@ its `execution.steps[0]` is `{ "land": { "source": "superchat.contacts",
    entry.
 8. Remember: `workspace_validate` static checks are the only pre-deploy
    signal — there is no execute-preview for this mode.
-
----
-
-**Spec references:** CYN-768 P2 §2.5 · the platform validator (step vocabulary + sync/land schemas) · the platform validator (deterministic arm: retired-impl rejection, Turso-write guard, tool-reference integrity, nested-sync rejection) · the operator safety rules`execution.steps` row) · the workspace instructions.

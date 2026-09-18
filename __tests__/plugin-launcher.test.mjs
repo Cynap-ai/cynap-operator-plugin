@@ -1,4 +1,4 @@
-// CYN-1959 (Ship 3, Q20/ADR-0084 Decision 2) — bin/operator-proxy-launcher.mjs
+// bin/operator-proxy-launcher.mjs
 // rereads .claude-plugin/plugin.json's version fresh on every start and
 // threads it into operator-proxy.mjs as --plugin-version, WITHOUT ever
 // persisting the version into the launch record (that's proxyPath pointing at

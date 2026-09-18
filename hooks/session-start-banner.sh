@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Operator-plane SessionStart org-orientation banner (CYN-1080).
+# Operator-plane SessionStart org-orientation banner.
 #
 # Why this exists: a session opened inside a `/cynap-connect` working dir had
 # NO indication it was pinned to an operator org — the MCP tools are just

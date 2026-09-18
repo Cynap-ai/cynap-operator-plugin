@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CYN-713 — operator-plane client mint-proxy.
+// operator-plane client mint-proxy.
 //
 // A local stdio-adjacent (actually: loopback HTTP) MCP proxy that lets an
 // operator run a long session from a directory ISOLATED from this monorepo
@@ -7,14 +7,14 @@
 // and no refresh path.
 //
 // The proxy:
-//   1. Holds ONE better-auth session cookie (minted via the headless
+//   1. Holds ONE session cookie (minted via the headless
 //      /api/auth/e2e-session route — cynap-e2e ONLY).
 //   2. Mints an operator token via POST /api/auth/operator-token whenever the
 //      cached token is missing or within 60s of `exp` (expires_in is 900).
 //   3. Runs a tiny local HTTP MCP server (default http://127.0.0.1:8790/mcp)
 //      that forwards every request to the upstream operator MCP endpoint,
 //      injecting `Authorization: Bearer <fresh-token>`.
-//   4. CYN-801: records which MCP endpoints an operator SESSION touched (via the
+//   4. Records which MCP endpoints an operator SESSION touched (via the
 //      `X-Cynap-CC-Session` header the plugin injects) into a per-session marker
 //      file — org + session id + endpoint list ONLY, NEVER the token/cookie — and
 //      serves a local `POST /session-end` control endpoint that a SessionEnd hook
@@ -23,12 +23,12 @@
 //
 // Zero external dependencies — Node built-ins only. Single file, build-copied
 // byte-for-byte into the plugin package (scripts/build-copy-proxy.mjs) — so
-// the CYN-801 marker/session-end logic below is INLINED here rather than
+// the marker/session-end logic below is INLINED here rather than
 // split into a sibling module the copy mechanism doesn't know about.
 //
-// Safety: refuses any targetOrgId other than the cynap-e2e TEXT org id unless
+// Safety: refuses any targetOrgId other than the reserved test org id unless
 // --allow-org <id> is passed explicitly. Cookie/token are held in memory only
-// — never written to disk. The session marker (CYN-801) is the ONE exception to
+// — never written to disk. The session marker is the ONE exception to
 // "never written to disk", and it is deliberately narrow: org + session id +
 // endpoint list, never a token/cookie/credential.
 
@@ -46,13 +46,13 @@ import { createHash, randomBytes } from 'node:crypto';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** The TEXT organization.id for the dedicated e2e org (NOT the slug). */
+/** The TEXT organization.id for the reserved test org (NOT the slug). */
 export const CYNAP_E2E_ORG_ID = 'cynap-e2e-test-org-00000000';
 
 /** The token endpoint returns an expiry measured in seconds. */
 export const OPERATOR_TTL_SECONDS = 15 * 60;
 
-/** CYN-901: the fixed public operator-CLI client id + CLI-credential prefix. */
+/** The fixed public operator-CLI client id + CLI-credential prefix. */
 export const OPERATOR_CLI_CLIENT_ID = 'cynap-operator-cli';
 export const CLI_CREDENTIAL_PREFIX = 'octk_';
 
@@ -60,13 +60,13 @@ export const CLI_CREDENTIAL_PREFIX = 'octk_';
 export const REMINT_SKEW_SECONDS = 60;
 
 // ---------------------------------------------------------------------------
-// CYN-766 — cold-start 504 translation + guarded single retry.
+// Cold-start 504 translation + guarded single retry.
 //
 // The operator's first (and every post-idle) MCP call can hit a cold
 // `cynap-mcp-handler` and time out at API Gateway's ~29-31s cap, surfacing as
 // a bare HTTP 504. To a first-time operator that reads as "the endpoint is
-// broken." The cold-init root cause (deferring the Turso open at handler
-// init, CYN-769) is a separate follow-up — this is the client-side
+// broken." The cold-init root cause (deferring the org-database open at handler
+// init) is a separate follow-up — this is the client-side
 // mitigation: translate the 504 into a clear message, and retry it exactly
 // once, but ONLY for read-only/idempotent tool calls. A 504 does NOT prove
 // the upstream work never ran (RFC 9110 §15.6.5), so a write/side-effecting
@@ -75,8 +75,8 @@ export const REMINT_SKEW_SECONDS = 60;
 
 /** The read-only operator tools are safe to retry blind on a 504 because they
  * cannot have caused a mutation. This literal set is intentionally zero-dep.
- * CYN-1411 W3 U-12: `run_evidence_get` was missing — OPS_READ_TOOLS has been 5
- * members (not 4) since CYN-1078, and this list drifted from it. Harmless before W3
+ * `run_evidence_get` was missing — OPS_READ_TOOLS has been 5
+ * members (not 4), and this list drifted from it. Harmless before W3
  * (no scope ever held both families at once, so the drift only meant one operator
  * evidence read wasn't blind-retried on a cold 504); W3's workspace:operate profile
  * makes both families reachable from the SAME session, so the omission is now live. */
@@ -106,10 +106,10 @@ export const RETRY_TOKEN_EXPIRY_GUARD_SECONDS = 10;
  * what actually stops the loop. */
 export const IDEMPOTENT_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 6000, 8000, 10000];
 export const RETRY_JITTER_MS = 250;
-/** CYN-1080 (review): the idempotent-retry loop is bounded by CUMULATIVE
+/** The idempotent-retry loop is bounded by CUMULATIVE
  * ELAPSED WALL-TIME since the first attempt, not a fixed attempt count. Each
  * cold attempt is ITSELF ~29s — API Gateway's own integration timeout (the
- * CYN-766 premise) — before it even comes back as a 504, so an N-attempt
+ * premise) — before it even comes back as a 504, so an N-attempt
  * budget is wrong on wall-time: an 8-attempt ladder's true worst case is
  * ~8x29s of attempts + sleeps ~= 260s, far past any client's own request
  * timeout, and ~4min of hammering a genuinely-down backend for no benefit (a
@@ -158,7 +158,7 @@ export function extractToolName(rawBody) {
  *
  * `initialize` stays in this set for correctness (a handshake genuinely is not
  * a mutation) and because isIdempotentRequest() is still exercised directly
- * against it — but as of CYN-1080 the proxy no longer actually forwards
+ * against it — but the proxy no longer actually forwards
  * `initialize` upstream at all: createProxyServer() answers it locally (see
  * below) before this classification is ever consulted for it. The set's
  * practical job now is the other four methods; `tools/list` is the one most
@@ -202,7 +202,7 @@ export function isIdempotentRequest(rawBody) {
  * @param {object} opts
  * @param {boolean} opts.idempotent - result of isIdempotentRequest(body)
  * @param {number} opts.elapsedMs - wall-clock ms elapsed since the FIRST attempt for
- *   this request (CYN-1080 review — replaces a fixed attempt-count cap; see
+ *   this request (replaces a fixed attempt-count cap; see
  *   MAX_IDEMPOTENT_RETRY_ELAPSED_MS)
  * @param {number} opts.tokenExpSeconds - the token manager's cached exp (seconds since epoch), or null if unknown
  * @param {number} opts.nowSeconds - current time (seconds since epoch)
@@ -228,7 +228,7 @@ export function retryDelayMs(attempt = 0, rng = Math.random) {
 }
 
 /**
- * In-memory counters for the three CYN-766 signals. Exposed as a factory so
+ * In-memory counters for the three cold-start signals. Exposed as a factory so
  * tests get an isolated instance; the CLI entrypoint creates one process-wide
  * instance and logs deltas via structured stderr lines (no metric sink in
  * this zero-dep client).
@@ -269,7 +269,7 @@ const LOCAL_MCP_PATH = '/mcp';
  * the proxy always forwards there. */
 const UPSTREAM_MCP_PATH = '/mcp/operator';
 
-/** CYN-801: the header the plugin injects on every proxied MCP request, carrying
+/** The header the plugin injects on every proxied MCP request, carrying
  * $CLAUDE_SESSION_ID (the only thing the proxy needs to key the marker — it never
  * sees the session id any other way, since it forwards raw MCP JSON-RPC bodies). */
 export const SESSION_HEADER = 'x-cynap-cc-session';
@@ -310,7 +310,7 @@ export function refuseNonLocalCaller(req, res) {
 }
 
 /** Reported by /health so a caller can tell a stale proxy build from a current one. */
-// CYN-1959 (Ship 3): PROXY_VERSION is deleted — the plugin version comes
+// PROXY_VERSION is deleted — the plugin version comes
 // solely from .claude-plugin/plugin.json, read fresh on every start by
 // bin/operator-proxy-launcher.mjs and threaded through here as `pluginVersion`.
 export const OPERATOR_PLUGIN_VERSION_HEADER = 'x-cynap-plugin-version';
@@ -331,7 +331,7 @@ export function upstreamHeaders(pluginVersion, headers = {}) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// CYN-1959 (Ship 4, 2026-09-16 founder ruling) — SELF-UPDATE ON `plugin_outdated`
+// SELF-UPDATE ON `plugin_outdated`
 //
 // The backend's floor is the LATEST published plugin version, so a
 // `plugin_outdated` answer always means exactly one thing: this proxy is running
@@ -672,7 +672,7 @@ export function handlePluginOutdated({
   }
 }
 
-/** CYN-1080: the MCP protocolVersion the locally-answered `initialize` falls
+/** The MCP protocolVersion the locally-answered `initialize` falls
  * back to when the client's request omits `params.protocolVersion`. */
 export const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
 
@@ -682,7 +682,7 @@ const OPERATOR_WORKDIR_BASE = 'CynapOperator';
 /** Process start time, reported by /health so `/cynap-status` can show uptime. */
 const PROCESS_STARTED_AT = new Date().toISOString();
 
-/** CYN-1080: the operator credential's absolute expiry (ISO string from the
+/** The operator credential's absolute expiry (ISO string from the
  * login response), retained so /health and /cynap-status can warn BEFORE it
  * silently expires mid-session — previously logged once at login (see main()'s
  * login branch) then dropped. Never itself a secret (just a timestamp), so
@@ -709,11 +709,11 @@ export function hoursUntil(expiresAt, nowMs) {
   return Math.max(0, Math.floor((target - nowMs) / (1000 * 60 * 60)));
 }
 
-/** The backend endpoint the proxy uploads the transcript to (mcp-handler; CYN-801). */
+/** The backend endpoint the proxy uploads the transcript to (mcp-handler). */
 const SESSION_TRAIL_UPSTREAM_PATH = '/api/operator/session-trail';
 
 // ---------------------------------------------------------------------------
-// CYN-801 — session marker. Pure I/O helpers (fs is real, but no network / no
+// Session marker. Pure I/O helpers (fs is real, but no network / no
 // process spawn), so they unit-test deterministically against a scratch HOME.
 // The marker is the proxy's "touched the operator MCP" gate + endpoint list —
 // per spec §2.2 it carries ONLY org + session id + endpoint list, NEVER the
@@ -826,7 +826,7 @@ export function deleteMarker(slug, sessionId, baseDir) {
 // ---------------------------------------------------------------------------
 // Token manager — pure decision logic, no I/O side effects beyond the
 // injected fetchImpl/now. Kept separate from the HTTP server so it can be
-// unit-tested deterministically (see __tests__/remint-clock.test.mjs).
+// unit-tested deterministically.
 // ---------------------------------------------------------------------------
 
 /**
@@ -834,14 +834,14 @@ export function deleteMarker(slug, sessionId, baseDir) {
  * @param {string} opts.mintHost - e.g. https://staging.cynap.ai
  * @param {string} opts.targetOrgId - the org id to mint for
  * @param {string} [opts.allowedOrgId] - if set, the only org id this manager will mint for
- * @param {() => Record<string, string>} opts.getAuthHeaders - CYN-901: returns the mint
+ * @param {() => Record<string, string>} opts.getAuthHeaders - returns the mint
  *   auth header(s): `{ Authorization: 'Bearer octk_…' }` for a CLI-scoped credential
  *   (PKCE/device login) OR `{ Cookie: '…' }` for the staging e2e-session leg.
- * @param {'workspace'|'session'} [opts.family] - CYN-801: the operator-token scope
+ * @param {'workspace'|'session'} [opts.family] - the operator-token scope
  *   family to mint (default 'workspace', backward-compatible). 'session' mints
  *   workspace:session-capture for the /session-end transcript upload.
  * @param {'workspace:file-activate'|'workspace:commit'|'workspace:operate'} [opts.requestedScope] -
- *   CYN-1411 W3: forwarded verbatim to POST /api/auth/operator-token's `requestedScope`
+ *   forwarded verbatim to POST /api/auth/operator-token's `requestedScope`
  *   body field. 'workspace:operate' is the cross-family minting PROFILE — the operator
  *   plugin's --profile operate flag sets this so a single session can both read a run
  *   (ops-journal evidence) and activate a config-kind commit (the structural gap this
@@ -932,7 +932,7 @@ export function createTokenManager({
 // ---------------------------------------------------------------------------
 
 /**
- * CYN-768: the staging portal (`staging.cynap.ai`) sits behind Vercel Deployment
+ * The staging portal (`staging.cynap.ai`) sits behind Vercel Deployment
  * Protection (SSO), so BOTH portal calls this proxy makes — the `e2e-session` cookie
  * leg and the `operator-token` mint — get a 401 "Protected deployment" at the SSO wall
  * unless the request carries a "Protection Bypass for Automation" secret. When one is
@@ -1055,7 +1055,7 @@ export async function acquireStagingCookie({
 }
 
 // ---------------------------------------------------------------------------
-// CYN-901 — operator-CLI credential login. Both legs yield an `octk_…` CLI-SCOPED
+// Operator-CLI credential login. Both legs yield an `octk_…` CLI-SCOPED
 // credential (usable ONLY at the operator-token mint route, absolute ≤48h, revocable),
 // which the proxy injects as `Authorization: Bearer`. This REPLACES the whole-account
 // session cookie (and deletes the CYNAP_OPERATOR_COOKIE `--prod` stopgap):
@@ -1297,7 +1297,7 @@ function readBody(req) {
   });
 }
 
-/** Writes a 200 JSON-RPC 2.0 result envelope. Used by the CYN-1080 local
+/** Writes a 200 JSON-RPC 2.0 result envelope. Used by the local
  * `initialize` answer below — the ONE response this proxy synthesizes itself
  * rather than forwarding upstream. */
 function sendJsonRpcResult(res, id, result) {
@@ -1306,7 +1306,7 @@ function sendJsonRpcResult(res, id, result) {
 }
 
 // ---------------------------------------------------------------------------
-// CYN-801 — session-trail transcript upload (the proxy-driven POST). The
+// Session-trail transcript upload (the proxy-driven POST). The
 // operator token is 900s/no-refresh, so the SessionEnd hook (which fires AFTER
 // the token that ran the session has long expired) cannot upload directly — the
 // still-running proxy mints a FRESH session-capture token on demand and POSTs.
@@ -1335,11 +1335,11 @@ export async function uploadSessionTrail({
   const raw = await readTranscript();
   const gzipped = gzipSync(Buffer.from(raw, 'utf8'));
   const token = await sessionTokenManager.getToken();
-  // CYN-992: POST /api/operator/session-trail is served by the mcp-handler
-  // Lambda (routed via /api/{proxy+} → McpHandler; handlers/mcp.ts), which
+  // POST /api/operator/session-trail is served by the mcp-handler
+  // runtime (routed via /api/{proxy+} → McpHandler; handlers/mcp.ts), which
   // JWKS-verifies the operator bearer token. It is NOT a portal route — the
   // portal (mintHost) has no such route and its middleware rejects any /api/*
-  // lacking a better-auth cookie, and behind Vercel SSO the request never even
+  // lacking a session cookie, and behind Vercel SSO the request never even
   // reaches the app. So the upload targets mcpHost (the same host as the MCP
   // forward): no cookie, no Vercel bypass. The token is still MINTED at the
   // portal (mintHost) by the session-family token manager; only this POST moves.
@@ -1371,20 +1371,20 @@ export async function uploadSessionTrail({
  * @param {string} opts.mcpHost
  * @param {string} opts.mcpPath
  * @param {{ getToken: () => Promise<string>, _peekCache?: () => { token: string, exp: number } | null }} opts.tokenManager
- * @param {string} [opts.orgSlug] - CYN-801: the org slug this proxy is pinned to,
+ * @param {string} [opts.orgSlug] - the org slug this proxy is pinned to,
  *   used as the marker directory key.
- * @param {string} [opts.orgId] - CYN-801: recorded into the marker for display only.
- * @param {string} [opts.mintHost] - CYN-801: required for /session-end to mint +
+ * @param {string} [opts.orgId] - recorded into the marker for display only.
+ * @param {string} [opts.mintHost] - required for /session-end to mint +
  *   upload; optional here only so existing tests that don't exercise
  *   /session-end can omit it.
  * @param {ReturnType<typeof createTokenManager>} [opts.sessionTokenManager] -
- *   CYN-801: a token manager pre-configured with family:'session'. Built lazily
+ *   a token manager pre-configured with family:'session'. Built lazily
  *   from mintHost/getCookie if omitted and /session-end is actually invoked.
- * @param {() => Record<string, string>} [opts.getAuthHeaders] - CYN-801/CYN-901: needed
+ * @param {() => Record<string, string>} [opts.getAuthHeaders] - needed
  *   only to lazily build sessionTokenManager when it isn't passed explicitly.
  * @param {(sessionId: string) => Promise<string>} [opts.readTranscriptFor] -
- *   CYN-801: resolves a session id to its raw transcript text. Injectable for tests.
- * @param {string} [opts.baseDir] - CYN-801: marker base dir override, for tests.
+ *   resolves a session id to its raw transcript text. Injectable for tests.
+ * @param {string} [opts.baseDir] - marker base dir override, for tests.
  * @param {typeof fetch} [opts.fetchImpl]
  * @param {ReturnType<typeof createColdStartCounters>} [opts.counters]
  * @param {() => number} [opts.now] - injectable clock (seconds since epoch), for tests
@@ -1483,7 +1483,7 @@ export function createProxyServer({
   readTranscriptFor,
   baseDir,
   pluginVersion,
-  // CYN-1959 (Ship 4): called with `{ minimum }` after a forwarded response
+  // Called with `{ minimum }` after a forwarded response
   // carrying a `plugin_outdated` answer has been fully delivered. Optional — a
   // standalone `node operator-proxy.mjs` run passes nothing and simply forwards
   // the answer, which is the correct behaviour for a proxy that is not a
@@ -1495,7 +1495,7 @@ export function createProxyServer({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   rng = Math.random,
 }) {
-  // CYN-1080: at most ONE in-flight "wake the backend" request at a time for
+  // At most ONE in-flight "wake the backend" request at a time for
   // this proxy instance — an operator's editor can fire several `initialize`s
   // in quick succession (a client retry, a second tool window); they should
   // share one warm, not pile up N redundant cold-start pokes.
@@ -1560,7 +1560,7 @@ export function createProxyServer({
           status: 'ready',
           pid: process.pid,
           startedAt: PROCESS_STARTED_AT,
-          // CYN-1080: the credential's absolute expiry — a timestamp, never a
+          // The credential's absolute expiry — a timestamp, never a
           // secret, so this stays within the "no token/cookie on /health"
           // contract above. null until a login has completed (or always, for
           // the --e2e cookie leg, which has no absolute TTL to report).
@@ -1571,7 +1571,7 @@ export function createProxyServer({
       return;
     }
 
-    // CYN-801: the local control endpoint a SessionEnd hook signals. Handled
+    // The local control endpoint a SessionEnd hook signals. Handled
     // BEFORE the generic MCP-forward path below (distinct route, distinct method
     // semantics — not itself forwarded upstream).
     if (req.method === 'POST' && req.url === SESSION_END_PATH) {
@@ -1595,11 +1595,11 @@ export function createProxyServer({
       const idempotent = isIdempotentRequest(body);
       const upstreamUrl = `${mcpHost}${mcpPath}`;
 
-      // CYN-801: record the touched endpoint (if the plugin sent the session
+      // Record the touched endpoint (if the plugin sent the session
       // header) BEFORE the upstream call — a marker write must never depend on
       // the call succeeding, since the point of the marker is to gate whether an
       // upload happens at all, independent of any one call's outcome. This also
-      // covers the CYN-1080 locally-answered `initialize` just below: it never
+      // covers the locally-answered `initialize` just below: it never
       // reaches the upstream, but it still genuinely touched the operator MCP.
       const sessionId = req.headers[SESSION_HEADER];
       if (orgSlug && typeof sessionId === 'string' && isValidSessionId(sessionId)) {
@@ -1620,7 +1620,7 @@ export function createProxyServer({
         }
       }
 
-      // CYN-1080: answer the MCP `initialize` handshake LOCALLY — never
+      // Answer the MCP `initialize` handshake LOCALLY — never
       // forward it upstream, never let a cold backend surface as a 5xx at the
       // handshake. Claude Code retries a failing `initialize` a handful of
       // times, then marks the whole MCP server FAILED for the rest of the
@@ -1646,12 +1646,10 @@ export function createProxyServer({
         sendJsonRpcResult(res, id, {
           protocolVersion,
           serverInfo: { name: 'cynap-operator', version: pluginVersion ?? 'unknown' },
-          // CYN-1080: advertise the upstream's complete capability set. An
+          // Advertise the upstream's complete capability set. An
           // MCP client caches whatever this handshake advertises and never
           // re-polls it — declaring only `tools` would permanently disable
-          // prompts/list + resources/list for the entire session, a silent
-          // regression vs. origin/main (which forwarded initialize and got
-          // all three from the real backend). A later forwarded
+          // prompts/list + resources/list for the entire session. A later forwarded
           // resources/list or prompts/list just goes upstream like any other
           // idempotent call — this only fixes what the handshake ADVERTISES.
           capabilities: { tools: {}, prompts: {}, resources: {} },
@@ -1672,7 +1670,7 @@ export function createProxyServer({
         });
       }
 
-      // CYN-1080 (review): the retry-window clock starts BEFORE the very
+      // The retry-window clock starts BEFORE the very
       // first attempt — that attempt's own ~29s cost counts toward the
       // elapsed budget just as much as any retry's does (see
       // MAX_IDEMPOTENT_RETRY_ELAPSED_MS).
@@ -1724,7 +1722,7 @@ export function createProxyServer({
       res.writeHead(upstreamRes.status, outHeaders);
       if (upstreamRes.body) {
         const downstream = Readable.fromWeb(upstreamRes.body);
-        // CYN-1959 (Ship 4): pipe FIRST, then tee. The client's bytes are never
+        // Pipe FIRST, then tee. The client's bytes are never
         // buffered, reordered or delayed — the scan is a bounded side channel
         // over the same chunks, attached in the SAME tick so it cannot miss one.
         // Deliberately after delivery: the operator keeps the self-describing
@@ -1756,7 +1754,7 @@ export function createProxyServer({
 }
 
 /**
- * CYN-801 — POST /session-end handler. Reads the marker for the given session;
+ * POST /session-end handler. Reads the marker for the given session;
  * if it shows the session touched the operator MCP, mints a fresh session-
  * capture token and uploads the transcript. GATED on the marker: a session that
  * never touched the operator MCP produces no upload (the marker IS the "touched
@@ -1861,13 +1859,13 @@ export function parseArgs(argv) {
     allowedOrgId: null,
     // The slug is a workspace routing key, not an implicit tenant pin.
     orgSlug: null,
-    // CYN-901: how to acquire the operator credential. Keyed on MODE, not env, so G2
+    // How to acquire the operator credential. Keyed on MODE, not env, so G2
     // bakes identically on staging + prod. interactive → PKCE loopback (default);
     // device → RFC 8628; e2e → the staging e2e-session cookie leg (cynap-e2e only).
     authMode: 'interactive',
-    // CYN-1411 W3: absent by default (unchanged single-scope execute-preview mint).
+    // Absent by default (unchanged single-scope execute-preview mint).
     requestedScope: undefined,
-    // CYN-1959: supplied by bin/operator-proxy-launcher.mjs on every plugin-managed
+    // Supplied by bin/operator-proxy-launcher.mjs on every plugin-managed
     // start (rereading .claude-plugin/plugin.json fresh each time — never persisted
     // into proxy-launch.json). Absent for a documented standalone
     // standalone invocation, which has no plugin
@@ -1901,10 +1899,11 @@ export function parseArgs(argv) {
       }
       opts.pluginVersion = argv[++i];
     } else if (arg === '--profile') {
-      // CYN-1411 W3: the only accepted value today is 'operate' (the cross-family
-      // minting profile — {workspace:file-activate, workspace:read-ops}, handler_upload
-      // and subject_erase/suggestion_propose carved out). Any other value is a hard
-      // refusal at the client, mirroring the portal route's own closed set.
+      // The only accepted value today is 'operate' (the cross-family minting
+      // profile — a session that can read run history and activate a config
+      // commit, but cannot upload handler code or process erasure requests).
+      // Any other value is a hard refusal at the client, mirroring the portal
+      // route's own closed set.
       const profile = argv[++i];
       if (profile !== 'operate') {
         process.stderr.write(`Unknown --profile value: ${profile} (only 'operate' is accepted)\n`);
@@ -1928,7 +1927,7 @@ function usage() {
     'Starts a local HTTP MCP proxy at http://127.0.0.1:<port>/mcp that forwards',
     'to the operator MCP endpoint, injecting a freshly-minted Bearer token.',
     '',
-    'Login (CYN-901) — the credential is CLI-scoped (mints operator tokens ONLY, absolute',
+    'Login — the credential is CLI-scoped (mints operator tokens ONLY, absolute',
     '≤48h, revoked on exit), NEVER a whole-account session:',
     '  (default)  PKCE loopback — opens a browser; receives the code on 127.0.0.1.',
     '  --device   RFC 8628 device code — prints a user_code; poll for browser approval.',
@@ -1942,16 +1941,14 @@ function usage() {
     'the mint host and the MCP forward host — staging tokens 401 on prod',
     '(different JWKS), so the two never drift independently.',
     '',
-    'CYN-801: also serves POST /session-end, signalled by a SessionEnd hook to',
+    'Also serves POST /session-end, signalled by a SessionEnd hook to',
     'upload the ending session\'s transcript (if it touched the operator MCP).',
     '',
-    '--profile operate (CYN-1411 W3): mint the cross-family workspace:operate profile',
-    'instead of the default workspace:execute-preview — a session that can both READ a',
-    'run (journal_describe/journal_query/runs_query/journal_count/run_evidence_get) and',
-    'ACTIVATE a config-kind commit (workspace_activate_commit), never handler_upload or',
-    'the GDPR erase/propose tools. Requires org-owner membership.',
+    '--profile operate: mint the cross-family profile instead of the default narrow one',
+    '— a session that can both READ a run and ACTIVATE a config commit, but cannot upload',
+    'handler code or process erasure requests. Requires org-owner membership.',
     '',
-    '--plugin-version <semver> (CYN-1959): sent as x-cynap-plugin-version on every upstream',
+    '--plugin-version <semver>: sent as x-cynap-plugin-version on every upstream',
     'call and reported by /health and the local `initialize` handshake. A plugin-managed',
     'launch always supplies it (bin/operator-proxy-launcher.mjs rereads plugin.json fresh on',
     'every start); a standalone invocation may omit it and still starts, with a WARN.',
@@ -1992,7 +1989,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
-  // CYN-901: acquire the operator credential (mode-keyed, NOT env-keyed — so G2 bakes on
+  // Acquire the operator credential (mode-keyed, NOT env-keyed — so G2 bakes on
   // staging first and behaves identically on prod). `getAuthHeaders` is the single seam the
   // token managers use for the mint call: `{ Authorization: 'Bearer octk_…' }` for a
   // CLI-scoped credential, `{ Cookie: … }` for the staging e2e-session leg.
@@ -2114,7 +2111,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.stderr.write(
       `[operator-proxy] operator credential acquired for org ${opts.targetOrgId} (expires ${result.expiresAt}).\n`
     );
-    // CYN-1080: retain the expiry (previously logged once here, then dropped)
+    // Retain the expiry (previously logged once here, then dropped)
     // so /health and /cynap-status can warn before it silently expires
     // mid-session.
     setCredentialExpiresAt(result.expiresAt);
@@ -2139,8 +2136,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
   process.stderr.write('[operator-proxy] initial token minted successfully.\n');
 
-  // CYN-801: resolves a Claude Code session id to its transcript file. Sessions
-  // live at ~/.claude/projects/<escaped-cwd-slug>/<sessionId>.jsonl, but the
+  // Resolves a Claude Code session id to its transcript file. Transcripts
+  // live under a per-project transcript directory, but the
   // proxy has no reliable way to know which project slug a given session
   // belongs to (it never sees $CLAUDE_PROJECT_DIR) — so it globs every project
   // dir for a matching <sessionId>.jsonl rather than guessing the slug.
@@ -2158,7 +2155,7 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`transcript not found for session ${sessionId}`);
   };
 
-  // CYN-1959 (Ship 4): react to a `plugin_outdated` answer by installing the
+  // React to a `plugin_outdated` answer by installing the
   // latest mirror build and restarting into it. Wired here rather than inside
   // createProxyServer because the RESTART needs the listening server — the
   // lifecycle server owns the port, and the successor cannot bind it until this

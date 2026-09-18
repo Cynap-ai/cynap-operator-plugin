@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// CYN-1094 / ADR-0059 — the operator-local org-checks runner (spec §5).
+// The operator-local org-checks runner (spec §5).
 //
 // Zero external dependencies — Node built-ins only (the operator-proxy.mjs convention). Runs
 // ENTIRELY operator-local as part of authoring: it reads the operator's LOCAL /cynap-connect
 // working-dir pending bytes for the asserted-over config files (NEVER the workspace read tools,
-// which serve the stale deployed HEAD — finding 1 / the TOCTOU §2.3 closes), reads the deployed
-// HEAD `checks/**` suites through the local operator proxy (HEAD-correct there, since checks are
-// DEFERRED and only a git-merged checks file gates anything), computes the verdict + the
-// resultant-content fingerprint from a SINGLE snapshot (finding 5), and reports the terminal
-// verdict via the `checks_verdict_report` MCP tool. The backend recomputes the fingerprint
-// server-side (W2) and refuses on mismatch — so this attestation cannot gate untested content.
+// which serve the stale deployed HEAD), reads the deployed HEAD `checks/**` suites through the
+// local operator proxy (HEAD-correct there, since checks are DEFERRED and only a git-merged
+// checks file gates anything), computes the verdict + the resultant-content fingerprint from a
+// SINGLE snapshot so a mid-run edit cannot pass on stale bytes, and reports the terminal verdict
+// via the `checks_verdict_report` MCP tool. The backend recomputes the fingerprint server-side
+// and refuses on mismatch — so this attestation cannot gate untested content.
 //
 // Usage:
 //   node cynap-checks-runner.mjs --commit-sha <64hex> [--workdir <dir>] [--proxy-url <url>]

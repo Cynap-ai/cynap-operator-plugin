@@ -1,4 +1,4 @@
-// CYN-1080 — cross-file parity gate: connect.mjs and operator-proxy.mjs each
+// Cross-file parity gate: connect.mjs and operator-proxy.mjs each
 // hardcode their OWN copy of the working-dir base name (`CynapOperator`).
 // They can't share an import across the build-copy byte-parity boundary (see
 // the comments on both consts), so nothing else stops the two literals

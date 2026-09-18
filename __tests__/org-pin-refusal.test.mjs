@@ -1,5 +1,5 @@
-// CYN-785 (CYN-768 P0) — proves the PACKAGED proxy (bin/operator-proxy.mjs,
-// the build-copy of the local proxy source/operator-proxy.mjs) preserves the
+// Proves the PACKAGED proxy (bin/operator-proxy.mjs,
+// the build-copy of operator-proxy.mjs) preserves the
 // client-side org-pin refusal: createTokenManager throws when targetOrgId
 // !== allowedOrgId. This is defense-in-depth only (the authoritative
 // boundary is server-side in the platform service
@@ -16,7 +16,7 @@ test('createTokenManager throws when targetOrgId does not match allowedOrgId', (
         mintHost: 'https://staging.cynap.ai',
         targetOrgId: 'some-other-org-id',
         allowedOrgId: CYNAP_E2E_ORG_ID,
-        getCookie: () => 'better-auth.session_token=abc',
+        getAuthHeaders: () => ({ Authorization: 'Bearer <test>' }),
       }),
     /Refusing targetOrgId/
   );
@@ -28,7 +28,7 @@ test('createTokenManager allows targetOrgId when it matches an explicit --allow-
       mintHost: 'https://staging.cynap.ai',
       targetOrgId: 'acme-clinic-uk-real-org-id',
       allowedOrgId: 'acme-clinic-uk-real-org-id',
-      getCookie: () => 'better-auth.session_token=abc',
+      getAuthHeaders: () => ({ Authorization: 'Bearer <test>' }),
     })
   );
 });
@@ -39,7 +39,7 @@ test('createTokenManager allows the cynap-e2e org id when it is pinned explicitl
       mintHost: 'https://staging.cynap.ai',
       targetOrgId: CYNAP_E2E_ORG_ID,
       allowedOrgId: CYNAP_E2E_ORG_ID,
-      getCookie: () => 'better-auth.session_token=abc',
+      getAuthHeaders: () => ({ Authorization: 'Bearer <test>' }),
     })
   );
 });

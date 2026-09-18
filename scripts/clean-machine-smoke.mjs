@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CYN-1999 §8.1. The original PR-time projected-tree probe remains below. The
+// §8.1. The original PR-time projected-tree probe remains below. The
 // post-publish mode is a five-leg public-mirror journey, with command seams so
 // its decisions can be unit-tested without network access.
 
@@ -11,17 +11,15 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { pathToFileURL } from 'node:url';
 
-// mirror-projection.mjs is build machinery and, by design, never leaves the
-// private monorepo (see scripts/mirror-projection.mjs's INCLUDED_SCRIPT_FILES
-// comment). This module DOES ship -- it is the post-publish journey the
-// published mirror runs against itself -- so it cannot hold a static import
-// of a module the shipped tree does not contain: Node evaluates top-level
-// imports eagerly, which is exactly what broke `--post-publish` on a fresh
-// mirror clone (CYN-1999 fix-forward, run 35235475068). The only caller of
-// this pair, runCleanMachineSmoke() below, runs ONLY the PR-time
-// local-projection leg inside this private repo -- never `--post-publish` --
-// so the import is deferred until that call, and its absence in the shipped
-// tree is inert.
+// The local projection machinery is build-only and, by design, never leaves
+// the private monorepo. This module DOES ship -- it is the post-publish
+// journey the published mirror runs against itself -- so it cannot hold a
+// static import of a module the shipped tree does not contain: Node evaluates
+// top-level imports eagerly, which is exactly what broke `--post-publish` on a
+// fresh mirror clone. The only caller of this pair, runCleanMachineSmoke()
+// below, runs ONLY the PR-time local-projection leg inside this private repo
+// -- never `--post-publish` -- so the import is deferred until that call, and
+// its absence in the shipped tree is inert.
 
 const MARKETPLACE_NAME = 'cynap-operator-plugin';
 const PLUGIN_ID = `cynap-operator@${MARKETPLACE_NAME}`;
@@ -117,14 +115,13 @@ function expectCommandFailure(run, expected) {
 }
 
 function taggedMirrorUrl(mirrorRepo, tag) {
-  // CONFIRMED on a real GitHub runner (publish run 35241891876, CYN-1999
-  // fix-forward #3): `#vX` pins marketplace add to this exact immutable Git
-  // tag, including for the ANNOTATED tags this repo actually creates
-  // (`.github/workflows/publish-operator-plugin.yml`'s `git tag -a`). The
-  // `claude` CLI logs a benign warning while resolving the tag object to its
-  // commit ("refs/tags/vX … is not a commit") but installs correctly — legs
-  // 1-3 of the post-publish journey passed against it. No code here needs to
-  // handle the peel; the CLI already does.
+  // CONFIRMED on a real GitHub runner: `#vX` pins marketplace add to this
+  // exact immutable Git tag, including for the ANNOTATED tags this repo
+  // actually creates (`git tag -a`). The `claude` CLI logs a benign warning
+  // while resolving the tag object to its commit ("refs/tags/vX … is not a
+  // commit") but installs correctly — legs 1-3 of the post-publish journey
+  // passed against it. No code here needs to handle the peel; the CLI already
+  // does.
   return `https://github.com/${mirrorRepo}.git#${tag}`;
 }
 
@@ -157,8 +154,6 @@ function installPinnedTag({ tag, expectedVersion, mirrorRepo, claudeBin, execFil
 
 function removeMarketplace({ claudeBin, execFileSyncImpl, env }) {
   commandOutput(execFileSyncImpl, claudeBin, ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME], { env });
-  // PROBE OWED: confirm whether removal deletes an old cache path while a
-  // running proxy still has it open. The handover must not depend on retention.
 }
 
 async function reservePort() {
@@ -303,11 +298,10 @@ async function runRefusalsLeg(ctx) {
     try {
       proxy = await startAuthorizingProxy({ pluginPath: installed.installPath, port, homeDir, slug: 'different-org', expectedVersion: ctx.currentVersion });
       // A port already serving a DIFFERENT org is connect.mjs's own conflict
-      // refusal (lib/connect.mjs:212-253, spec §5.2) — "identity mismatch" is
-      // a distinct guard inside operator-disconnect.mjs, reached only during
-      // an explicit disconnect's nonce/identity check, never during a fresh
-      // connect against an occupied port (CYN-1999 fix-forward #3, run
-      // 35241891876). Assert the refusal connect.mjs actually emits.
+      // refusal (spec §5.2) — "identity mismatch" is a distinct guard inside
+      // operator-disconnect.mjs, reached only during an explicit disconnect's
+      // nonce/identity check, never during a fresh connect against an occupied
+      // port. Assert the refusal connect.mjs actually emits.
       expectCommandFailure(() => commandOutput(ctx.execFileSyncImpl, process.execPath, [connectPath, JOURNEY_SLUG], { env }), /port already serving org/);
       await stopOwnedProxy(proxy); proxy = undefined;
 
@@ -340,14 +334,12 @@ async function runRefusalsLeg(ctx) {
   });
 }
 
-// CYN-1999 fix-forward #3 (spec 8.1): leg 5 only asserts against a previous
-// tag whose OWN published self-update plan is fixed -- v0.15.0/v0.15.1 ship
-// working `plugin_outdated` detection but their uninstall of the legacy
-// `cynap-plugins` marketplace fails closed when that marketplace was never
-// installed (the common case since the rename), and that is baked into an
-// immutable already-published tag no later fix can repair (PR #3145). This
-// mirrors the spec's existing 0.14->0.15 bootstrap carve-out (§10 point
-// 5): an unrepairable old self-update is NOT RUN, not a failure.
+// Leg 5 only asserts against a previous tag whose OWN published self-update
+// plan is complete. Older tags ship working `plugin_outdated` detection but
+// their uninstall of the legacy `cynap-plugins` marketplace fails closed when
+// that marketplace was never installed (the common case since the rename), and
+// that is baked into an immutable already-published tag no later fix can
+// repair. An unrepairable old self-update is NOT RUN, not a failure.
 export const SELF_UPDATE_CAPABLE_SINCE = '0.15.2';
 
 /** Returns the NOT RUN reason for leg 5, or null when it must execute for real. */
@@ -376,7 +368,7 @@ function clonePreviousTag(ctx, tag) {
  * The seam between the PREVIOUS tag's `handlePluginOutdated` and its own
  * `runPluginSelfUpdate`. It must forward EVERY option its caller supplies.
  *
- * CYN-2011: this seam used to destructure only `{ out }`, silently dropping the
+ * This seam used to destructure only `{ out }`, silently dropping the
  * `minimum` that `handlePluginOutdated` passes (`runUpdate({ minimum, out })`).
  * The previous proxy's `runPluginSelfUpdate` then compared the final
  * `claude plugin list --json` against `undefined` and returned
@@ -483,7 +475,7 @@ export async function runPostPublishCleanMachineJourney({
   const legs = [
     ['Install current tag', () => runInstallCurrentLeg(ctx)],
     ['Upgrade from previous tag', () => runUpgradeLeg(ctx, previousTag)],
-    ['Replay F5 from v0.13.0', () => runUpgradeLeg(ctx, LEGACY_REPLAY_TAG, { legacyReplay: true })],
+    ['Replay the legacy upgrade path', () => runUpgradeLeg(ctx, LEGACY_REPLAY_TAG, { legacyReplay: true })],
     ['Refusals', () => runRefusalsLeg(ctx)],
     ['Autonomous self-update', () => runAutonomousUpdateLeg(ctx, previousTag)],
   ];
@@ -512,8 +504,16 @@ export async function runCleanMachineSmoke({
   execFileSyncImpl = execFileSync,
   stdout = process.stdout,
 } = {}) {
-  const { projectTree, PLUGIN_ROOT } = await import('./mirror-projection.mjs');
-  const resolvedSourceDir = sourceDir ?? PLUGIN_ROOT;
+  let projectTree;
+  let pluginRoot;
+  try {
+    ({ projectTree, PLUGIN_ROOT: pluginRoot } = await import('./mirror-projection.mjs'));
+  } catch {
+    throw new Error(
+      'clean-machine-smoke: the local projection machinery is not present in this tree — run this from the monorepo source tree, or use --post-publish against a published mirror'
+    );
+  }
+  const resolvedSourceDir = sourceDir ?? pluginRoot;
   const destDir = mkdtempSync(join(tmpdir(), 'cynap-clean-machine-smoke-'));
   try {
     projectTree({ sourceDir: resolvedSourceDir, destDir });

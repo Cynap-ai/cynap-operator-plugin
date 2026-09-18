@@ -32,10 +32,11 @@ start; append at task end. No customer-specific strings.
 
 - The six-step vocabulary is intentionally closed — resist any urge to
   propose a 7th step kind (e.g. "just let me run raw JS") as part of an
-  authoring task. That's an invariant change (`the operator safety rules`
-  §9), not something an authoring session can add ad hoc.
-- `sync` and `land` look similar (both land external data into Turso) but
-  serve different layers: `sync` does per-record incremental upsert into a
+  authoring task. That's a platform change, not something an authoring
+  session can add ad hoc.
+- `sync` and `land` look similar (both land external data into the org
+  database) but serve different layers: `sync` does per-record incremental
+  upsert into a
   typed target table; `land` does cheap raw Bronze capture for later batch
   normalization. Don't reach for `sync` when the real need is "just capture
   this webhook payload cheaply" — that's `land`.
@@ -44,7 +45,7 @@ start; append at task end. No customer-specific strings.
 
 - Should this skill grow a worked `land` example once one exists with a
   populated `events_path`/`payload_path` against a real webhook shape?
-  Current: no committed `land`-step automation example exists in the repo
+  Current: no committed `land`-step automation example exists
   as of 2026-07-07 to ground one.
 
 ---

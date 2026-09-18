@@ -8,7 +8,7 @@
 // for the headless e2e cookie leg, which has no consent step.
 //
 // The alternative (adding customer org ids to KNOWN_ORG_IDS) would put
-// per-customer data in platform tooling for no functional gain — ADR-0036.
+// per-customer data in platform tooling for no functional gain.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

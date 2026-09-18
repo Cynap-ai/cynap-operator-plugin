@@ -11,8 +11,8 @@ customer-specific strings.
   `code_execution` > `flow` > `deterministic` by cost before the decision
   rules nudges toward the cheaper mode when a task is genuinely ambiguous
   between two of them. (Historical: this used to be a 4-row table —
-  `agent` > `handler` > `flow` > `deterministic` — before CYN-1045/CYN-729
-  retired `agent` and `handler`; both collapsed into `code_execution`.)
+  `agent` > `handler` > `flow` > `deterministic` — before `agent` and
+  `handler` retired; both collapsed into `code_execution`.)
 - **Naming the trap explicitly** (conversational bot → sandbox-driven
   headless mode) rather than only describing the correct answer. Operators
   pattern-match "AI mode" to whichever entrypoint sounds most agentic;
@@ -26,9 +26,9 @@ customer-specific strings.
   incoming data") unresolved between the code-bearing mode and `flow`. The
   fix was making rule 1 (conversational?) the first gate — everything else
   follows from whether a human is on the other end of a real-time reply.
-- (CYN-1457) The skill body drifted out of sync with the schema for weeks:
-  it kept routing to `agent`/`handler`, both of which `RETIRED_EXECUTION_MODES`
-  had already rejected at the trust boundary. A skill that authors a
+- The skill body drifted out of sync with the schema for weeks:
+  it kept routing to `agent`/`handler`, both of which validation
+  had already rejected. A skill that authors a
   guaranteed-to-fail config is worse than no skill — it costs the
   operator a round-trip through a validation error instead of getting it
   right the first time. Whenever a platform mode is retired, this skill
@@ -43,7 +43,7 @@ customer-specific strings.
 
 ## Open questions
 
-- None outstanding as of CYN-1457 (2026-08-11) — `mode:code_execution` is
+- None outstanding as of 2026-08-11 — `mode:code_execution` is
   now the live customer-authorable mode covering everything the retired
   `agent`/`handler` modes used to (the prior "should this become a 5th
   option" question resolved itself: it became THE code-bearing mode, not
@@ -51,5 +51,5 @@ customer-specific strings.
 
 ---
 
-**Last updated:** 2026-08-11 (CYN-1457 — routing rewritten around the live
+**Last updated:** 2026-08-11 (routing rewritten around the live
 3-mode vocabulary after `agent`/`handler` retirement).

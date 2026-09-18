@@ -37,7 +37,7 @@ export function formatConnectMessage(result, {
 export async function main(argv = process.argv.slice(2)) {
   const { slug, env } = parseConnectArgs(argv);
   const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-  // CYN-1959: reread fresh on every connect, and launch via the launcher (not
+  // Reread fresh on every connect, and launch via the launcher (not
   // operator-proxy.mjs directly) so a later SessionStart self-heal relaunch
   // also rereads fresh rather than replaying a version baked into the
   // persisted launch record.

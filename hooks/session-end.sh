@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# CYN-801 — operator session-trail SessionEnd hook.
+# Operator session-trail SessionEnd hook.
 #
 # Behavior contract (spec §2.1/§6.4/§7):
 #   - async:true, and this script EXITS 0 UNCONDITIONALLY — never blocks or
-#     fails session termination, matching the precedent .claude/hooks/session-end.sh.
+#     fails session termination, matching the SessionEnd-hook convention.
 #   - Fires for EVERY session close, but is a NO-OP unless this project
 #     directory is actually connected to the operator plane (a `.mcp.json`
 #     naming the `cynap-operator` server must exist here — the ONLY dirs
