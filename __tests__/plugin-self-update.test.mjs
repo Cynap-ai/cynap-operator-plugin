@@ -184,6 +184,47 @@ test('runPluginSelfUpdate fails closed when the final plugin list does not prove
   });
 });
 
+// The 2026-09-17 main-RED (publish run 35256409279). The gate was RIGHT to refuse,
+// and the log could not say what it had observed: `verifiedPluginVersion` collapses
+// "still one patch behind", "no record for this plugin", and "unparseable output"
+// into one `null`, so the CI step could only report `verification_failed`. Those are
+// three different bugs with three different fixes, so the failure now names the one
+// it saw. Pinned here because the diagnosis is what the next responder reads first.
+test('a failed version verification names the version it actually observed', () => {
+  const out = sink();
+  const result = runPluginSelfUpdate({
+    minimum: '0.15.3',
+    execFileImpl: () => JSON.stringify([{ id: PLUGIN_QUALIFIED_ID, version: '0.15.2' }]),
+    out,
+  });
+
+  assert.equal(result.reason, 'verification_failed');
+  assert.match(out.text(), /observed 0\.15\.2/);
+  assert.match(out.text(), /at or above 0\.15\.3/);
+});
+
+test('a failed version verification distinguishes an absent record from a stale one', () => {
+  const out = sink();
+  runPluginSelfUpdate({
+    minimum: '0.15.3',
+    execFileImpl: () => JSON.stringify([{ id: 'some-other-plugin', version: '9.9.9' }]),
+    out,
+  });
+
+  assert.match(out.text(), /no version record for this plugin/);
+});
+
+test('a failed version verification distinguishes unparseable output from a stale one', () => {
+  const out = sink();
+  runPluginSelfUpdate({
+    minimum: '0.15.3',
+    execFileImpl: () => 'not json at all',
+    out,
+  });
+
+  assert.match(out.text(), /no version record for this plugin/);
+});
+
 test('a missing `claude` CLI is a distinct, non-error outcome (Codex has no Claude Code CLI)', () => {
   const out = sink();
   const err = new Error('spawn claude ENOENT');

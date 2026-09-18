@@ -372,6 +372,30 @@ function clonePreviousTag(ctx, tag) {
   }
 }
 
+/**
+ * The seam between the PREVIOUS tag's `handlePluginOutdated` and its own
+ * `runPluginSelfUpdate`. It must forward EVERY option its caller supplies.
+ *
+ * CYN-2011: this seam used to destructure only `{ out }`, silently dropping the
+ * `minimum` that `handlePluginOutdated` passes (`runUpdate({ minimum, out })`).
+ * The previous proxy's `runPluginSelfUpdate` then compared the final
+ * `claude plugin list --json` against `undefined` and returned
+ * `verification_failed` — AFTER a completely successful update. That reddened
+ * main on 2026-09-17 and stopped the deploy train.
+ *
+ * It stayed invisible for two independent reasons, which is why it is exported
+ * and pinned by a test rather than inlined: (1) the leg-5 carve-out skipped this
+ * leg entirely, exactly while the previous tag was the one the carve-out excused,
+ * and (2) a unit test that calls `runPluginSelfUpdate` DIRECTLY always supplies a
+ * minimum, so it can never reach this seam's defect.
+ */
+export function makePreviousTagRunUpdate({ oldProxy, env, execFileSyncImpl }) {
+  return (options) => oldProxy.runPluginSelfUpdate({
+    ...options,
+    execFileImpl: (binary, argv) => commandOutput(execFileSyncImpl, binary, argv, { env }),
+  });
+}
+
 async function runAutonomousUpdateLeg(ctx, previousTag) {
   const previousDir = clonePreviousTag(ctx, previousTag);
   try {
@@ -398,10 +422,7 @@ async function runAutonomousUpdateLeg(ctx, previousTag) {
         pluginVersion: oldVersion,
         guard: oldProxy.createPluginSelfUpdateGuard(),
         launchRecord: { proxyArgv: [join(old.installPath, 'bin', 'operator-proxy-launcher.mjs')], launchCommand: 'true' },
-        runUpdate: ({ out }) => oldProxy.runPluginSelfUpdate({
-          out,
-          execFileImpl: (binary, argv) => commandOutput(ctx.execFileSyncImpl, binary, argv, { env }),
-        }),
+        runUpdate: makePreviousTagRunUpdate({ oldProxy, env, execFileSyncImpl: ctx.execFileSyncImpl }),
         readInstalled: () => assertInstalledPlugin({
           records: listInstalled({ claudeBin: ctx.claudeBin, execFileSyncImpl: ctx.execFileSyncImpl, env }),
           expectedVersion: ctx.currentVersion,
@@ -410,7 +431,28 @@ async function runAutonomousUpdateLeg(ctx, previousTag) {
         out: { write: (line) => lines.push(line) },
       });
       if (outcome !== 'ready_to_restart') {
-        throw new Error(`clean-machine-smoke: recorded plugin_outdated fixture did not authorize restart (${outcome})`);
+        // The proxy's narration is the ONLY record of which update step no-opped: it
+        // is written to the captured `out` above, so unless it is echoed here the CI
+        // log shows just the raw CLI error and cannot name the failing step — which is
+        // exactly the dead end main hit on 2026-09-17, when the gate correctly refused
+        // an update that had not landed and the log could not say which step no-opped.
+        // The post-attempt `plugin list` is the other half: it names the version the
+        // machine is actually left on, which separates "the update no-opped" from "the
+        // plugin was never installed under the resolved id".
+        const narration = lines.join('').trim();
+        let installedAfter;
+        try {
+          installedAfter = JSON.stringify(
+            listInstalled({ claudeBin: ctx.claudeBin, execFileSyncImpl: ctx.execFileSyncImpl, env })
+          );
+        } catch (error) {
+          installedAfter = `<plugin list failed: ${error instanceof Error ? error.message : String(error)}>`;
+        }
+        throw new Error(
+          `clean-machine-smoke: recorded plugin_outdated fixture did not authorize restart (${outcome}); ` +
+            `plugin list after the attempt: ${installedAfter}; ` +
+            `self-update narration: ${narration || '<none>'}`
+        );
       }
       if (!lines.join('').includes(`-> ${ctx.currentVersion}`)) {
         throw new Error('clean-machine-smoke: self-update did not report the current plugin version');

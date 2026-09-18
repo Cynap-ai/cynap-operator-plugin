@@ -437,6 +437,31 @@ function verifiedPluginVersion(pluginListOutput, minimum) {
   }
 }
 
+/**
+ * The version `claude plugin list --json` reports for this plugin, whatever it
+ * is — `null` when there is no record for it, or the output is unparseable.
+ *
+ * `verifiedPluginVersion` answers "is it at or above the minimum?" and collapses
+ * every way of being wrong into the same `null`. That is the right answer for
+ * the DECISION, and the wrong one for the REPORT: a `verification_failed` that
+ * cannot name the version it saw is indistinguishable from an unparseable `plugin
+ * list`, an absent record, and a plugin parked one patch below the floor. The
+ * 2026-09-17 clean-machine-smoke failure on main was exactly that — the gate
+ * correctly refused, and the log could not say what it had observed.
+ */
+function observedPluginVersion(pluginListOutput) {
+  try {
+    const records = JSON.parse(pluginListOutput);
+    if (!Array.isArray(records)) return null;
+    const installed = records.find(
+      (record) => record && record.id === PLUGIN_QUALIFIED_ID && typeof record.version === 'string'
+    );
+    return installed?.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function runPluginSelfUpdate({ minimum, execFileImpl = execFileSync, out = process.stderr } = {}) {
   let finalPluginListOutput = null;
   for (const argv of PLUGIN_SELF_UPDATE_ARGV) {
@@ -475,9 +500,16 @@ export function runPluginSelfUpdate({ minimum, execFileImpl = execFileSync, out 
     }
   }
   if (typeof minimum !== 'string' || !verifiedPluginVersion(finalPluginListOutput, minimum)) {
+    const observed = observedPluginVersion(finalPluginListOutput);
+    const noOutput = finalPluginListOutput === null ? ' (the final list step produced no output)' : '';
+    // Name what was seen, not just that it was insufficient: "still 0.15.2" (the
+    // update was a no-op), "<no version record for this plugin>" (it was never
+    // installed), and "no output" (the CLI itself failed) are three different bugs.
     out.write(
       `[operator-proxy] self-update FAILED at \`claude plugin list --json\`: ` +
-        `did not prove ${PLUGIN_QUALIFIED_ID} is at or above ${minimum ?? '<unknown>'}.\n`
+        `did not prove ${PLUGIN_QUALIFIED_ID} is at or above ${minimum ?? '<unknown>'} — ` +
+        `observed ${observed ?? '<no version record for this plugin>'}${noOutput} ` +
+        'after every update step reported success.\n'
     );
     return { ok: false, reason: 'verification_failed', step: 'claude plugin list --json' };
   }
