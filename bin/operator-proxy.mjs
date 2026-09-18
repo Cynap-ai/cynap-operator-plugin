@@ -1074,8 +1074,37 @@ export function generatePkcePair(rand = randomBytes) {
   return { verifier, challenge };
 }
 
-/** Best-effort open the OS default browser; always prints the URL to copy/paste. */
-function openBrowser(url, out = process.stderr) {
+/**
+ * Is the browser launch switched off for this process? Opt-IN, and literal on
+ * purpose: only the exact string `1` disables it, so a stray or inherited env var
+ * can never silently turn the operator's login into a copy/paste-only flow.
+ *
+ * The PKCE leg's `open` is an injectable seam, but the login runs INSIDE
+ * the proxy — which the smoke journey spawns as a separate process — so a harness
+ * cannot inject across that boundary. The signal therefore has to travel in the
+ * environment, and this is the single place that reads it.
+ */
+export function browserLaunchDisabled(env = process.env) {
+  return env.CYNAP_OPERATOR_NO_BROWSER === '1';
+}
+
+/**
+ * Best-effort open the OS default browser; always prints the URL to copy/paste.
+ *
+ * Suppressed by `CYNAP_OPERATOR_NO_BROWSER=1`, which the clean-machine smoke journey
+ * sets for every connect it drives. Without it that journey hijacks the operator's real
+ * browser — measured at ~7 tabs per run, all pointing at a production authorize URL for
+ * a fixture org that does not exist. CI never saw it because headless Linux has no
+ * `xdg-open` and the spawn failure is swallowed by the `catch` below.
+ *
+ * Suppression removes ONLY the launch: the URL is still printed, so the journey keeps
+ * its assertion surface instead of losing the report along with the side effect.
+ */
+export function openBrowser(url, out = process.stderr, env = process.env) {
+  if (browserLaunchDisabled(env)) {
+    out.write(`[operator-proxy] browser launch suppressed (CYNAP_OPERATOR_NO_BROWSER=1); visit:\n  ${url}\n`);
+    return;
+  }
   const [cmd, args] =
     process.platform === 'darwin'
       ? ['open', [url]]

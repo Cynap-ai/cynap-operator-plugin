@@ -138,8 +138,17 @@ async function withFreshHome(run) {
   }
 }
 
+/**
+ * The env every leg hands to the connects and proxies it spawns.
+ *
+ * `CYNAP_OPERATOR_NO_BROWSER=1` is set unconditionally: this is a JOURNEY,
+ * not an operator sitting at a terminal, so it must never drive the operator's real
+ * browser. The signal has to ride the environment because the login happens inside a
+ * spawned proxy, out of reach of the injectable `open` seam. Suppression keeps the URL
+ * report, so the journey still asserts on the authorize URL it constructed.
+ */
 function withHome(homeDir, baseEnv) {
-  return { ...baseEnv, HOME: homeDir };
+  return { ...baseEnv, HOME: homeDir, CYNAP_OPERATOR_NO_BROWSER: '1' };
 }
 
 function listInstalled({ claudeBin, execFileSyncImpl, env }) {
