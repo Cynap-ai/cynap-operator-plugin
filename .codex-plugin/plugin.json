@@ -5,5 +5,11 @@
   "author": {
     "name": "Cynap",
     "url": "https://cynap.ai"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Cynap Operator",
+    "shortDescription": "Connect Codex to your Cynap operator workspace",
+    "category": "Developer Tools"
   }
 }
