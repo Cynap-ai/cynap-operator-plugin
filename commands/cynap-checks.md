@@ -17,8 +17,10 @@ content. (The detective half — the platform-CI backstop — lands in W2.)
 
 ## When to run it
 
-Right after `workspace_commit` returns a `commit_sha`, and before you elevate to
-`workspace_activate_commit`. Pass the commit sha you just committed.
+Right after `workspace_commit` returns a `commit_sha`, and before you run
+`/cynap-activate <commit_sha>` (the owner step-up that mints the one-purpose
+activation credential and calls `workspace_activate_commit` for you). Pass the commit
+sha you just committed.
 
 ## What it does (entirely operator-local — spec §5)
 
@@ -53,7 +55,7 @@ The runner, from your current org working directory:
 ## Reading the result
 
 - **pass** — every assertion held against your pending bytes; a fresh pass verdict is now
-  persisted for `commit_sha`. You may proceed to `workspace_activate_commit`.
+  persisted for `commit_sha`. You may proceed to `/cynap-activate <commit_sha>`.
 - **fail** — at least one invariant is violated by your pending change; the runner prints the
   first failing assertion. Fix the config and re-commit + re-run — do NOT activate.
 - **refused (local checks drift)** — your `checks/` differs from the deployed HEAD. Merge the

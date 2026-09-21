@@ -78,11 +78,17 @@ export const REMINT_SKEW_SECONDS = 60;
  * `run_evidence_get` was missing — OPS_READ_TOOLS has been 5
  * members (not 4), and this list drifted from it. Harmless before W3
  * (no scope ever held both families at once, so the drift only meant one operator
- * evidence read wasn't blind-retried on a cold 504). */
+ * evidence read wasn't blind-retried on a cold 504).
+ * `workspace_get_commit` was missing too (WORKSPACE_READ_TOOLS gained it with
+ * the accepted chain) — a pure read, same drift shape as above.
+ * `workspace_discard_commit` is deliberately NOT here: it is destructive, and a
+ * blind retry after a discard that succeeded but lost its response answers
+ * `commit_orphaned` — a refusal reported for an operation that happened. */
 export const IDEMPOTENT_TOOL_NAMES = new Set([
   'workspace_status',
   'workspace_tree',
   'workspace_get_file',
+  'workspace_get_commit',
   'workspace_diff',
   'workspace_log',
   'workspace_receipts',

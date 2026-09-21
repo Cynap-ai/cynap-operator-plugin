@@ -89,9 +89,12 @@ async function fetchHeadCheckFiles(proxyUrl) {
   const bytesByPath = new Map();
   for (const path of paths) {
     const file = await mcpCall(proxyUrl, 'workspace_get_file', { path });
-    const content = typeof file?.content === 'string' ? file.content : file?.content_base64;
-    const encoding = file?.encoding ?? (file?.content_base64 ? 'base64' : 'utf8');
-    bytesByPath.set(path, new Uint8Array(Buffer.from(content ?? '', encoding === 'base64' ? 'base64' : 'utf8')));
+    // A reply without `{encoding, content}` is refused, never read as an empty file: checks
+    // that run against zero bytes would pass or fail for the wrong reason.
+    if (typeof file?.content !== 'string' || (file.encoding !== 'utf8' && file.encoding !== 'base64')) {
+      throw new Error(`workspace_get_file ${path}: reply has no {encoding, content}`);
+    }
+    bytesByPath.set(path, new Uint8Array(Buffer.from(file.content, file.encoding)));
   }
   return bytesByPath;
 }
