@@ -4,7 +4,7 @@
 
 # Cynap Operator Plugin
 
-Version 0.17.2. A Claude Code / Codex plugin that connects a working
+Version 0.17.3. A Claude Code / Codex plugin that connects a working
 directory to the Cynap operator plane — one organization per directory, over
 MCP.
 

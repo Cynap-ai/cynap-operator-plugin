@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { classifyPath } from '../bin/cynap-checks-core.mjs';
-import { classifyForPush, entranceForKind, DEFERRED_ACTIVATION_KINDS, OWN_ENTRANCE_KINDS } from '../lib/workspace-kinds.mjs';
+import { classifyForPush, entranceForKind, COMMIT_ONLY_KINDS, DEFERRED_ACTIVATION_KINDS, OWN_ENTRANCE_KINDS } from '../lib/workspace-kinds.mjs';
 
 test('classifyPath is reachable from the bundled checks core (not tree-shaken away)', () => {
   assert.equal(typeof classifyPath, 'function');
@@ -39,6 +39,18 @@ test('classifyForPush refuses handler source with the handler_upload entrance', 
   const refusal = classifyForPush('automations/handlers/foo/handler.ts', classifyPath);
   assert.equal(refusal.kind, 'handler-source');
   assert.equal(refusal.entrance, 'handler_upload');
+});
+
+test('classifyForPush allows a commit-only operator note (never refused locally)', () => {
+  assert.equal(classifyPath('operator/README.md'), 'operator-note');
+  assert.equal(classifyForPush('operator/README.md', classifyPath), null);
+  assert.equal(entranceForKind('operator-note'), null);
+});
+
+test('commit-only kinds are disjoint from the refused kinds', () => {
+  for (const kind of COMMIT_ONLY_KINDS) {
+    assert.ok(!DEFERRED_ACTIVATION_KINDS.has(kind) && !OWN_ENTRANCE_KINDS.has(kind), kind);
+  }
 });
 
 test('classifyForPush allows an ordinary activatable kind (no refusal)', () => {

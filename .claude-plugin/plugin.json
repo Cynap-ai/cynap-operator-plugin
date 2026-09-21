@@ -1,6 +1,6 @@
 {
   "name": "cynap-operator",
-  "version": "0.17.2",
+  "version": "0.17.3",
   "description": "First-party Cynap operator plane plugin — connects Claude Code and Codex to the operator MCP endpoint via a per-org loopback proxy. See the plugin README.",
   "author": {
     "name": "Cynap",
