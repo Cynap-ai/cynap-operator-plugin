@@ -78,8 +78,7 @@ export const REMINT_SKEW_SECONDS = 60;
  * `run_evidence_get` was missing — OPS_READ_TOOLS has been 5
  * members (not 4), and this list drifted from it. Harmless before W3
  * (no scope ever held both families at once, so the drift only meant one operator
- * evidence read wasn't blind-retried on a cold 504); W3's workspace:operate profile
- * makes both families reachable from the SAME session, so the omission is now live. */
+ * evidence read wasn't blind-retried on a cold 504). */
 export const IDEMPOTENT_TOOL_NAMES = new Set([
   'workspace_status',
   'workspace_tree',
@@ -285,6 +284,9 @@ export const HEALTH_PATH = '/health';
  * branch. Nonce-gated like /disconnect: the SessionStart banner hook is the
  * only intended caller. */
 export const CONTEXT_PATH = '/context';
+
+/** Owner-only, nonce-gated local control route used by /cynap-activate. */
+export const ACTIVATE_PATH = '/activate';
 
 /** Managed local shutdown path. The proxy performs its own credential revocation and
  * returns the outcome before exiting; callers never signal a health-supplied PID. */
@@ -923,12 +925,8 @@ export function deleteMarker(slug, sessionId, baseDir) {
  * @param {'workspace'|'session'} [opts.family] - the operator-token scope
  *   family to mint (default 'workspace', backward-compatible). 'session' mints
  *   workspace:session-capture for the /session-end transcript upload.
- * @param {'workspace:file-activate'|'workspace:commit'|'workspace:operate'} [opts.requestedScope] -
- *   forwarded verbatim to POST /api/auth/operator-token's `requestedScope`
- *   body field. 'workspace:operate' is the cross-family minting PROFILE — the operator
- *   plugin's --profile operate flag sets this so a single session can both read a run
- *   (ops-journal evidence) and activate a config-kind commit (the structural gap this
- *   wave closes: "a session that can change a file cannot read a single run").
+ * @param {string} [opts.requestedScope] - forwarded verbatim to POST
+ * /api/auth/operator-token's `requestedScope` body field.
  * @param {typeof fetch} [opts.fetchImpl] - injectable fetch for tests
  * @param {() => number} [opts.now] - injectable clock (seconds since epoch), for tests
  */
@@ -1267,7 +1265,12 @@ export async function pkceLoopbackLogin({
   open = openBrowser,
   out = process.stderr,
   timeoutMs = 5 * 60 * 1000,
+  requestKind = 'login',
+  commitSha,
 }) {
+  if (requestKind === 'activation' && !/^[a-f0-9]{64}$/i.test(commitSha ?? '')) {
+    throw new Error('activation PKCE requires a 64-character commit sha');
+  }
   const { verifier, challenge } = generatePkcePair();
   const state = base64url(randomBytes(16));
   const { server, port, waitForCode } = await startLoopbackListener(state);
@@ -1280,6 +1283,10 @@ export async function pkceLoopbackLogin({
   authUrl.searchParams.set('code_challenge_method', 'S256');
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('org', orgSlug);
+  if (requestKind === 'activation') {
+    authUrl.searchParams.set('request_kind', 'activation');
+    authUrl.searchParams.set('commit_sha', commitSha);
+  }
 
   out.write('[operator-proxy] Opening browser for operator login (PKCE loopback)…\n');
   open(authUrl.toString(), out);
@@ -1312,6 +1319,54 @@ export async function pkceLoopbackLogin({
 }
 
 /**
+ * Complete the owner step-up without ever placing the five-minute purpose
+ * credential in a file or the long-lived token cache. The portal owns the
+ * binding (commit + generation) at approval; this proxy only presents it and
+ * immediately uses the returned credential for the one allowed MCP call.
+ */
+export async function activateCommitWithStepUp({
+  mintHost,
+  mcpHost,
+  mcpPath,
+  orgSlug,
+  commitSha,
+  pluginVersion,
+  login = pkceLoopbackLogin,
+  fetchImpl = fetch,
+  out = process.stderr,
+}) {
+  if (!/^[a-f0-9]{64}$/i.test(commitSha ?? '')) {
+    throw new Error('activation requires a 64-character commit sha');
+  }
+  const { credential } = await login({
+    mintHost,
+    orgSlug,
+    pluginVersion,
+    requestKind: 'activation',
+    commitSha,
+    out,
+  });
+  if (!credential) throw new Error('activation PKCE exchange returned no credential');
+  const response = await fetchImpl(`${mcpHost}${mcpPath}`, {
+    method: 'POST',
+    headers: upstreamHeaders(pluginVersion, {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      Authorization: `Bearer ${credential}`,
+    }),
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'cynap-operator-activate',
+      method: 'tools/call',
+      params: { name: 'workspace_activate_commit', arguments: { commit_sha: commitSha } },
+    }),
+  });
+  const body = await readUpstreamResponseText(response);
+  if (!response.ok) throw new Error(`workspace activation failed: ${response.status}`);
+  return body;
+}
+
+/**
  * Device-code login (RFC 8628 fallback, headless). Prints the user_code + verification URL,
  * then polls until the operator approves in a browser. Returns { credential, orgId, expiresAt }.
  */
@@ -1324,7 +1379,11 @@ export async function deviceCodeLogin({
   out = process.stderr,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = () => Date.now(),
+  requestKind = 'login',
 }) {
+  if (requestKind === 'activation') {
+    throw new Error('device-code approval is refused for activation');
+  }
   const startRes = await fetchImpl(`${mintHost}/api/auth/operator-cli/device/code`, {
     method: 'POST',
     headers: upstreamHeaders(pluginVersion, { 'Content-Type': 'application/json', ...stagingProtectionBypassHeaders() }),
@@ -1601,6 +1660,7 @@ export function createProxyServer({
   // standalone `node operator-proxy.mjs` run with none supplied simply never
   // serves /context rather than serving it unauthenticated.
   controlNonce,
+  requestActivation,
   // Called with `{ minimum }` after a forwarded response
   // carrying a `plugin_outdated` answer has been fully delivered. Optional — a
   // standalone `node operator-proxy.mjs` run passes nothing and simply forwards
@@ -1704,6 +1764,29 @@ export function createProxyServer({
         pluginVersion,
         fetchImpl,
       });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === ACTIVATE_PATH) {
+      if (!controlNonce || req.headers[CONTROL_HEADER] !== controlNonce) {
+        res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: 'invalid_local_control_nonce' }));
+        return;
+      }
+      if (typeof requestActivation !== 'function') {
+        res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: 'activation_unavailable' }));
+        return;
+      }
+      try {
+        const payload = JSON.parse((await readBody(req)).toString('utf8'));
+        const result = await requestActivation(payload?.commit_sha);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ ok: true, result }));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'activation_failed' }));
+      }
       return;
     }
 
@@ -2171,8 +2254,6 @@ export function parseArgs(argv) {
     // bakes identically on staging + prod. interactive → PKCE loopback (default);
     // device → RFC 8628; e2e → the staging e2e-session cookie leg (cynap-e2e only).
     authMode: 'interactive',
-    // Absent by default (unchanged single-scope execute-preview mint).
-    requestedScope: undefined,
     // Supplied by bin/operator-proxy-launcher.mjs on every plugin-managed
     // start (rereading .claude-plugin/plugin.json fresh each time — never persisted
     // into proxy-launch.json). Absent for a documented standalone
@@ -2206,18 +2287,6 @@ export function parseArgs(argv) {
         process.exit(1);
       }
       opts.pluginVersion = argv[++i];
-    } else if (arg === '--profile') {
-      // The only accepted value today is 'operate' (the cross-family minting
-      // profile — a session that can read run history and activate a config
-      // commit, but cannot upload handler code or process erasure requests).
-      // Any other value is a hard refusal at the client, mirroring the portal
-      // route's own closed set.
-      const profile = argv[++i];
-      if (profile !== 'operate') {
-        process.stderr.write(`Unknown --profile value: ${profile} (only 'operate' is accepted)\n`);
-        process.exit(1);
-      }
-      opts.requestedScope = 'workspace:operate';
     } else if (arg === '--help' || arg === '-h') {
       opts.help = true;
     } else {
@@ -2230,7 +2299,7 @@ export function parseArgs(argv) {
 
 function usage() {
   return [
-    'Usage: operator-proxy.mjs [--staging|--prod] [--device|--e2e] [--org-slug <slug>] [--port <n>] [--profile operate]',
+    'Usage: operator-proxy.mjs [--staging|--prod] [--device|--e2e] [--org-slug <slug>] [--port <n>]',
     '',
     'Starts a local HTTP MCP proxy at http://127.0.0.1:<port>/mcp that forwards',
     'to the operator MCP endpoint, injecting a freshly-minted Bearer token.',
@@ -2251,10 +2320,6 @@ function usage() {
     '',
     'Also serves POST /session-end, signalled by a SessionEnd hook to',
     'upload the ending session\'s transcript (if it touched the operator MCP).',
-    '',
-    '--profile operate: mint the cross-family profile instead of the default narrow one',
-    '— a session that can both READ a run and ACTIVATE a config commit, but cannot upload',
-    'handler code or process erasure requests. Requires org-owner membership.',
     '',
     '--plugin-version <semver>: sent as x-cynap-plugin-version on every upstream',
     'call and reported by /health and the local `initialize` handshake. A plugin-managed',
@@ -2429,7 +2494,6 @@ export async function main(argv = process.argv.slice(2)) {
     targetOrgId: opts.targetOrgId,
     allowedOrgId: opts.allowedOrgId,
     getAuthHeaders,
-    requestedScope: opts.requestedScope,
     pluginVersion: opts.pluginVersion,
   });
 
@@ -2515,6 +2579,14 @@ export async function main(argv = process.argv.slice(2)) {
     readTranscriptFor,
     pluginVersion: opts.pluginVersion,
     controlNonce,
+    requestActivation: (commitSha) => activateCommitWithStepUp({
+      mintHost,
+      mcpHost,
+      mcpPath: UPSTREAM_MCP_PATH,
+      orgSlug: opts.orgSlug,
+      commitSha,
+      pluginVersion: opts.pluginVersion,
+    }),
     onPluginOutdated,
   });
   lifecycleStatus = 'ready';

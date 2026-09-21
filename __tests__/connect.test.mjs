@@ -16,6 +16,7 @@ import {
   resolveWorkingDir,
   materializeWorkingDir,
   buildProjectMcpJson,
+  buildCodexMcpToml,
   buildProxyArgv,
   planConnect,
   CYNAP_E2E_SLUG,
@@ -116,6 +117,13 @@ test('buildProjectMcpJson carries the X-Cynap-CC-Session header with a ${CLAUDE_
   // Still carries no secret — the session id is not itself a credential.
   const json = JSON.stringify(mcpJson);
   assert.doesNotMatch(json.toLowerCase(), /authorization|bearer|token|cookie|secret/);
+});
+
+test('buildCodexMcpToml points Codex at the same loopback proxy without a credential', () => {
+  const toml = buildCodexMcpToml({ port: 9123 });
+  assert.match(toml, /^\[mcp_servers\.cynap-operator\]$/m);
+  assert.match(toml, /url = "http:\/\/127\.0\.0\.1:9123\/mcp"/);
+  assert.doesNotMatch(toml.toLowerCase(), /authorization|bearer|token|cookie|secret/);
 });
 
 test('buildProxyArgv builds the org-pinned argv with --allow-org and --port', () => {
