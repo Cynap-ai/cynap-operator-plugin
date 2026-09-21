@@ -103,6 +103,45 @@ test('pull: a conflicting path writes NOTHING and reports both shas', async () =
   }
 });
 
+// An HTTP-layer failure on workspace_get_file used to surface as
+// bare "MCP workspace_get_file HTTP 500" — no way to tell WHICH of N
+// in-flight fetches (concurrency 8) failed. The message must name the tool
+// AND the failing path.
+test('pull: an HTTP error from workspace_get_file names the tool AND the failing path', async () => {
+  const dir = scratchDir();
+  try {
+    const fetchImpl = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const { name } = body.params;
+      if (name === 'workspace_tree') {
+        return {
+          ok: true,
+          json: async () => ({
+            result: {
+              structuredContent: {
+                ok: true,
+                commit_sha: TIP_SHA,
+                entries: [{ path: 'context/profile.md', kind: 'context-doc', type: 'file', size_bytes: 1, sha256: H_REMOTE }],
+              },
+            },
+          }),
+        };
+      }
+      if (name === 'workspace_get_file') {
+        return { ok: false, status: 500, json: async () => ({}) };
+      }
+      throw new Error(`unexpected tool "${name}"`);
+    };
+
+    await assert.rejects(
+      pull({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir], fetchImpl }),
+      /workspace_get_file\(context\/profile\.md\) HTTP 500/
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('pull: --take-remote resolves one conflict and writes the remote bytes', async () => {
   const dir = scratchDir();
   try {

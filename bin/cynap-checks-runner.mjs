@@ -51,7 +51,10 @@ async function mcpCall(proxyUrl, name, args) {
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call', params: { name, arguments: args } }),
   });
-  if (!response.ok) throw new Error(`MCP ${name} HTTP ${response.status}`);
+  if (!response.ok) {
+    const pathSuffix = args && typeof args.path === 'string' ? `(${args.path})` : '';
+    throw new Error(`MCP ${name}${pathSuffix} HTTP ${response.status}`);
+  }
   const body = await response.json();
   if (body.error) throw new Error(`MCP ${name} error: ${JSON.stringify(body.error)}`);
   // Prefer the structured content; fall back to the first text block.
