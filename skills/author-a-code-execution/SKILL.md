@@ -10,7 +10,9 @@ org — it is the only code-bearing mode on this platform (`mode:handler` and
 `mode:agent` are **REMOVED** — migrate to `mode:code_execution`). It runs in
 a per-run isolated runtime. If you haven't confirmed this is the right mode,
 go read `choose-the-right-mode` first. Read `platform-invariants` before
-this skill if you haven't this session.
+this skill if you haven't this session. If the handler uses `ctx.tools.llm`
+or the `opencode` entrypoint, also read `configure-customer-ai` and explain
+native versus BYOK billing before choosing a model.
 
 ## Two entrypoints, one mode
 

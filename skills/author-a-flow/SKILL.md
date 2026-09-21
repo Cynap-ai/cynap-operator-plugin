@@ -6,10 +6,13 @@ description: Author a conversational bot (WhatsApp/Slack/Roam DM) as a Flow-Runn
 # author-a-flow — Flow-Runner Authoring
 
 You are authoring a **conversational bot** for one customer org. This is a
-BYOK-LLM config on the platform runtime — no sandbox, ~free COGS. If you haven't
-confirmed this is the right mode, go read `choose-the-right-mode` first.
+platform-runtime config with customer AI consumption on each model round-trip.
+If you haven't confirmed this is the right mode, go read
+`choose-the-right-mode` first.
 
-Read `platform-invariants` before this skill if you haven't this session.
+Read `platform-invariants` and `configure-customer-ai` before this skill if
+you haven't this session. Explain native versus BYOK billing before choosing a
+model; the flow config does not choose the payer.
 
 ## Deliverable shape
 
@@ -79,6 +82,9 @@ schema-parse rejection, not a silently-ignored key.
    platform-managed `allowedHosts` list. A `baseURL` pointing at
    `169.254.169.254` or an unlisted host is rejected at load time — this
    applies to `model.baseURL` AND every `subagents[*].model.baseURL`.
+   Native routes never accept a customer-set `baseURL`; use the exact qualified
+   catalog model reference and let the platform resolve its endpoint. A custom
+   approved endpoint is a legacy BYOK transport only.
 
 4. **A declared tool must be permitted, not just approved** — the platform
    computes `declared ∩ grant`, and a tool you declare that IS in the approved

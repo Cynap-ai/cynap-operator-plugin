@@ -7,19 +7,21 @@ description: Route an authoring task to the correct one of Cynap's 3 live automa
 
 You are about to author a new automation, bot, or scheduled job for a
 customer org. **Pick the mode before writing any config or code.** Read
-`platform-invariants` first if you haven't this session.
+`platform-invariants` first if you haven't this session. If any route below
+makes an AI call, also read `configure-customer-ai`; funding and provider
+availability are independent of execution mode.
 
 ## Retired modes
 
 `mode:agent` and `mode:handler` are retired — migrate to mode:code_execution.
 
-## The 3 live modes, cost-ordered (cheapest last, most expensive first)
+## The 3 live modes
 
-| Mode | Runtime | LLM | Runtime→COGS | Deliverable shape |
+| Mode | Runtime | AI shape | Billing implication | Deliverable shape |
 |---|---|---|---|---|
-| **code_execution** | Per-run isolated runtime | Selective (`ctx.tools.llm.complete()`) or a full headless agent session (`entrypoint: 'opencode'`), depending on the task | Per-run runtime time — the most expensive of the 3, still cheaper than the old sandbox model it replaced | `automations/handlers/{id}/config.json` + single-file `handler.ts` |
-| **flow** | Platform runtime | BYOK, per-message | ~free (no sandbox) | `communication/flows/{id}/flow.json` (+ optional `bots.json`) |
-| **deterministic** | Platform runtime | No agentic loop — a fixed step sequence may include a bounded `llm` tool call | **Cheapest** — platform runtime only, no sandbox, no AI credits (beyond an optional bounded `llm` step) | single `automations/{automation-id}.json` with `execution.steps[]` |
+| **code_execution** | Per-run isolated runtime | Selective (`ctx.tools.llm.complete()`) or a full headless agent session (`entrypoint: 'opencode'`) | Runtime is charged separately; each AI call follows the org's native/BYOK funding record. | `automations/handlers/{id}/config.json` + single-file `handler.ts` |
+| **flow** | Platform runtime | One or more model round-trips in a conversation | Each round-trip is customer AI consumption; native/BYOK rules apply and ordinary runtime charges still apply. | `communication/flows/{id}/flow.json` (+ optional `bots.json`) |
+| **deterministic** | Platform runtime | No agentic loop; a fixed sequence may include a bounded `llm` tool call | Runtime stays cheap, but an `llm` step still incurs customer AI consumption under the org's funding mode. | single `automations/{automation-id}.json` with `execution.steps[]` |
 
 ## Decision rules (apply in this order)
 
@@ -82,8 +84,9 @@ action is `code_execution` (`entrypoint: 'opencode'`) or `flow`. See
 - Conversational bot → `author-a-flow`
 - TypeScript handler with selective LLM / org-database writes, or a headless
   browser/filesystem agent session → `author-a-code-execution`
-- No-LLM scheduled sync/reconciler/ETL → `author-a-deterministic-automation`
+- Fixed-step scheduled sync/reconciler/ETL → `author-a-deterministic-automation`
 - Schema/entity changes (any mode) → `author-a-schema-change`
 - Shared cross-mode constraints → `platform-invariants`
+- Any AI call or model selection → `configure-customer-ai`
 
 ---

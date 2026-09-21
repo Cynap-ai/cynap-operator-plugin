@@ -93,6 +93,14 @@ change, but still platform work: it needs its own allowlist entry and a
 parity test on the platform side. Flag either as a platform follow-up rather
 than attempting it from the org directory.
 
+## AI calls use the customer AI boundary
+
+If a flow, automation, operation, or Actor needs an AI call, read
+`configure-customer-ai` before proposing config. Workspace files may narrow
+model/task intent, but provider routing, credentials, funding, prices,
+reservations, and debits remain platform-owned. Explain native versus BYOK
+billing to the user before asking them to choose.
+
 ## Access control is the platform's job
 
 All access facts — who the caller is, what their org allows, and the scope
@@ -116,3 +124,5 @@ config field.
 5. Am I about to hardcode a physical table name? Stop — resolve it through
    the schema registry (`getSchemaRegistry()` / `resolveTableForType()`, see
    `author-a-schema-change`).
+6. Does this task make an AI call? Read `configure-customer-ai`, explain its
+   billing choices, and keep payer/provider authority out of customer config.

@@ -1,17 +1,22 @@
 ---
 name: author-a-deterministic-automation
-description: Author a no-LLM scheduled sync, reconciler, or ETL automation using the deterministic step vocabulary — the cheapest mode (no sandbox, no AI credits). Use after choose-the-right-mode routes here.
+description: Author a fixed-step scheduled sync, reconciler, or ETL automation with no agentic loop. Use after choose-the-right-mode routes here.
 ---
 
 # author-a-deterministic-automation — Deterministic-Mode Authoring
 
-You are authoring a **no-LLM** automation for one customer
-org — scheduled syncs, reconcilers, ETL. This is the **cheapest** mode; it
+You are authoring a **fixed-step, non-agentic** automation for one customer
+org — scheduled syncs, reconcilers, ETL, optionally with a bounded `llm`
+tool step. This is the **cheapest runtime** mode; it
 is **not** a general workflow engine and **not** a home for platform infra
 jobs (reapers/drift-check/cleanup belong to the platform, not to your org's
 config). If you haven't confirmed this is the right mode, go read
 `choose-the-right-mode` first. Read `platform-invariants` before this skill
 if you haven't this session.
+
+If the step graph includes an `llm` tool, read `configure-customer-ai` and
+explain native versus BYOK billing first. The AI call is billed under the
+org's funding record even though the surrounding runtime is deterministic.
 
 ## Deliverable shape — ONE file
 
@@ -154,9 +159,9 @@ its `execution.steps[0]` is `{ "land": { "source": "superchat.contacts",
 
 ## Authoring checklist
 
-1. Confirm no LLM is needed anywhere in this automation
-   (`choose-the-right-mode`) — if it needs classification/extraction, this
-   is the wrong mode.
+1. Confirm there is no agentic loop (`choose-the-right-mode`). A bounded
+   classification/extraction `llm` tool may remain deterministic, but it must
+   follow `configure-customer-ai`.
 2. Use only the six step kinds; never invent a step shape.
 3. If writing to the org database, use `sync` (incremental, watermarked) or
    `land` (raw Bronze capture) — never an `http` tool at a database
