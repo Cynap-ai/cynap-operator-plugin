@@ -20,6 +20,8 @@ import {
   assertConnectedOrg,
   sha256Hex,
   resolveOrgSlug,
+  mcpCall,
+  isProxyUnreachableError,
 } from '../lib/workspace-sync.mjs';
 
 function scratchDir() {
@@ -232,4 +234,125 @@ test('hasSymlinkOnPath detects a DANGLING symlinked ancestor (lstat, not existsS
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// mcpCall — the SINGLE loopback entry shared by /cynap-pull, /cynap-push and
+// /cynap-checks. Credentials belong to the proxy; what belongs here is making
+// sure the operator can always tell WHICH wall a command hit.
+// ---------------------------------------------------------------------------
+
+function unreachable(code) {
+  const error = new TypeError('fetch failed');
+  error.cause = { code };
+  return error;
+}
+
+function errorResponse(status, body) {
+  return {
+    ok: false,
+    status,
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  };
+}
+
+test('isProxyUnreachableError recognizes a refused loopback, not an ordinary error', () => {
+  assert.equal(isProxyUnreachableError(unreachable('ECONNREFUSED')), true);
+  assert.equal(isProxyUnreachableError(unreachable('EHOSTUNREACH')), true);
+  assert.equal(isProxyUnreachableError(new TypeError('fetch failed')), false);
+  assert.equal(isProxyUnreachableError(new Error('boom')), false);
+});
+
+test('a refused loopback says the proxy is not running — never a bare "fetch failed"', async () => {
+  await assert.rejects(
+    () =>
+      mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
+        fetchImpl: async () => {
+          throw unreachable('ECONNREFUSED');
+        },
+      }),
+    (error) => {
+      assert.ok(error instanceof WorkspaceSyncError);
+      assert.equal(error.reason, 'proxy_unreachable');
+      assert.match(error.message, /no operator proxy is listening on http:\/\/127\.0\.0\.1:8790\/mcp/);
+      assert.match(error.message, /\/cynap-connect/);
+      return true;
+    }
+  );
+});
+
+test('a 503 while consent is open says a browser page is waiting, not "HTTP 503"', async () => {
+  await assert.rejects(
+    () =>
+      mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
+        fetchImpl: async () => errorResponse(503, { error: 'operator_authorization_pending' }),
+      }),
+    (error) => {
+      assert.equal(error.reason, 'authorizing');
+      assert.match(error.message, /waiting for browser consent/);
+      return true;
+    }
+  );
+});
+
+test("a consent failure is passed through VERBATIM — the proxy knows why, this layer must not re-guess", async () => {
+  await assert.rejects(
+    () =>
+      mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
+        fetchImpl: async () =>
+          errorResponse(401, {
+            error: 'operator_consent_required',
+            outcome: 'timeout',
+            message: 'Operator browser consent timed out after 5 minutes — nobody completed the sign-in page.',
+          }),
+      }),
+    (error) => {
+      assert.equal(error.reason, 'consent_required');
+      assert.equal(error.outcome, 'timeout');
+      assert.match(error.message, /timed out after 5 minutes/);
+      return true;
+    }
+  );
+});
+
+test('an ordinary upstream failure keeps its existing shape — this is not a catch-all rewrite', async () => {
+  await assert.rejects(
+    () =>
+      mcpCall('http://127.0.0.1:8790/mcp', 'workspace_get_file', { path: 'a/b.json' }, {
+        fetchImpl: async () => errorResponse(500, { error: 'boom' }),
+      }),
+    /MCP workspace_get_file\(a\/b\.json\) HTTP 500/
+  );
+});
+
+test('a non-JSON error body never crashes the describe path', async () => {
+  await assert.rejects(
+    () =>
+      mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
+        fetchImpl: async () => ({ ok: false, status: 502, text: async () => '<html>gateway</html>' }),
+      }),
+    /MCP workspace_tree HTTP 502/
+  );
+});
+
+test('a 401 that is NOT a consent failure stays an ordinary HTTP error', async () => {
+  await assert.rejects(
+    () =>
+      mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
+        fetchImpl: async () => errorResponse(401, { error: 'unauthorized' }),
+      }),
+    /MCP workspace_tree HTTP 401/
+  );
+});
+
+test('a successful call is untouched by any of this', async () => {
+  const result = await mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ result: { structuredContent: { commit_sha: 'abc', entries: [] } } }),
+    }),
+  });
+  assert.deepEqual(result, { commit_sha: 'abc', entries: [] });
 });

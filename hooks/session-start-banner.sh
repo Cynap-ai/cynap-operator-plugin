@@ -141,18 +141,20 @@ main() {
     if [ "$EXP_HOURS" -le 0 ] 2>/dev/null; then
       CRED_EXPIRED=1
     elif [ "$EXP_HOURS" -lt 6 ] 2>/dev/null; then
-      EXP_NOTE=" ⚠️ operator credential expires in ~${EXP_HOURS}h — re-run \`/cynap-connect\` soon."
+      EXP_NOTE=" ⚠️ operator credential expires in ~${EXP_HOURS}h — the next operator command will reopen browser consent by itself; \`/cynap-connect\` is optional."
     else
       EXP_NOTE=" (credential expires in ~${EXP_HOURS}h)"
     fi
   fi
 
   # NEVER say the connection is live once the credential has actually
-  # expired (credExpiresInHours <= 0) — the tools will 401 on the very next
-  # call even though the proxy process itself is still up and answering
-  # /health/ /context.
+  # expired (credExpiresInHours <= 0) — the proxy process is still up and
+  # still answering /health and /context, but the credential behind it is not
+  # usable until consent is re-granted. The proxy now reopens that consent by
+  # itself on the next credential-bearing call, so the line says what WILL
+  # happen rather than sending the operator off to re-run a command.
   if [ "$CRED_EXPIRED" = "1" ]; then
-    echo "Cynap operator plane: this session's working directory is pinned to org \`${ORG}\` (${ENV}, proxy v${VERSION}), but its operator credential has EXPIRED. Run \`/cynap-connect\` to reconnect."
+    echo "Cynap operator plane: this session's working directory is pinned to org \`${ORG}\` (${ENV}, proxy v${VERSION}), but its operator credential has EXPIRED. The next operator command or tool call reopens browser consent automatically and then continues — approve it in the browser. \`/cynap-connect\` still works if you would rather reconnect explicitly."
   else
     echo "Cynap operator plane: this session is ATTACHED to org \`${ORG}\` (${ENV}, proxy v${VERSION}).${EXP_NOTE} MCP tools from \`cynap-operator\` are live. Run \`/cynap-status\` for the full fleet view."
   fi

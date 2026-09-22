@@ -102,6 +102,9 @@ export const IDEMPOTENT_TOOL_NAMES = new Set([
 
 /** API Gateway's integration timeout is ~29-31s; treat any 504 as the cold-start signal. */
 export const GATEWAY_TIMEOUT_STATUS = 504;
+/** The upstream's "this credential is no longer good" verdict — the single
+ * status that triggers automatic browser consent on a forwarded request. */
+export const UNAUTHORIZED_STATUS = 401;
 /** Never retry (or begin a retry wait) if the token is within this many seconds of expiry —
  * a retry that outlives the 900s operator token is wasted (it will 401, not 504). */
 export const RETRY_TOKEN_EXPIRY_GUARD_SECONDS = 10;
@@ -915,6 +918,304 @@ export function deleteMarker(slug, sessionId, baseDir) {
 }
 
 // ---------------------------------------------------------------------------
+// Automatic browser consent — the ONE chokepoint every credential-bearing
+// path shares.
+//
+// Every operator command (`/cynap-pull`, `/cynap-push`, `/cynap-checks`) and
+// every MCP tool call reaches the platform through this proxy, and every one of
+// those reaches it through `tokenManager.getToken()` -> `mint()` ->
+// `getAuthHeaders()`. So a credential that is MISSING, EXPIRED, or REJECTED is
+// observable at exactly one place, and re-obtaining it belongs at exactly one
+// place too: here. `/cynap-connect` stays available as an explicit command, but
+// nothing has to be re-run by hand — the operation that hit the wall reopens
+// browser consent itself and then retries, once.
+//
+// The two rules that keep this from becoming a worse failure than the one it
+// replaces:
+//   - SINGLE-FLIGHT. Concurrent callers (an editor firing three tool calls, a
+//     pull and a checks run side by side) share ONE consent. Three browser tabs
+//     for one expiry is the failure mode this exists to avoid.
+//   - NEVER SILENT. A timeout or a refusal raises a ConsentError carrying a
+//     named outcome and a sentence an operator can act on. A consent that goes
+//     unanswered must read as "consent timed out", never as a hung command.
+// ---------------------------------------------------------------------------
+
+/** How long automatic consent waits for the operator to finish in the browser
+ * before giving up and saying so. Matches pkceLoopbackLogin's own default —
+ * the browser leg is the same leg, so a shorter bound here would abandon a
+ * consent the login is still legitimately waiting on. */
+export const AUTO_CONSENT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** The closed set of reasons that make a failure re-authable. Anything not on
+ * this list is a real error and is re-thrown untouched — consent can only
+ * repair a credential problem, never a backend outage or a bad request. */
+export const CONSENT_REASONS = Object.freeze({
+  NO_CREDENTIAL: 'no_credential',
+  EXPIRED: 'expired',
+  REAUTH_REQUIRED: 'reauth_required',
+});
+
+/** The closed set of ways automatic consent ends badly. Each maps to one
+ * operator-readable sentence in `consentFailureMessage`. */
+export const CONSENT_OUTCOMES = Object.freeze({
+  TIMEOUT: 'timeout',
+  REFUSED: 'refused',
+  FAILED: 'failed',
+  UNAVAILABLE: 'unavailable',
+});
+
+/** Raised when automatic consent did not produce a credential. Carries the
+ * machine-readable `outcome` (CONSENT_OUTCOMES) alongside the message so the
+ * HTTP layer can answer with a code AND a sentence. */
+export class ConsentError extends Error {
+  constructor(outcome, message, cause) {
+    super(message);
+    this.name = 'ConsentError';
+    this.outcome = outcome;
+    this.code = 'operator_consent_required';
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+/** The operator-facing sentence for each outcome. Kept beside the outcomes so
+ * a new outcome cannot ship without a sentence. */
+export function consentFailureMessage(outcome, detail) {
+  const tail = detail ? ` (${detail})` : '';
+  switch (outcome) {
+    case CONSENT_OUTCOMES.TIMEOUT:
+      return `Operator browser consent timed out after ${Math.round(AUTO_CONSENT_TIMEOUT_MS / 60000)} minutes — nobody completed the sign-in page. Re-run the command to reopen it, or run /cynap-connect.${tail}`;
+    case CONSENT_OUTCOMES.REFUSED:
+      return `Operator browser consent was declined — the command did not run.${tail}`;
+    case CONSENT_OUTCOMES.UNAVAILABLE:
+      return `This proxy has no browser-consent leg (headless auth mode), so the credential cannot be renewed automatically. Reconnect with /cynap-connect.${tail}`;
+    default:
+      return `Operator browser consent failed.${tail}`;
+  }
+}
+
+/** Classifies an upstream/mint failure as re-authable or not. Returns a
+ * CONSENT_REASONS value, or null when consent could not possibly help.
+ *
+ * Deliberately conservative: a 5xx, a network error, a malformed body and a
+ * 403 all return null. A 403 is an AUTHORIZATION refusal — the credential is
+ * real and the grant is not — so re-consenting would re-open a browser to earn
+ * a permission the operator does not have, once per call, forever. */
+export function classifyCredentialFailure({ status, message } = {}) {
+  if (status === 401) return CONSENT_REASONS.REAUTH_REQUIRED;
+  const text = typeof message === 'string' ? message.toLowerCase() : '';
+  if (!text) return null;
+  if (/no operator credential|credential is missing|log in before minting|not logged in/.test(text)) {
+    return CONSENT_REASONS.NO_CREDENTIAL;
+  }
+  if (/credential (?:has )?expired|expired credential|token expired|invalid_grant/.test(text)) {
+    return CONSENT_REASONS.EXPIRED;
+  }
+  // A mint failure whose message carries its own HTTP status (mint() formats
+  // `operator-token mint failed: 401 …`). Match the status token, not the
+  // whole body — a 403 body that merely contains "401" somewhere must not
+  // read as a 401.
+  if (/^operator-token mint failed: 401\b/.test(text)) return CONSENT_REASONS.REAUTH_REQUIRED;
+  return null;
+}
+
+/**
+ * The consent gate. Wraps a `consent()` function (in production: the PKCE
+ * loopback login) with single-flight, a bound, and typed failure.
+ *
+ * @param {object} opts
+ * @param {() => Promise<unknown>} [opts.consent] - performs one browser
+ *   consent and resolves with whatever the caller needs (the credential
+ *   record). Omit it to build an UNAVAILABLE gate — the headless `--e2e` leg,
+ *   which has no browser to open and must say so rather than hang.
+ * @param {number} [opts.timeoutMs]
+ * @param {{ write: (s: string) => void }} [opts.out] - where the "reopening
+ *   consent" notice goes.
+ * @param {(ms: number) => Promise<never>} [opts.timer] - injectable timeout
+ *   source, for tests. Resolves never; rejects after `ms`.
+ */
+export function createConsentGate({
+  consent,
+  timeoutMs = AUTO_CONSENT_TIMEOUT_MS,
+  out = process.stderr,
+  timer,
+} = {}) {
+  /** @type {Promise<unknown> | null} — the in-flight consent every concurrent caller awaits. */
+  let inFlight = null;
+  let lastOutcome = null;
+  let consentCount = 0;
+
+  const defaultTimer = (ms) =>
+    new Promise((_, reject) => {
+      const handle = setTimeout(
+        () => reject(new ConsentError(CONSENT_OUTCOMES.TIMEOUT, consentFailureMessage(CONSENT_OUTCOMES.TIMEOUT))),
+        ms
+      );
+      if (typeof handle.unref === 'function') handle.unref();
+    });
+
+  async function runOnce(reason) {
+    consentCount += 1;
+    out.write(
+      `[operator-proxy] operator credential ${reason} — reopening browser consent automatically ` +
+        `(this is the same consent /cynap-connect runs).\n`
+    );
+    try {
+      const result = await Promise.race([Promise.resolve().then(consent), (timer ?? defaultTimer)(timeoutMs)]);
+      lastOutcome = 'consented';
+      out.write('[operator-proxy] operator consent completed — retrying the operation that needed it.\n');
+      return result;
+    } catch (error) {
+      if (error instanceof ConsentError) {
+        lastOutcome = error.outcome;
+        throw error;
+      }
+      const text = error instanceof Error ? error.message : String(error);
+      // pkceLoopbackLogin's own vocabulary: its listener rejects with
+      // "authorization denied: …" on an explicit decline and with
+      // "operator login timed out" when nobody answered.
+      const outcome = /denied|declined|access_denied/i.test(text)
+        ? CONSENT_OUTCOMES.REFUSED
+        : /timed out|timeout/i.test(text)
+          ? CONSENT_OUTCOMES.TIMEOUT
+          : CONSENT_OUTCOMES.FAILED;
+      lastOutcome = outcome;
+      throw new ConsentError(outcome, consentFailureMessage(outcome, text), error);
+    }
+  }
+
+  /** Obtain consent, sharing any already-running one. Throws ConsentError on
+   * every unhappy path — never resolves with a falsy credential. */
+  async function ensure(reason) {
+    if (typeof consent !== 'function') {
+      lastOutcome = CONSENT_OUTCOMES.UNAVAILABLE;
+      throw new ConsentError(CONSENT_OUTCOMES.UNAVAILABLE, consentFailureMessage(CONSENT_OUTCOMES.UNAVAILABLE));
+    }
+    if (!inFlight) {
+      inFlight = runOnce(reason).finally(() => {
+        inFlight = null;
+      });
+    }
+    return inFlight;
+  }
+
+  return {
+    ensure,
+    available: typeof consent === 'function',
+    get lastOutcome() {
+      return lastOutcome;
+    },
+    get consentCount() {
+      return consentCount;
+    },
+  };
+}
+
+/**
+ * Run `attempt()`; if it fails for a re-authable reason, obtain consent and run
+ * it EXACTLY ONCE more. A second failure propagates untouched — one automatic
+ * retry, never a loop.
+ *
+ * @param {() => Promise<T>} attempt
+ * @param {{ gate: ReturnType<typeof createConsentGate>, classify?: typeof classifyCredentialFailure }} opts
+ * @template T
+ */
+export async function withAutoConsent(attempt, { gate, classify = classifyCredentialFailure }) {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (error instanceof ConsentError) throw error;
+    const reason = classify({
+      status: error instanceof Error ? error.status : undefined,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    if (!reason || !gate) throw error;
+    await gate.ensure(reason);
+    return attempt();
+  }
+}
+
+/**
+ * The proxy's live operator credential, and the ONE way to replace it.
+ *
+ * Holds the current CLI credential in process memory (never on disk, exactly
+ * as before) and owns re-consent: `renew()` runs one browser login, refuses a
+ * credential frozen to a different org than the one already pinned, adopts it,
+ * and revokes the superseded one. Wrapping the credential in an object rather
+ * than a `const` closure is what makes automatic consent possible at all — the
+ * old shape froze one credential for the process's whole life, so an expiry
+ * could only be repaired by restarting the proxy.
+ *
+ * @param {object} opts
+ * @param {(o: object) => Promise<{credential: string, orgId?: string, expiresAt?: string}>} opts.login
+ * @param {string} opts.mintHost
+ * @param {string} opts.orgSlug
+ * @param {string} [opts.pluginVersion]
+ * @param {typeof revokeCliCredential} [opts.revoke] - injectable, for tests
+ * @param {{ write: (s: string) => void }} [opts.out]
+ */
+export function createOperatorCredentialSession({
+  login,
+  mintHost,
+  orgSlug,
+  pluginVersion,
+  revoke = revokeCliCredential,
+  out = process.stderr,
+}) {
+  let credential = null;
+  let orgId = null;
+  let expiresAt = null;
+
+  /** The mint-side auth header. Throws with the vocabulary
+   * classifyCredentialFailure recognizes, so "we never had one" and "the one
+   * we had stopped working" reach the consent gate through the same door. */
+  function getAuthHeaders() {
+    if (!credential) {
+      throw new Error('No operator credential available — log in before minting.');
+    }
+    return { Authorization: `Bearer ${credential}` };
+  }
+
+  async function renew() {
+    const result = await login({ mintHost, orgSlug, pluginVersion, out });
+    const next = result?.credential;
+    if (!next) throw new Error('operator login returned no credential');
+
+    // Fail closed, and never leak the credential we are declining: a consent
+    // that came back for the wrong org (or no org) is refused, and the
+    // just-issued credential is revoked before the refusal propagates.
+    const refuse = async (message) => {
+      await revoke({ mintHost, credential: next, pluginVersion }).catch(() => {});
+      throw new Error(message);
+    };
+    if (!result.orgId) {
+      await refuse('operator login returned no organization for the credential — refusing to mint.');
+    }
+    if (orgId && result.orgId !== orgId) {
+      await refuse(
+        `operator consent returned a credential for org ${result.orgId}, but this proxy is pinned to ${orgId} — refusing.`
+      );
+    }
+
+    const superseded = credential;
+    credential = next;
+    orgId = result.orgId;
+    expiresAt = result.expiresAt ?? null;
+    if (superseded && superseded !== next) {
+      // Best-effort, and deliberately not awaited into the caller's latency:
+      // the replaced credential is dead to us either way, and it self-expires.
+      void revoke({ mintHost, credential: superseded, pluginVersion }).catch(() => {});
+    }
+    return { credential, orgId, expiresAt };
+  }
+
+  return {
+    getAuthHeaders,
+    renew,
+    current: () => ({ credential, orgId, expiresAt }),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Token manager — pure decision logic, no I/O side effects beyond the
 // injected fetchImpl/now. Kept separate from the HTTP server so it can be
 // unit-tested deterministically.
@@ -933,6 +1234,11 @@ export function deleteMarker(slug, sessionId, baseDir) {
  *   workspace:session-capture for the /session-end transcript upload.
  * @param {string} [opts.requestedScope] - forwarded verbatim to POST
  * /api/auth/operator-token's `requestedScope` body field.
+ * @param {ReturnType<typeof createConsentGate>} [opts.consentGate] - the
+ *   automatic-consent chokepoint. When present, a mint that fails for a
+ *   re-authable reason (no credential / expired / 401) reopens browser consent
+ *   and re-mints ONCE. Omit it and the manager behaves exactly as before: the
+ *   mint failure propagates.
  * @param {typeof fetch} [opts.fetchImpl] - injectable fetch for tests
  * @param {() => number} [opts.now] - injectable clock (seconds since epoch), for tests
  */
@@ -944,6 +1250,7 @@ export function createTokenManager({
   family = 'workspace',
   requestedScope,
   pluginVersion,
+  consentGate = null,
   fetchImpl = fetch,
   now = () => Math.floor(Date.now() / 1000),
 }) {
@@ -985,7 +1292,12 @@ export function createTokenManager({
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`operator-token mint failed: ${res.status} ${body}`.trim());
+      const error = new Error(`operator-token mint failed: ${res.status} ${body}`.trim());
+      // Structural, not textual: classifyCredentialFailure reads `.status`
+      // first so a 200-shaped body that happens to contain "401" can never be
+      // mistaken for an auth failure (and vice versa).
+      error.status = res.status;
+      throw error;
     }
     const data = await res.json();
     if (!data.token) {
@@ -996,22 +1308,52 @@ export function createTokenManager({
     return cached;
   }
 
+  /** mint(), wrapped in the automatic-consent chokepoint: a mint that fails
+   * because the operator credential is missing, expired, or rejected reopens
+   * browser consent and re-mints exactly once. Every other failure — a 5xx, a
+   * 403 grant refusal, a network error — propagates untouched. */
+  function mintWithConsent() {
+    if (!consentGate) return mint();
+    return withAutoConsent(mint, { gate: consentGate });
+  }
+
   /** Returns a fresh (or cached-if-still-fresh) token, re-minting as needed.
    * Concurrent callers near expiry share ONE in-flight mint so we never fire
-   * duplicate POSTs to /api/auth/operator-token. */
-  async function getToken() {
-    if (needsRemint()) {
-      if (!mintInFlight) {
-        mintInFlight = mint().finally(() => {
-          mintInFlight = null;
-        });
-      }
-      await mintInFlight;
+   * duplicate POSTs to /api/auth/operator-token.
+   *
+   * `allowConsent: false` is for BACKGROUND reads — the SessionStart brief
+   * fetch and the cold-start warm. Consent belongs to a command or a tool call
+   * the operator actually issued; an operator who merely opened a session did
+   * not ask for a browser tab, and the banner reports an expired credential
+   * perfectly well on its own. Such a caller joins an in-flight mint if one
+   * exists (same work) but never starts one that could become a consent, and
+   * never occupies the shared in-flight slot — so its failure can't deny a
+   * real operation the recovery it would have had.
+   */
+  async function getToken({ allowConsent = true } = {}) {
+    if (!needsRemint()) return cached.token;
+    if (!allowConsent) {
+      if (mintInFlight) await mintInFlight;
+      else await mint();
+      return cached.token;
     }
+    if (!mintInFlight) {
+      mintInFlight = mintWithConsent().finally(() => {
+        mintInFlight = null;
+      });
+    }
+    await mintInFlight;
     return cached.token;
   }
 
-  return { getToken, needsRemint, _peekCache: () => cached };
+  /** Drop the cached token so the next getToken() re-mints. Used when the
+   * UPSTREAM rejects a token this manager still considers fresh — the clock
+   * says valid, the server says otherwise, and the server wins. */
+  function invalidate() {
+    cached = null;
+  }
+
+  return { getToken, needsRemint, invalidate, _peekCache: () => cached };
 }
 
 // ---------------------------------------------------------------------------
@@ -1666,6 +2008,10 @@ export function createProxyServer({
   // standalone `node operator-proxy.mjs` run with none supplied simply never
   // serves /context rather than serving it unauthenticated.
   controlNonce,
+  // The automatic-consent chokepoint (createConsentGate). Optional: a
+  // standalone `node operator-proxy.mjs` run passes none and simply surfaces
+  // the auth failure, which is right for a proxy nobody is driving.
+  consentGate = null,
   requestActivation,
   // Called with `{ minimum }` after a forwarded response
   // carrying a `plugin_outdated` answer has been fully delivered. Optional — a
@@ -1696,7 +2042,11 @@ export function createProxyServer({
     if (warmInFlight) return;
     warmInFlight = true;
     (async () => {
-      const token = await tokenManager.getToken();
+      // Consent-free for the same reason as /context: this fires off the
+      // `initialize` handshake, which is a session opening, not an operation.
+      // If the credential has expired the warm simply fails (non-fatal, by
+      // design) and the operator's first real command opens consent then.
+      const token = await tokenManager.getToken({ allowConsent: false });
       const warmRes = await fetchImpl(`${mcpHost}${mcpPath}`, {
         method: 'POST',
         headers: upstreamHeaders(pluginVersion, {
@@ -1905,6 +2255,26 @@ export function createProxyServer({
       // MAX_IDEMPOTENT_RETRY_ELAPSED_MS).
       const retryWindowStartSeconds = now();
       let upstreamRes = await attemptOnce();
+
+      // The upstream's own verdict beats our clock. A 401 here means the
+      // operator token was minted fine but the platform rejected it (the CLI
+      // credential behind it was revoked, or its grant lapsed) — the one
+      // re-authable failure the mint-side gate cannot see, because the mint
+      // succeeded. Route it through the SAME gate: consent, drop the cached
+      // token, retry exactly once. Non-idempotent calls are excluded — a
+      // write that reached the platform and was then rejected must not be
+      // replayed.
+      if (upstreamRes.status === UNAUTHORIZED_STATUS && idempotent && consentGate) {
+        try {
+          await upstreamRes.body?.cancel();
+        } catch {
+          // best-effort — a failed cancel must never block the retry
+        }
+        await consentGate.ensure(CONSENT_REASONS.REAUTH_REQUIRED);
+        if (typeof tokenManager.invalidate === 'function') tokenManager.invalidate();
+        upstreamRes = await attemptOnce();
+      }
+
       let attempt = 0;
       while (upstreamRes.status === GATEWAY_TIMEOUT_STATUS) {
         counters.increment('operator_cold_504_translated');
@@ -1976,6 +2346,15 @@ export function createProxyServer({
         res.end();
       }
     } catch (err) {
+      // Automatic consent that timed out or was declined is NOT a proxy fault
+      // and must never read as one. It gets its own status + named outcome so
+      // a command (or an MCP client) can print the sentence verbatim instead
+      // of a generic 502 the operator cannot act on.
+      if (err instanceof ConsentError) {
+        res.writeHead(UNAUTHORIZED_STATUS, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: err.code, outcome: err.outcome, message: err.message }));
+        return;
+      }
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'proxy_error', message: err instanceof Error ? err.message : String(err) }));
     }
@@ -2098,7 +2477,10 @@ async function handleContextFetch(req, res, ctx) {
 
   let token;
   try {
-    token = await ctx.tokenManager.getToken();
+    // Background read — never opens a browser. An expired credential here is
+    // REPORTED (the banner renders `cred_expired` and says consent will reopen
+    // on the next operator command), never repaired behind the operator's back.
+    token = await ctx.tokenManager.getToken({ allowConsent: false });
   } catch {
     fail(401, 'cred_expired');
     return;
@@ -2374,6 +2756,11 @@ export async function main(argv = process.argv.slice(2)) {
   // CLI-scoped credential, `{ Cookie: … }` for the staging e2e-session leg.
   let getAuthHeaders;
   let revokeOnExit = null;
+  /** The automatic-consent chokepoint for this process — built once, below,
+   * and handed to BOTH the token manager (mint-side failures) and the proxy
+   * server (upstream 401s) so there is exactly one consent policy and one
+   * in-flight browser tab. */
+  let consentGate = null;
   let readyProxyServer = null;
   let lifecycleStatus = 'authorizing';
   let shutdownPromise = null;
@@ -2453,46 +2840,53 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const cookie = await acquireStagingCookie({ mintHost, orgSlug: opts.orgSlug, pluginVersion: opts.pluginVersion });
     getAuthHeaders = () => ({ Cookie: cookie });
+    // The headless cookie leg has no browser to open. An UNAVAILABLE gate says
+    // exactly that when a credential fails, instead of hanging on a consent
+    // that can never arrive.
+    consentGate = createConsentGate({});
     process.stderr.write('[operator-proxy] staging e2e-session cookie acquired.\n');
   } else {
     const login = opts.authMode === 'device' ? deviceCodeLogin : pkceLoopbackLogin;
-    let result;
+    const session = createOperatorCredentialSession({
+      login,
+      mintHost,
+      orgSlug: opts.orgSlug,
+      pluginVersion: opts.pluginVersion,
+    });
+    // Every consent — the first one at startup and every automatic one after —
+    // runs through this ONE function, so the org-pin refusal, the
+    // revoke-the-superseded-credential hygiene and the /health expiry update
+    // can never apply to some consents and not others.
+    const consent = async () => {
+      const renewed = await session.renew();
+      setCredentialExpiresAt(renewed.expiresAt);
+      return renewed;
+    };
     try {
-      result = await login({ mintHost, orgSlug: opts.orgSlug, pluginVersion: opts.pluginVersion });
+      await consent();
     } catch (err) {
       process.stderr.write(
         `[operator-proxy] operator login failed: ${err instanceof Error ? err.message : String(err)}\n`
       );
       process.exit(1);
     }
-    const credential = result.credential;
-    getAuthHeaders = () => ({ Authorization: `Bearer ${credential}` });
-    revokeOnExit = () => revokeCliCredential({ mintHost, credential, pluginVersion: opts.pluginVersion });
+    getAuthHeaders = session.getAuthHeaders;
+    consentGate = createConsentGate({ consent });
+    // Read the credential through session.current() at call time, never a
+    // captured constant — after an automatic re-consent the captured one is
+    // the SUPERSEDED credential, and revoking it on exit would leave the live
+    // one running to its full TTL.
+    revokeOnExit = () =>
+      revokeCliCredential({ mintHost, credential: session.current().credential, pluginVersion: opts.pluginVersion });
     // The credential is frozen to a server-resolved org — pin the proxy to it (the mint
     // route enforces this too), superseding the --org-slug default as source of truth.
-    if (result.orgId) {
-      opts.targetOrgId = result.orgId;
-      opts.allowedOrgId = result.orgId;
-    } else {
-      process.stderr.write(
-        '[operator-proxy] operator login returned no organization for the credential — refusing to mint.\n'
-      );
-      // Revoke the credential we just obtained BEFORE bailing. This exit runs
-      // long before the revoke-on-exit handler is installed further down, so
-      // without this an issued octk_ credential would stay live for its full TTL
-      // after we refused to start — a fail-closed guard that leaks the very
-      // credential it declined to use. Best-effort: a revoke failure must not
-      // mask the refusal itself.
-      await revokeCliCredential({ mintHost, credential, pluginVersion: opts.pluginVersion }).catch(() => {});
-      process.exit(1);
-    }
+    // session.renew() already refused a credential with no org (and revoked it),
+    // so reaching here means orgId is resolved.
+    opts.targetOrgId = session.current().orgId;
+    opts.allowedOrgId = session.current().orgId;
     process.stderr.write(
-      `[operator-proxy] operator credential acquired for org ${opts.targetOrgId} (expires ${result.expiresAt}).\n`
+      `[operator-proxy] operator credential acquired for org ${opts.targetOrgId} (expires ${session.current().expiresAt}).\n`
     );
-    // Retain the expiry (previously logged once here, then dropped)
-    // so /health and /cynap-status can warn before it silently expires
-    // mid-session.
-    setCredentialExpiresAt(result.expiresAt);
   }
 
   const tokenManager = createTokenManager({
@@ -2500,6 +2894,7 @@ export async function main(argv = process.argv.slice(2)) {
     targetOrgId: opts.targetOrgId,
     allowedOrgId: opts.allowedOrgId,
     getAuthHeaders,
+    consentGate,
     pluginVersion: opts.pluginVersion,
   });
 
@@ -2585,6 +2980,7 @@ export async function main(argv = process.argv.slice(2)) {
     readTranscriptFor,
     pluginVersion: opts.pluginVersion,
     controlNonce,
+    consentGate,
     requestActivation: (commitSha) => activateCommitWithStepUp({
       mintHost,
       mcpHost,

@@ -25,6 +25,11 @@ import {
   collectFingerprintPaths,
   evaluateChecks,
 } from './cynap-checks-core.mjs';
+// The ONE loopback entry, shared with /cynap-pull and /cynap-push. This file
+// used to carry its own byte-for-byte copy of it; two copies meant the
+// connection- and consent-failure sentences could only ever be right in one of
+// them.
+import { mcpCall } from '../lib/workspace-sync.mjs';
 
 const DEFAULT_PROXY_URL = process.env.CYNAP_OPERATOR_MCP_URL ?? 'http://127.0.0.1:8790/mcp';
 
@@ -42,26 +47,6 @@ function parseArgs(argv) {
 function die(message) {
   process.stderr.write(`cynap-checks: ${message}\n`);
   process.exit(1);
-}
-
-let rpcId = 0;
-async function mcpCall(proxyUrl, name, args) {
-  const response = await fetch(proxyUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call', params: { name, arguments: args } }),
-  });
-  if (!response.ok) {
-    const pathSuffix = args && typeof args.path === 'string' ? `(${args.path})` : '';
-    throw new Error(`MCP ${name}${pathSuffix} HTTP ${response.status}`);
-  }
-  const body = await response.json();
-  if (body.error) throw new Error(`MCP ${name} error: ${JSON.stringify(body.error)}`);
-  // Prefer the structured content; fall back to the first text block.
-  const result = body.result ?? {};
-  if (result.structuredContent) return result.structuredContent;
-  const text = result.content?.find?.((c) => c.type === 'text')?.text;
-  return text ? JSON.parse(text) : result;
 }
 
 // Recursively list the `checks/` JSON suites under the workdir → workspace-relative POSIX paths.
