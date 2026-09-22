@@ -2087,6 +2087,11 @@ export function createProxyServer({
   // standalone `node operator-proxy.mjs` run passes none and simply surfaces
   // the auth failure, which is right for a proxy nobody is driving.
   consentGate = null,
+  // The in-memory org brief + its single-flight fetcher. main() builds one so
+  // it can also drive the periodic prefetch; a standalone run (and every test
+  // that doesn't care) gets a lazily-filled one built below, which behaves
+  // exactly like the old live-fetch path on the first /context call.
+  briefCache = null,
   requestActivation,
   // Called with `{ minimum }` after a forwarded response
   // carrying a `plugin_outdated` answer has been fully delivered. Optional — a
@@ -2100,6 +2105,10 @@ export function createProxyServer({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   rng = Math.random,
 }) {
+  const briefs =
+    briefCache ??
+    createBriefCache({ orgSlug, mcpHost, mcpPath, tokenManager, pluginVersion, fetchImpl });
+
   // At most ONE in-flight "wake the backend" request at a time for
   // this proxy instance — an operator's editor can fire several `initialize`s
   // in quick succession (a client retry, a second tool window); they should
@@ -2186,15 +2195,7 @@ export function createProxyServer({
     // somehow guessed a loopback Host. Lives OUTSIDE the cold-start retry loop
     // below: a single bounded attempt, never retried.
     if (req.method === 'GET' && req.url === CONTEXT_PATH) {
-      await handleContextFetch(req, res, {
-        orgSlug,
-        mcpHost,
-        mcpPath,
-        controlNonce,
-        tokenManager,
-        pluginVersion,
-        fetchImpl,
-      });
+      await handleContextFetch(req, res, { orgSlug, controlNonce, briefCache: briefs });
       return;
     }
 
@@ -2436,10 +2437,21 @@ export function createProxyServer({
   });
 }
 
-/** How long GET /context waits for the upstream `resources/read` before
- * giving up — deliberately short (this is a SessionStart-hook fetch, not a
- * tool call) and NEVER retried. */
+/** How long GET /context waits before giving up — deliberately short (this is
+ * a SessionStart-hook read, not a tool call) and NEVER retried. It bounds the
+ * REQUEST, not the upstream fetch: a brief already in memory answers
+ * instantly, and a fetch the request gave up waiting for keeps running in the
+ * background so the NEXT session start is served from memory. */
 export const CONTEXT_FETCH_TIMEOUT_MS = 3500;
+
+/** How long a BACKGROUND brief fetch may take. Generous on purpose — nothing
+ * is waiting on it, and the backend's brief render is several seconds warm
+ * plus a cold-start penalty on top, which no hook-budget-sized timeout can
+ * ever cover. */
+export const BRIEF_PREFETCH_TIMEOUT_MS = 20_000;
+
+/** How often a live proxy refreshes its in-memory brief. */
+export const BRIEF_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
 /** The closed set of failure reasons GET /context ever returns — see
  * handleContextFetch's mapping table (spec §3.3, AC9/AC10). */
@@ -2511,54 +2523,23 @@ async function readUpstreamResponseText(upstreamRes) {
 }
 
 /**
- * GET /context handler. Fetches the org's operator-context BRIEF from
- * upstream, once, with a short timeout and no retry (this is a
- * SessionStart-hook read, not a tool call — see CONTEXT_FETCH_TIMEOUT_MS).
- * Nonce-gated: the upstream sees ZERO requests without the correct
- * `controlNonce`. Never caches the brief to disk. Logs exactly one stderr
- * JSON line per request, and the response body never carries a token.
+ * ONE upstream `resources/read` of the org brief. Returns `{ok:true,text}` or
+ * `{ok:false,reason}` from CONTEXT_FETCH_REASONS — never throws.
+ *
+ * The credential is always read with `allowConsent:false`: a brief fetch is a
+ * BACKGROUND read and background reads never open a browser.
  */
-async function handleContextFetch(req, res, ctx) {
-  const startedAt = Date.now();
-  const respond = (statusCode, { contentType, body, reason, outcome }) => {
-    res.writeHead(statusCode, { 'Content-Type': contentType, 'Cache-Control': 'no-store' });
-    res.end(body);
-    process.stderr.write(
-      JSON.stringify({
-        event: 'operator.context_fetch',
-        outcome,
-        reason: reason ?? null,
-        bytes: Buffer.byteLength(body ?? ''),
-        ms: Date.now() - startedAt,
-      }) + '\n'
-    );
-  };
-  const fail = (statusCode, reason) =>
-    respond(statusCode, {
-      contentType: 'application/json',
-      body: JSON.stringify({ ok: false, reason }),
-      reason,
-      outcome: 'error',
-    });
-
-  if (!ctx.controlNonce || req.headers[CONTROL_HEADER] !== ctx.controlNonce) {
-    fail(403, 'denied');
-    return;
-  }
-  if (!ctx.orgSlug) {
-    fail(503, 'not_connected');
-    return;
-  }
+async function fetchBriefOnce(ctx, timeoutMs) {
+  if (!ctx.orgSlug) return { ok: false, reason: 'not_connected' };
 
   let token;
   try {
-    // Background read — never opens a browser. An expired credential here is
-    // REPORTED (the banner renders `cred_expired` and says consent will reopen
-    // on the next operator command), never repaired behind the operator's back.
+    // An expired credential here is REPORTED (the banner renders `cred_expired`
+    // and says consent will reopen on the next operator command), never
+    // repaired behind the operator's back.
     token = await ctx.tokenManager.getToken({ allowConsent: false });
   } catch {
-    fail(401, 'cred_expired');
-    return;
+    return { ok: false, reason: 'cred_expired' };
   }
 
   let upstreamRes;
@@ -2576,35 +2557,228 @@ async function handleContextFetch(req, res, ctx) {
         method: 'resources/read',
         params: { uri: operatorContextUri(ctx.orgSlug, 'brief') },
       }),
-      signal: AbortSignal.timeout(CONTEXT_FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     const isAbort = err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
-    fail(isAbort ? 504 : 502, isAbort ? 'timeout' : 'upstream_error');
-    return;
+    return { ok: false, reason: isAbort ? 'timeout' : 'upstream_error' };
   }
 
-  if (upstreamRes.status === 401) {
-    fail(401, 'cred_expired');
-    return;
+  if (upstreamRes.status === 401) return { ok: false, reason: 'cred_expired' };
+  if (upstreamRes.status === 403) return { ok: false, reason: 'denied' };
+  if (upstreamRes.status < 200 || upstreamRes.status >= 300) return { ok: false, reason: 'upstream_error' };
+
+  const rawText = await readUpstreamResponseText(upstreamRes);
+  return decodeMcpTextResult(rawText);
+}
+
+/**
+ * The proxy's in-MEMORY org brief, and the single-flight fetcher that fills it.
+ *
+ * Why it exists: the backend renders the brief in several seconds warm, and a
+ * cold handler adds its own init on top — so a SessionStart hook bounded to
+ * ~5s can never fetch it live and reliably win. The proxy outlives any one
+ * session, so it holds the brief and the hook reads memory.
+ *
+ * Contract:
+ *   - MEMORY ONLY. Never written to disk, exactly as before.
+ *   - SINGLE-FLIGHT: concurrent refreshes share one upstream request; a
+ *     periodic refresh can never overlap an in-flight one.
+ *   - A FAILED refresh leaves the previous brief in place (stale orientation
+ *     text beats none) and logs one JSON line...
+ *   - ...EXCEPT on `cred_expired`, which CLEARS it: a brief is org
+ *     orientation, not authorization, but it must never be served past the
+ *     credential that fetched it.
+ */
+export function createBriefCache({
+  orgSlug,
+  mcpHost,
+  mcpPath,
+  tokenManager,
+  pluginVersion,
+  fetchImpl = fetch,
+  timeoutMs = BRIEF_PREFETCH_TIMEOUT_MS,
+  now = () => Date.now(),
+  out = process.stderr,
+}) {
+  /** @type {{ text: string, fetchedAt: number } | null} */
+  let entry = null;
+  /** @type {Promise<{ok:boolean,reason?:string}> | null} */
+  let inFlight = null;
+  let refreshCount = 0;
+
+  /** The brief held right now, or null. Never triggers a fetch. */
+  function peek() {
+    return entry;
   }
-  if (upstreamRes.status === 403) {
+
+  /** Forget the brief — used when the credential behind it is gone. */
+  function clear() {
+    entry = null;
+  }
+
+  /** Fetch the brief, sharing any already-running fetch. Never throws.
+   * `trigger` names WHY this refresh happened, for the log line. */
+  function refresh(trigger = 'manual') {
+    if (inFlight) return inFlight;
+    refreshCount += 1;
+    const startedAt = now();
+    inFlight = (async () => {
+      const result = await fetchBriefOnce(
+        { orgSlug, mcpHost, mcpPath, tokenManager, pluginVersion, fetchImpl },
+        timeoutMs
+      );
+      if (result.ok) {
+        entry = { text: result.text, fetchedAt: now() };
+      } else if (result.reason === 'cred_expired') {
+        clear();
+      }
+      out.write(
+        JSON.stringify({
+          event: 'operator.brief_prefetch',
+          trigger,
+          outcome: result.ok ? 'ok' : 'error',
+          reason: result.ok ? null : result.reason,
+          bytes: result.ok ? Buffer.byteLength(result.text) : 0,
+          // Whether a FAILED refresh left a usable brief behind — the
+          // difference between "degraded" and "nothing to serve".
+          retained: result.ok ? null : entry !== null,
+          ms: now() - startedAt,
+        }) + '\n'
+      );
+      return result;
+    })()
+      .catch((err) => ({ ok: false, reason: 'upstream_error', error: err }))
+      .finally(() => {
+        inFlight = null;
+      });
+    return inFlight;
+  }
+
+  return {
+    peek,
+    clear,
+    refresh,
+    get refreshing() {
+      return inFlight !== null;
+    },
+    get refreshCount() {
+      return refreshCount;
+    },
+  };
+}
+
+/** Resolves to `{ok:false,reason:'timeout'}` after `ms`, on an unref'd timer so
+ * a pending wait can never hold the process open. */
+function briefWaitTimeout(ms) {
+  return new Promise((resolve) => {
+    const handle = setTimeout(() => resolve({ ok: false, reason: 'timeout' }), ms);
+    if (typeof handle.unref === 'function') handle.unref();
+  });
+}
+
+/**
+ * GET /context handler. Serves the proxy's IN-MEMORY brief when it holds one
+ * — instantly, with zero upstream calls. When it holds none, it joins (or
+ * starts) the single-flight background fetch and waits at most
+ * CONTEXT_FETCH_TIMEOUT_MS for it, then answers with a reason from
+ * CONTEXT_FETCH_REASONS. It never blocks longer than it did when every call
+ * was a live fetch; the abandoned fetch keeps running and fills the cache for
+ * the next session.
+ *
+ * Nonce-gated: the upstream sees ZERO requests without the correct
+ * `controlNonce`. Never caches the brief to disk. Logs exactly one stderr
+ * JSON line per request, and the response body never carries a token.
+ */
+async function handleContextFetch(req, res, ctx) {
+  const startedAt = Date.now();
+  const respond = (statusCode, { contentType, body, reason, outcome, source, headers }) => {
+    res.writeHead(statusCode, { 'Content-Type': contentType, 'Cache-Control': 'no-store', ...headers });
+    res.end(body);
+    process.stderr.write(
+      JSON.stringify({
+        event: 'operator.context_fetch',
+        outcome,
+        reason: reason ?? null,
+        // 'memory' = served from the prefetched brief; 'fetch' = this request
+        // had to wait on an upstream read. A banner that is fast is a banner
+        // served from memory, and this field is how that is proven.
+        source: source ?? null,
+        bytes: Buffer.byteLength(body ?? ''),
+        ms: Date.now() - startedAt,
+      }) + '\n'
+    );
+  };
+  const fail = (statusCode, reason) =>
+    respond(statusCode, {
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: false, reason }),
+      reason,
+      outcome: 'error',
+      source: 'fetch',
+    });
+
+  /** Freshness, carried as response HEADERS only. The BODY stays exactly the
+   * brief markdown it has always been — the SessionStart banner prints the
+   * body verbatim, so anything added there would land in the operator's
+   * banner text. */
+  const serve = (cached, source) =>
+    respond(200, {
+      contentType: 'text/markdown; charset=utf-8',
+      body: cached.text,
+      outcome: 'ok',
+      source,
+      headers: {
+        'X-Cynap-Brief-Fetched-At': new Date(cached.fetchedAt).toISOString(),
+        'X-Cynap-Brief-Age-Ms': String(Math.max(0, Date.now() - cached.fetchedAt)),
+      },
+    });
+
+  if (!ctx.controlNonce || req.headers[CONTROL_HEADER] !== ctx.controlNonce) {
     fail(403, 'denied');
     return;
   }
-  if (upstreamRes.status < 200 || upstreamRes.status >= 300) {
-    fail(502, 'upstream_error');
+  if (!ctx.orgSlug) {
+    fail(503, 'not_connected');
     return;
   }
 
-  const rawText = await readUpstreamResponseText(upstreamRes);
-  const decoded = decodeMcpTextResult(rawText);
-  if (!decoded.ok) {
-    fail(decoded.reason === 'denied' ? 403 : 502, decoded.reason);
+  const cached = ctx.briefCache.peek();
+  if (cached) {
+    serve(cached, 'memory');
     return;
   }
 
-  respond(200, { contentType: 'text/markdown; charset=utf-8', body: decoded.text, outcome: 'ok' });
+  // Nothing in memory yet: join the in-flight prefetch, or start one, and wait
+  // out only the hook's budget for it.
+  const result = await Promise.race([
+    ctx.briefCache.refresh('context_request'),
+    briefWaitTimeout(CONTEXT_FETCH_TIMEOUT_MS),
+  ]);
+
+  if (result.ok) {
+    const filled = ctx.briefCache.peek();
+    if (filled) {
+      serve(filled, 'fetch');
+      return;
+    }
+    // The fetch succeeded but the credential failure path cleared the entry
+    // between resolve and read — report it as what it is, never a 200 with no body.
+    fail(401, 'cred_expired');
+    return;
+  }
+
+  const status =
+    result.reason === 'timeout'
+      ? 504
+      : result.reason === 'cred_expired'
+        ? 401
+        : result.reason === 'denied'
+          ? 403
+          : result.reason === 'not_connected'
+            ? 503
+            : 502;
+  fail(status, result.reason);
 }
 
 /**
@@ -2902,6 +3076,14 @@ export async function main(argv = process.argv.slice(2)) {
   process.on('SIGINT', () => shutdownFromSignal('SIGINT'));
   process.on('SIGTERM', () => shutdownFromSignal('SIGTERM'));
 
+  // The in-memory org brief. Built after the initial mint (below) — until
+  // then there is no credential to fetch with. `consent` closes over this
+  // binding so EVERY consent (startup and every automatic re-auth after)
+  // re-arms the prefetch; at startup it is still null and the explicit kick
+  // after the first mint is what fills it.
+  /** @type {ReturnType<typeof createBriefCache> | null} */
+  let briefCache = null;
+
   if (opts.authMode === 'e2e') {
     // The staging e2e-session cookie survives ONLY as the headless-e2e path — cynap-e2e +
     // staging, never a prod/real-org fallback (spec §2.G2). The CYNAP_OPERATOR_COOKIE
@@ -2935,6 +3117,11 @@ export async function main(argv = process.argv.slice(2)) {
     const consent = async () => {
       const renewed = await session.renew();
       setCredentialExpiresAt(renewed.expiresAt);
+      // A re-auth replaces the credential the held brief was fetched with, so
+      // re-fetch it now rather than serving the next SessionStart from a brief
+      // whose credential is gone. Fire-and-forget: refresh() never throws and
+      // logs its own outcome, and a consent must never fail on a brief.
+      void briefCache?.refresh('reauth');
       return renewed;
     };
     try {
@@ -2982,6 +3169,25 @@ export async function main(argv = process.argv.slice(2)) {
     throw error;
   }
   process.stderr.write('[operator-proxy] initial token minted successfully.\n');
+
+  // Prefetch the org brief NOW and keep it warm. The SessionStart banner's
+  // whole budget is ~5s while the backend's brief render plus a cold handler
+  // init is comfortably more than that, so a live fetch inside the hook can
+  // never be reliable — the proxy outlives the session, so it holds the brief
+  // and the hook reads memory.
+  briefCache = createBriefCache({
+    orgSlug: opts.orgSlug,
+    mcpHost,
+    mcpPath: UPSTREAM_MCP_PATH,
+    tokenManager,
+    pluginVersion: opts.pluginVersion,
+  });
+  void briefCache.refresh('startup');
+  const briefRefreshTimer = setInterval(() => {
+    void briefCache.refresh('interval');
+  }, BRIEF_REFRESH_INTERVAL_MS);
+  // Unref'd: a warm brief is never a reason for this process to stay alive.
+  if (typeof briefRefreshTimer.unref === 'function') briefRefreshTimer.unref();
 
   // Resolves a Claude Code session id to its transcript file. Transcripts
   // live under a per-project transcript directory, but the
@@ -3085,14 +3291,22 @@ export async function main(argv = process.argv.slice(2)) {
     pluginVersion: opts.pluginVersion,
     controlNonce,
     consentGate,
-    requestActivation: (commitSha) => activateCommitWithStepUp({
-      mintHost,
-      mcpHost,
-      mcpPath: UPSTREAM_MCP_PATH,
-      orgSlug: opts.orgSlug,
-      commitSha,
-      pluginVersion: opts.pluginVersion,
-    }),
+    briefCache,
+    requestActivation: async (commitSha) => {
+      const result = await activateCommitWithStepUp({
+        mintHost,
+        mcpHost,
+        mcpPath: UPSTREAM_MCP_PATH,
+        orgSlug: opts.orgSlug,
+        commitSha,
+        pluginVersion: opts.pluginVersion,
+      });
+      // An activation is the one local event that changes what the brief says
+      // about this org, so re-fetch it opportunistically. Fire-and-forget —
+      // refresh() never throws, and the activation's own answer never waits.
+      void briefCache?.refresh('activation');
+      return result;
+    },
     onPluginOutdated,
   });
   lifecycleStatus = 'ready';
