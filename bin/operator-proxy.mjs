@@ -447,17 +447,25 @@ function versionAtLeast(installed, minimum) {
   return true;
 }
 
-function verifiedPluginVersion(pluginListOutput, minimum) {
+/** The `claude plugin list --json` record for THIS plugin, or null when the
+ * output is unparseable, not an array, or carries no versioned record for it. */
+function findInstalledPluginRecord(pluginListOutput) {
   try {
     const records = JSON.parse(pluginListOutput);
     if (!Array.isArray(records)) return null;
-    const installed = records.find(
-      (record) => record && record.id === PLUGIN_QUALIFIED_ID && typeof record.version === 'string'
+    return (
+      records.find(
+        (record) => record && record.id === PLUGIN_QUALIFIED_ID && typeof record.version === 'string'
+      ) ?? null
     );
-    return installed && versionAtLeast(installed.version, minimum) ? installed.version : null;
   } catch {
     return null;
   }
+}
+
+function verifiedPluginVersion(pluginListOutput, minimum) {
+  const installed = findInstalledPluginRecord(pluginListOutput);
+  return installed && versionAtLeast(installed.version, minimum) ? installed.version : null;
 }
 
 /**
@@ -473,16 +481,7 @@ function verifiedPluginVersion(pluginListOutput, minimum) {
  * correctly refused, and the log could not say what it had observed.
  */
 function observedPluginVersion(pluginListOutput) {
-  try {
-    const records = JSON.parse(pluginListOutput);
-    if (!Array.isArray(records)) return null;
-    const installed = records.find(
-      (record) => record && record.id === PLUGIN_QUALIFIED_ID && typeof record.version === 'string'
-    );
-    return installed?.version ?? null;
-  } catch {
-    return null;
-  }
+  return findInstalledPluginRecord(pluginListOutput)?.version ?? null;
 }
 
 export function runPluginSelfUpdate({ minimum, execFileImpl = execFileSync, out = process.stderr } = {}) {
@@ -540,25 +539,97 @@ export function runPluginSelfUpdate({ minimum, execFileImpl = execFileSync, out 
 }
 
 /**
- * Reads the version the plugin is at on disk RIGHT NOW, from the same launch
- * record's plugin root the launcher reads. `null` when it cannot be read.
+ * Asks the plugin REGISTRY what is installed right now: `{ version, installPath }`
+ * for this plugin, or `null` when the CLI is absent/fails, the output is
+ * unparseable, or there is no record for it.
  *
- * This is what makes the guard honest rather than optimistic: an update command
- * can exit 0 having installed nothing (already-current cache, a marketplace that
- * did not actually move), and restarting into the same version would produce the
- * identical refusal on the next call — a loop. The restart only happens when the
- * on-disk version actually changed.
+ * The registry is the only honest source. Claude Code caches every resolved
+ * version in its OWN directory (`…/cynap-operator/<version>/`) and leaves the
+ * predecessor in place for ~14 days, so the plugin root implied by
+ * `proxy-launch.json.proxyArgv[0]` is pinned to whatever version ran
+ * `/cynap-connect` — it answers "what did I connect with", never "what is
+ * installed". Reading the manifest under that root is what produced the
+ * 2026-09-22 prod defect: a 0.17.5 proxy self-updated to 0.18.0, read the
+ * 0.17.3 connect-time root, logged `plugin 0.17.5 -> 0.17.3` and restarted onto
+ * the OLDER build. The 2026-09-17 plugin-lifecycle investigation prescribed
+ * exactly this: resolve the successor from the registry's
+ * `installPath` everywhere a launch is replayed.
  */
-export function readInstalledPluginVersion({ launchRecord, readFileImpl = readFileSync } = {}) {
-  const proxyPath = launchRecord?.proxyArgv?.[0];
-  if (typeof proxyPath !== 'string' || proxyPath.length === 0) return null;
-  // proxyArgv[0] is <pluginRoot>/bin/operator-proxy-launcher.mjs.
-  const manifestPath = join(proxyPath, '..', '..', '.claude-plugin', 'plugin.json');
+export function readInstalledPlugin({ execFileImpl = execFileSync } = {}) {
+  let output;
   try {
-    const version = JSON.parse(readFileImpl(manifestPath, 'utf8')).version;
-    return typeof version === 'string' && version.length > 0 ? version : null;
+    output = execFileImpl('claude', ['plugin', 'list', '--json'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 120_000,
+    });
   } catch {
     return null;
+  }
+  const record = findInstalledPluginRecord(output);
+  if (!record || typeof record.installPath !== 'string' || record.installPath.length === 0) return null;
+  return { version: record.version, installPath: record.installPath };
+}
+
+/** The launcher every recorded `proxyArgv[0]` must end with — the suffix is what
+ * makes the plugin root recoverable from the record. */
+const LAUNCHER_PATH_SUFFIX = '/bin/operator-proxy-launcher.mjs';
+
+/** A plugin root safe to substitute into a recorded `/bin/sh -c` command
+ * without quoting. Anything outside this alphabet would need shell escaping,
+ * and a mis-quoted relaunch is a proxy that mints against the wrong tenant. */
+const SHELL_SAFE_PATH = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+function stripTrailingSlashes(path) {
+  return path.replace(/\/+$/, '');
+}
+
+/**
+ * Re-points a launch record from the plugin root it was recorded against onto
+ * `pluginRoot` — the successor the registry reports. Returns a NEW record (the
+ * input is never mutated), the SAME record when it already names that root, or
+ * `null` when the rebase cannot be done safely.
+ *
+ * Null is a refusal, not a fallback: relaunching the recorded command anyway is
+ * exactly the 2026-09-22 defect (a successful update followed by a restart onto
+ * the connect-time build).
+ */
+export function rebaseLaunchRecord(launchRecord, pluginRoot) {
+  const proxyPath = launchRecord?.proxyArgv?.[0];
+  const command = launchRecord?.launchCommand;
+  if (typeof proxyPath !== 'string' || !proxyPath.endsWith(LAUNCHER_PATH_SUFFIX)) return null;
+  if (typeof command !== 'string' || command.length === 0) return null;
+  if (typeof pluginRoot !== 'string' || pluginRoot.length === 0) return null;
+
+  const recordedRoot = proxyPath.slice(0, -LAUNCHER_PATH_SUFFIX.length);
+  const successorRoot = stripTrailingSlashes(pluginRoot);
+  if (stripTrailingSlashes(recordedRoot) === successorRoot) return launchRecord;
+  if (!command.includes(recordedRoot)) return null;
+  if (!SHELL_SAFE_PATH.test(successorRoot)) return null;
+
+  return {
+    ...launchRecord,
+    proxyArgv: launchRecord.proxyArgv.map((arg, index) =>
+      index === 0 ? `${successorRoot}${LAUNCHER_PATH_SUFFIX}` : arg
+    ),
+    launchCommand: command.split(recordedRoot).join(successorRoot),
+  };
+}
+
+/** Persists a launch record to `<cwd>/proxy-launch.json` in the same format
+ * lib/connect.mjs `writeLaunchRecord` writes. Returns whether it landed — a
+ * failure here is survivable (the in-memory successor still relaunches), so it
+ * is reported, never thrown. */
+export function writeLaunchRecordFile({
+  launchRecord,
+  cwd = process.cwd(),
+  writeFileImpl = writeFileSync,
+} = {}) {
+  try {
+    writeFileImpl(join(cwd, 'proxy-launch.json'), `${JSON.stringify(launchRecord, null, 2)}\n`);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -646,7 +717,7 @@ export function handlePluginOutdated({
   guard,
   launchRecord,
   runUpdate = runPluginSelfUpdate,
-  readInstalled = readInstalledPluginVersion,
+  readInstalled = () => readInstalledPlugin()?.version ?? null,
   out = process.stderr,
 }) {
   if (!guard.claim(minimum)) return 'already_attempted';
@@ -667,11 +738,15 @@ export function handlePluginOutdated({
       );
       return 'version_unreadable';
     }
-    if (installed === pluginVersion) {
+    // The floor, not "it changed": a DOWNGRADE also changes the version, and
+    // authorizing a restart on inequality is what let the 2026-09-22 proxy
+    // relaunch 0.17.5 as 0.17.3. Only `installed >= minimum` clears the refusal
+    // the next call would otherwise reproduce.
+    if (!versionAtLeast(installed, minimum)) {
       out.write(
-        `[operator-proxy] self-update: the installed version is still ${installed} after the update — not ` +
-          'restarting. A restart would produce this same refusal on the next call. Follow the update steps in ' +
-          'the answer body by hand.\n'
+        `[operator-proxy] self-update: the installed version is ${installed}, still below the required ` +
+          `${minimum} after the update — not restarting. A restart would produce this same refusal on the ` +
+          'next call. Follow the update steps in the answer body by hand.\n'
       );
       return 'still_outdated';
     }
@@ -2944,6 +3019,35 @@ export async function main(argv = process.argv.slice(2)) {
     lastPluginUpdateOutcome = outcome === 'ready_to_restart' ? 'updated' : outcome;
     process.stderr.write(`[operator-proxy] lifecycle outcome=${lastPluginUpdateOutcome} pid=${process.pid} plugin=${opts.pluginVersion ?? 'unknown'}\n`);
     if (outcome !== 'ready_to_restart') return;
+
+    // Resolve the SUCCESSOR before retiring anything. The recorded launch
+    // command names the plugin root `/cynap-connect` ran from, which the update
+    // has just made stale — replaying it verbatim relaunches the predecessor
+    // build (the 2026-09-22 0.17.5 -> 0.17.3 restart). Both halves must resolve;
+    // a proxy that cannot name its successor keeps its credential and stays up.
+    const installed = readInstalledPlugin();
+    const successor = installed ? rebaseLaunchRecord(launchRecord, installed.installPath) : null;
+    if (!successor) {
+      process.stderr.write(
+        '[operator-proxy] self-update: the plugin is updated, but this proxy cannot resolve the successor ' +
+          'build to restart into — ' +
+          (installed
+            ? `proxy-launch.json cannot be re-pointed at ${installed.installPath} (its launchCommand does not ` +
+              'name the recorded plugin root, or the new root would need shell quoting)'
+            : '`claude plugin list --json` did not report an installPath for this plugin') +
+          '. Keeping this proxy and its credential up; restart it from its working directory to pick up the ' +
+          'new build.\n'
+      );
+      lastPluginUpdateOutcome = 'successor_unresolved';
+      return;
+    }
+    if (!writeLaunchRecordFile({ launchRecord: successor })) {
+      process.stderr.write(
+        '[operator-proxy] self-update: could not persist the rebased proxy-launch.json — restarting into the ' +
+          'successor anyway; the self-heal hook will rebase again from $CLAUDE_PLUGIN_ROOT.\n'
+      );
+    }
+
     // A successor may launch only after this process has proven its credential
     // revoked. Credentials are process-memory state and are never handed over.
     void (async () => {
@@ -2957,7 +3061,7 @@ export async function main(argv = process.argv.slice(2)) {
       const leave = () => {
         if (left) return;
         left = true;
-        const relaunched = relaunchFromLaunchRecord({ launchRecord });
+        const relaunched = relaunchFromLaunchRecord({ launchRecord: successor });
         process.exit(relaunched.ok ? 0 : 1);
       };
       lifecycleServer.close(leave);
