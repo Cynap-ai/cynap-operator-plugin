@@ -879,7 +879,13 @@ export function buildOperatorInstructions({ orgSlug, env }) {
     `Before you claim this org has no X or has never done X, check the capability index or read the ` +
     `configs' execution.capabilities and execution.session_providers — never execution.mode or ` +
     `execution.entrypoint alone.`;
-  const instructions = `${opening}\n\n${body}\n\n${noXRule}`;
+  // 2026-09-23: a session with no operator command for a change fell back to a git clone of the
+  // monorepo and opened a pull request against a live org from inside an operator session.
+  const workspaceRule =
+    `Stay inside this workspace. Never fall back to a git clone or a full monorepo checkout to ` +
+    `make a change happen. If a change (handler source, a check, anything else) has no operator ` +
+    `command, that gap is a decision for a human — stop and ask, never work around it.`;
+  const instructions = `${opening}\n\n${body}\n\n${noXRule}\n\n${workspaceRule}`;
   return instructions.length > OPERATOR_INSTRUCTIONS_MAX_CHARS
     ? instructions.slice(0, OPERATOR_INSTRUCTIONS_MAX_CHARS)
     : instructions;
