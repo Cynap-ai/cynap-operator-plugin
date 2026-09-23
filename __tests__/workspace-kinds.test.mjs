@@ -5,12 +5,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifyPath } from '../bin/cynap-checks-core.mjs';
-import { classifyForPush, entranceForKind, COMMIT_GATED_KINDS, COMMIT_ONLY_KINDS, DEFERRED_ACTIVATION_KINDS, OWN_ENTRANCE_KINDS } from '../lib/workspace-kinds.mjs';
+import { classifyPath, effectForKind } from '../bin/cynap-checks-core.mjs';
+import { checkPushEffects, classifyForPush, entranceForKind, COMMIT_GATED_KINDS, COMMIT_ONLY_KINDS, DEFERRED_ACTIVATION_KINDS, OWN_ENTRANCE_KINDS } from '../lib/workspace-kinds.mjs';
 
 test('classifyPath is reachable from the bundled checks core (not tree-shaken away)', () => {
   assert.equal(typeof classifyPath, 'function');
   assert.equal(classifyPath('automations/foo.json'), 'automation');
+});
+
+test('effect pre-check follows the bundled SDK kind registry', () => {
+  assert.deepEqual(checkPushEffects(['context/schema.json', 'automations/sync.json'], classifyPath, effectForKind), ['schema']);
+  assert.equal(checkPushEffects(['context/schema.json', 'context/notes.md'], classifyPath, effectForKind), null);
+  assert.equal(checkPushEffects(['automations/handlers/x/handler.ts', 'automations/handlers/x/config.json'], classifyPath, effectForKind), null);
+  assert.deepEqual(checkPushEffects(['automations/handlers/x/handler.ts', 'automations/handlers/y/config.json'], classifyPath, effectForKind), ['handler:x']);
 });
 
 test('classifyForPush refuses a generated path', () => {

@@ -10,9 +10,9 @@ import { pathToFileURL } from 'node:url';
 
 import { stablePortForSlug } from '../lib/connect.mjs';
 import { encodeContent } from '../lib/content-codec.mjs';
-import { classifyPath, collectFingerprintPaths, evaluateChecks } from './cynap-checks-core.mjs';
+import { classifyPath, collectFingerprintPaths, effectForKind, evaluateChecks } from './cynap-checks-core.mjs';
 import { buildPushPlan } from '../lib/workspace-diff.mjs';
-import { classifyForPush } from '../lib/workspace-kinds.mjs';
+import { checkPushEffects, classifyForPush } from '../lib/workspace-kinds.mjs';
 import { runChecksPreflight } from '../lib/workspace-checks-preflight.mjs';
 import {
   assertConnectedOrg,
@@ -97,6 +97,11 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
 
   // Step 1: refuse locally on a non-activatable path, naming each path's entrance (spec §4.3/§7.3).
   const touched = [...plan.creates, ...plan.updates, ...plan.deletes];
+  const effects = checkPushEffects(touched, classifyPath, effectForKind);
+  if (effects) {
+    return { ok: false, reason: 'commit_spans_irreversible_effects', effects,
+      message: 'Commit each irreversible effect separately, with only permitted riders.' };
+  }
   const refusals = touched.map((path) => classifyForPush(path, classifyPath)).filter(Boolean);
   if (refusals.length > 0) {
     return {
