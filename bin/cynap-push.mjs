@@ -25,9 +25,30 @@ import {
 } from '../lib/workspace-sync.mjs';
 
 const VALID_INTENTS = new Set(['edit', 'repair', 'revert', 'provision', 'migration', 'drift_repair']);
+const SURFACE_ID_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
+
+/**
+ * The surface build gate's refusal codes, one operator-facing line each. The server sends the
+ * findings (the log excerpt) and a fix hint; this names what went wrong. Keys are pinned to the
+ * server's refusal-code list by a private parity test, so a code the server can send never
+ * reaches an operator as an unexplained failure.
+ */
+export const SURFACE_REFUSAL_MESSAGES = Object.freeze({
+  surface_build_failed: 'the surface build failed',
+  surface_lint_failed: 'the surface source uses a construct surfaces may not use',
+  surface_import_rejected: 'the surface imports a module outside the allowed set',
+  surface_manifest_invalid: 'the surface directory, routes.json or tools.json is invalid',
+  surface_tool_not_callable: 'the surface calls a tool it may not call',
+  surface_csp_not_empty: 'a _meta.ui.csp domain list is not empty',
+  surface_too_large: 'the built surface bundle is over its size cap',
+  surface_too_many: 'this push touches more than one surface',
+  surface_receipt_invalid: 'the platform could not verify the build',
+  surface_build_busy: 'another surface build for this org is running',
+  surface_build_timeout: 'the surface build did not fit in this request',
+});
 
 export function parsePushArgs(argv) {
-  const args = { dir: null, dryRun: false, message: null, intent: 'edit', proxyUrl: null };
+  const args = { dir: null, dryRun: false, message: null, intent: 'edit', proxyUrl: null, rebuild: null };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === '--dir') args.dir = argv[++i];
@@ -35,11 +56,15 @@ export function parsePushArgs(argv) {
     else if (flag === '-m' || flag === '--message') args.message = argv[++i];
     else if (flag === '--intent') args.intent = argv[++i];
     else if (flag === '--proxy-url') args.proxyUrl = argv[++i];
+    else if (flag === '--rebuild') args.rebuild = argv[++i];
     else throw new Error(`cynap-push: unrecognized argument "${flag}"`);
   }
   if (!args.dryRun && !args.message) throw new Error('cynap-push: -m/--message is required (unless --dry-run)');
   if (!VALID_INTENTS.has(args.intent)) {
     throw new Error(`cynap-push: --intent must be one of ${[...VALID_INTENTS].join(', ')}`);
+  }
+  if (args.rebuild !== null && !SURFACE_ID_PATTERN.test(args.rebuild ?? '')) {
+    throw new Error('cynap-push: --rebuild needs a surface id (the <id> of surfaces/<id>/)');
   }
   return args;
 }
@@ -64,7 +89,9 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   const local = readLocalFileMap(dir); // throws WorkspaceSyncError on a symlink (spec §7.1)
   const plan = buildPushPlan({ base, local });
 
-  if (plan.creates.length === 0 && plan.updates.length === 0 && plan.deletes.length === 0) {
+  // `--rebuild <surfaceId>` is a no-change operator commit — the platform never
+  // commits into an org chain, so a new SDK minor reaches a surface only through this push.
+  if (!args.rebuild && plan.creates.length === 0 && plan.updates.length === 0 && plan.deletes.length === 0) {
     return { ok: true, noop: true, message: 'nothing to push — the local tree matches the last pull.' };
   }
 
@@ -126,6 +153,7 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
     message: args.message,
     intent: args.intent,
     expected_head_sha: state.base,
+    ...(args.rebuild ? { rebuild_surface_id: args.rebuild } : {}),
   });
 
   if (committed?.ok === false) {
@@ -144,6 +172,17 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
         depth: committed.depth,
         nextCommitSha: committed.next_commit_sha,
         message: `the accepted chain is full (${committed.depth} pending) — activate or discard a pending commit before pushing again.`,
+      };
+    }
+    if (Object.hasOwn(SURFACE_REFUSAL_MESSAGES, committed.code)) {
+      return {
+        ok: false,
+        reason: committed.code,
+        result: committed,
+        findings: Array.isArray(committed.findings) ? committed.findings : [],
+        hint: typeof committed.hint === 'string' ? committed.hint : null,
+        retryable: committed.retryable === true,
+        message: `${committed.code}: ${SURFACE_REFUSAL_MESSAGES[committed.code]}.`,
       };
     }
     return { ok: false, reason: committed.code, result: committed, message: `workspace_commit refused: ${committed.code}` };
@@ -172,8 +211,26 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   };
 }
 
+function formatFinding(finding) {
+  const where = finding.file ? `${finding.file}${finding.line ? `:${finding.line}${finding.column ? `:${finding.column}` : ''}` : ''}: ` : '';
+  return `  ${where}${finding.message} [${finding.rule}]`;
+}
+
+/** The surface refusal block: the log excerpt, then the fix hint. */
+export function formatSurfaceRefusal(result) {
+  const lines = (result.findings ?? []).slice(0, 20).map(formatFinding);
+  if ((result.findings ?? []).length > 20) lines.push(`  … ${result.findings.length - 20} more`);
+  if (result.hint) lines.push(`Fix: ${result.hint}`);
+  if (result.retryable) lines.push('This is retryable — re-run /cynap-push.');
+  return lines.join('\n');
+}
+
 function printRefusal(result) {
   process.stderr.write(`cynap-push: ${result.message}\n`);
+  if (Object.hasOwn(SURFACE_REFUSAL_MESSAGES, result.reason)) {
+    const block = formatSurfaceRefusal(result);
+    if (block) process.stderr.write(`${block}\n`);
+  }
   if (result.reason === 'parent_mismatch') process.stderr.write('Run /cynap-pull, then re-run /cynap-push.\n');
   if (result.reason === 'checks_failed') process.stderr.write('Fix the config and re-run — there is no skip flag.\n');
 }

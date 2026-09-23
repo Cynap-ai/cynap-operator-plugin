@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { classifyPath } from '../bin/cynap-checks-core.mjs';
-import { classifyForPush, entranceForKind, COMMIT_ONLY_KINDS, DEFERRED_ACTIVATION_KINDS, OWN_ENTRANCE_KINDS } from '../lib/workspace-kinds.mjs';
+import { classifyForPush, entranceForKind, COMMIT_GATED_KINDS, COMMIT_ONLY_KINDS, DEFERRED_ACTIVATION_KINDS, OWN_ENTRANCE_KINDS } from '../lib/workspace-kinds.mjs';
 
 test('classifyPath is reachable from the bundled checks core (not tree-shaken away)', () => {
   assert.equal(typeof classifyPath, 'function');
@@ -58,12 +58,27 @@ test('classifyForPush allows an ordinary activatable kind (no refusal)', () => {
   assert.equal(classifyForPush('context/profile.md', classifyPath), null);
 });
 
-test('every DEFERRED_ACTIVATION_KINDS / OWN_ENTRANCE_KINDS member maps to a non-null entrance', () => {
+test('every DEFERRED_ACTIVATION_KINDS / OWN_ENTRANCE_KINDS member outside COMMIT_GATED_KINDS maps to a non-null entrance', () => {
   for (const kind of [...DEFERRED_ACTIVATION_KINDS, ...OWN_ENTRANCE_KINDS]) {
+    if (COMMIT_GATED_KINDS.has(kind)) continue;
     assert.ok(entranceForKind(kind), `expected an entrance for ${kind}`);
+  }
+});
+
+test('every COMMIT_GATED_KINDS member is an OWN_ENTRANCE_KINDS member with no refusal entrance', () => {
+  for (const kind of COMMIT_GATED_KINDS) {
+    assert.ok(OWN_ENTRANCE_KINDS.has(kind), kind);
+    assert.equal(entranceForKind(kind), null);
   }
 });
 
 test('entranceForKind returns null for an ordinary activatable kind', () => {
   assert.equal(entranceForKind('automation'), null);
+});
+
+test('classifyForPush allows surface source — its own entrance IS workspace_commit', () => {
+  assert.equal(classifyPath('surfaces/ops-board/index.tsx'), 'surface-source');
+  assert.equal(classifyForPush('surfaces/ops-board/index.tsx', classifyPath), null);
+  assert.equal(classifyForPush('surfaces/ops-board/routes.json', classifyPath), null);
+  assert.equal(entranceForKind('surface-source'), null);
 });

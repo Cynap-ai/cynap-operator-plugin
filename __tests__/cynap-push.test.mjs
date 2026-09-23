@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { push } from '../bin/cynap-push.mjs';
+import { formatSurfaceRefusal, push } from '../bin/cynap-push.mjs';
 import { readState, sha256Hex, writeStateAtomic, WorkspaceSyncError } from '../lib/workspace-sync.mjs';
 
 const NEW_SHA = 'd'.repeat(64);
@@ -253,4 +253,69 @@ test('push: a symlink anywhere in the local tree refuses', async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// Surface refusals and the no-change rebuild commit.
+
+test('push: a surface gate refusal returns its code, findings, hint and retryability', async () => {
+  const dir = scratchDir();
+  try {
+    mkdirSync(join(dir, 'surfaces', 'ops-board'), { recursive: true });
+    writeFileSync(join(dir, 'surfaces', 'ops-board', 'index.tsx'), 'window.parent.postMessage(1)');
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+    const findings = [{ rule: 'raw_post_message', file: 'index.tsx', line: 1, column: 1, message: 'postMessage is not allowed.' }];
+    const fetchImpl = fakeFetch({
+      ...noChecksOnLive(),
+      workspace_validate: () => ({ status: 'passed' }),
+      workspace_commit: () => ({ ok: false, code: 'surface_lint_failed', message: 'workspace_commit refused: surface_lint_failed', hint: 'Use the SDK hooks.', findings, retryable: false }),
+    });
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'surface'], fetchImpl });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'surface_lint_failed');
+    assert.deepEqual(result.findings, findings);
+    assert.equal(result.hint, 'Use the SDK hooks.');
+    assert.equal(result.retryable, false);
+    const block = formatSurfaceRefusal(result);
+    assert.match(block, /index\.tsx:1:1: postMessage is not allowed\. \[raw_post_message\]/);
+    assert.match(block, /Fix: Use the SDK hooks\./);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push: --rebuild commits with no file changes and names the surface', async () => {
+  const dir = scratchDir();
+  try {
+    mkdirSync(join(dir, 'surfaces', 'ops-board'), { recursive: true });
+    writeFileSync(join(dir, 'surfaces', 'ops-board', 'index.tsx'), 'export default () => null;');
+    writeStateAtomic(dir, {
+      org: 'cynap-e2e',
+      base: 'b'.repeat(64),
+      files: { 'surfaces/ops-board/index.tsx': sha256Hex(Buffer.from('export default () => null;')) },
+    });
+    let committedArgs = null;
+    const fetchImpl = fakeFetch({
+      ...noChecksOnLive(),
+      workspace_validate: () => ({ status: 'passed' }),
+      workspace_commit: (args) => {
+        committedArgs = args;
+        return { ok: true, commit: { commit_sha: NEW_SHA, parent_commit_sha: 'b'.repeat(64), created_at: 'now' } };
+      },
+      workspace_get_commit: () => ({ ok: true, state: 'pending', position: 1 }),
+    });
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'rebuild', '--rebuild', 'ops-board'], fetchImpl });
+    assert.equal(result.ok, true);
+    assert.deepEqual(committedArgs.changes, { operations: [] });
+    assert.equal(committedArgs.rebuild_surface_id, 'ops-board');
+    assert.equal(readState(dir).base, NEW_SHA);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push: --rebuild refuses a value that is not a surface id', async () => {
+  await assert.rejects(
+    push({ cwd: '/tmp/op/cynap-e2e', argv: ['-m', 'x', '--rebuild', '../etc'], fetchImpl: fakeFetch({}) }),
+    /--rebuild needs a surface id/
+  );
 });
