@@ -29,17 +29,25 @@ test('disconnect verifies tenant identity before signalling the proxy', async ()
     }),
     requestDisconnect: async (input) => {
       requests.push(input);
-      return { stopped: true, credentialIssued: true, credentialRevoked: true };
+      return {
+        stopped: true,
+        credentialIssued: true,
+        credentialRevoked: true,
+        revocationWitness: { logoutOk: true, mintStatus: 401 },
+      };
     },
     waitUntilDown: async () => true,
   });
 
   assert.deepEqual(requests, [{ slug: 'cynap' }]);
+  // The proxy's revocation witness (a refused mint) reaches the caller intact: the
+  // release journey's leg 3 reads it from here.
   assert.deepEqual(result, {
     status: 'disconnected',
     slug: 'cynap',
     credentialIssued: true,
     credentialRevoked: true,
+    revocationWitness: { logoutOk: true, mintStatus: 401 },
   });
 });
 

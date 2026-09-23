@@ -1,18 +1,27 @@
 #!/usr/bin/env node
 
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 
 import { runOperatorConnect } from '../lib/operator-connect.mjs';
 import { readPluginVersion } from './operator-proxy-launcher.mjs';
 
-export function parseConnectArgs(argv) {
-  const slug = argv[0]?.trim() ?? '';
-  const flags = argv.slice(1);
+/** The org a workspace directory belongs to: `~/CynapOperator/<slug>` names its own
+ * slug, so a connect run from inside it needs no argument. Anything else is null. */
+export function workspaceSlugFromCwd(cwd, operatorRoot = join(homedir(), 'CynapOperator')) {
+  const dir = resolve(cwd);
+  return dirname(dir) === resolve(operatorRoot) ? basename(dir) : null;
+}
+
+export function parseConnectArgs(argv, { cwd = process.cwd(), operatorRoot } = {}) {
+  const explicit = argv[0] && !argv[0].startsWith('--') ? argv[0].trim() : '';
+  const flags = explicit ? argv.slice(1) : argv;
   const unknown = flags.filter((value) => value !== '--staging');
-  if (!slug || slug.startsWith('--') || unknown.length > 0) {
-    throw new Error('Usage: cynap-connect.mjs <org-slug> [--staging]');
+  const slug = explicit || workspaceSlugFromCwd(cwd, operatorRoot) || '';
+  if (!slug || unknown.length > 0) {
+    throw new Error('Usage: cynap-connect.mjs <org-slug> [--staging] (the slug may be omitted inside ~/CynapOperator/<slug>)');
   }
   return { slug, env: flags.includes('--staging') ? 'staging' : 'prod' };
 }
@@ -25,7 +34,7 @@ export function formatConnectMessage(result, {
   const current = realpath(cwd);
   const inWorkspace = current === workspace || current.startsWith(`${workspace}/`);
   const firstLine = inWorkspace
-    ? `Reconnected to ${result.slug}. If operator tools don't respond in this session, run /mcp.`
+    ? `Reconnected to ${result.slug}. This session's operator tools use the new connection.`
     : `Connected to ${result.slug}. Open ~/CynapOperator/${result.slug}/ in Claude Code to use the operator tools. ` +
       'The first time, approve the project MCP server when asked.';
   const replacement = result.replaced

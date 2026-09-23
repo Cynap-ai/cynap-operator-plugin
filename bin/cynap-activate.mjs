@@ -14,21 +14,21 @@ export function parseActivateArgs(argv) {
   return { commitSha: argv[0] };
 }
 
-export async function activate({ slug, commitSha, fetchImpl = fetch }) {
+export async function activate({ slug, commitSha, witness = false, fetchImpl = fetch }) {
   const noncePath = join(resolveWorkingDir(slug), CONTROL_FILE);
   const nonce = readFileSync(noncePath, 'utf8').trim();
   if (!nonce) throw new Error('operator activation: local control nonce is missing; run /cynap-connect again.');
   const response = await fetchImpl(`http://127.0.0.1:${stablePortForSlug(slug)}${ACTIVATE_PATH}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', [CONTROL_HEADER]: nonce },
-    body: JSON.stringify({ commit_sha: commitSha }),
+    body: JSON.stringify(witness ? { commit_sha: commitSha, witness: true } : { commit_sha: commitSha }),
     signal: AbortSignal.timeout(5 * 60 * 1000),
   });
   const body = await response.json().catch(() => null);
   if (!response.ok || body?.ok !== true) {
     throw new Error(`operator activation failed: ${body?.error ?? response.status}`);
   }
-  return body.result;
+  return witness ? { result: body.result, witness: body.witness ?? null } : body.result;
 }
 
 export async function main(argv = process.argv.slice(2)) {

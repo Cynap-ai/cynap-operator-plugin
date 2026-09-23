@@ -56,7 +56,21 @@ test('the executable accepts one server-resolved org slug and production default
     slug: 'cynap',
     env: 'staging',
   });
-  assert.throws(() => parseConnectArgs([]), /Usage/);
+  assert.throws(() => parseConnectArgs([], { cwd: '/tmp/elsewhere', operatorRoot: '/home/o/CynapOperator' }), /Usage/);
+  // Inside a workspace the directory names the org, so the slug may be omitted.
+  assert.deepEqual(
+    parseConnectArgs([], { cwd: '/home/o/CynapOperator/cynap-e2e', operatorRoot: '/home/o/CynapOperator' }),
+    { slug: 'cynap-e2e', env: 'prod' }
+  );
+  assert.deepEqual(
+    parseConnectArgs(['--staging'], { cwd: '/home/o/CynapOperator/cynap-e2e', operatorRoot: '/home/o/CynapOperator' }),
+    { slug: 'cynap-e2e', env: 'staging' }
+  );
+  // A subdirectory of a workspace is not a workspace root.
+  assert.throws(
+    () => parseConnectArgs([], { cwd: '/home/o/CynapOperator/cynap-e2e/context', operatorRoot: '/home/o/CynapOperator' }),
+    /Usage/
+  );
   assert.throws(() => parseConnectArgs(['cynap', '--device']), /Usage/);
 });
 
@@ -65,7 +79,10 @@ test('connect copy is cwd-realpath aware and never advises a new session', () =>
   const realpath = (path) => path === '/symlink/cynap' ? '/real/CynapOperator/cynap' : path;
   const inside = formatConnectMessage(result, { cwd: '/symlink/cynap', realpath });
   const outside = formatConnectMessage(result, { cwd: '/elsewhere', realpath });
-  assert.match(inside, /^Reconnected to cynap\. If operator tools don't respond in this session, run \/mcp\./);
+  // Spec D §8.2 leg 2 (2026-09-23, prod cynap-e2e): a same-session reconnect answered
+  // a read tool with no /mcp, so the message no longer sends the operator there.
+  assert.match(inside, /^Reconnected to cynap\. This session's operator tools use the new connection\./);
+  assert.doesNotMatch(inside, /\/mcp/);
   assert.match(outside, /^Connected to cynap\. Open ~\/CynapOperator\/cynap\/ in Claude Code/);
   assert.doesNotMatch(`${inside}\n${outside}`, /new (Claude Code )?session/i);
 });

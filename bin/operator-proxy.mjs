@@ -1754,6 +1754,7 @@ export async function activateCommitWithStepUp({
   orgSlug,
   commitSha,
   pluginVersion,
+  witness = false,
   login = pkceLoopbackLogin,
   fetchImpl = fetch,
   out = process.stderr,
@@ -1770,23 +1771,76 @@ export async function activateCommitWithStepUp({
     out,
   });
   if (!credential) throw new Error('activation PKCE exchange returned no credential');
-  const response = await fetchImpl(`${mcpHost}${mcpPath}`, {
-    method: 'POST',
-    headers: upstreamHeaders(pluginVersion, {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
-      Authorization: `Bearer ${credential}`,
-    }),
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 'cynap-operator-activate',
-      method: 'tools/call',
-      params: { name: 'workspace_activate_commit', arguments: { commit_sha: commitSha } },
-    }),
-  });
-  const body = await readUpstreamResponseText(response);
-  if (!response.ok) throw new Error(`workspace activation failed: ${response.status}`);
-  return body;
+  const callWithPurposeCredential = async (name, args) => {
+    const response = await fetchImpl(`${mcpHost}${mcpPath}`, {
+      method: 'POST',
+      headers: upstreamHeaders(pluginVersion, {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${credential}`,
+      }),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'cynap-operator-activate',
+        method: 'tools/call',
+        params: { name, arguments: args },
+      }),
+    });
+    return { status: response.status, ok: response.ok, text: await readUpstreamResponseText(response) };
+  };
+  const activation = await callWithPurposeCredential('workspace_activate_commit', { commit_sha: commitSha });
+  if (!activation.ok) throw new Error(`workspace activation failed: ${activation.status}`);
+  if (!witness) return { body: activation.text, witness: null };
+  // Release-journey witness (Spec A §9 → Spec D §8.2 leg 5). The purpose credential
+  // lives only in this function, so only this function can prove its limits: a
+  // second use must be refused, and so must any tool other than
+  // workspace_activate_commit. Opt-in, because both calls exist only to be refused.
+  const replay = await callWithPurposeCredential('workspace_activate_commit', { commit_sha: commitSha });
+  const foreignTool = await callWithPurposeCredential('workspace_status', {});
+  return {
+    body: activation.text,
+    witness: {
+      replay: summarizeToolAnswer(replay.status, replay.text),
+      foreignTool: summarizeToolAnswer(foreignTool.status, foreignTool.text),
+    },
+  };
+}
+
+/** The last JSON-RPC message in a response body, whether it came back as plain JSON or
+ * as an SSE stream of `data:` lines. `null` when nothing parses. */
+function lastJsonRpcMessage(text) {
+  const candidates = [String(text ?? '').trim()];
+  for (const line of String(text ?? '').split('\n')) {
+    if (line.startsWith('data:')) candidates.push(line.slice('data:'.length).trim());
+  }
+  for (const candidate of candidates.reverse()) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // not JSON — try the next candidate
+    }
+  }
+  return null;
+}
+
+/** A witness-sized summary of one tool answer: was it refused, and with which code.
+ * Refused means an HTTP error, a JSON-RPC error, an `isError` result, or `ok: false`. */
+export function summarizeToolAnswer(httpStatus, text) {
+  const message = lastJsonRpcMessage(text);
+  const result = message?.result;
+  let structured = result?.structuredContent ?? null;
+  if (!structured) {
+    const first = result?.content?.find?.((c) => c.type === 'text')?.text;
+    try {
+      structured = first ? JSON.parse(first) : null;
+    } catch {
+      structured = null;
+    }
+  }
+  const code = structured?.code ?? message?.error?.code ?? null;
+  const refused =
+    httpStatus >= 400 || Boolean(message?.error) || result?.isError === true || structured?.ok === false;
+  return { httpStatus, refused, code };
 }
 
 /**
@@ -1876,6 +1930,53 @@ export async function revokeCliCredential({ mintHost, credential, pluginVersion,
     // best-effort — a lingering credential still self-expires within its absolute ≤48h TTL
     return false;
   }
+}
+
+/**
+ * Revocation witness. The logout route answers 200 for an unknown, already-revoked
+ * or invalid token alike (it is deliberately not an oracle), so a logout 200 proves
+ * nothing. A mint attempt with the retired credential is the server's own answer:
+ * the mint route resolves the credential before reading the body, and answers 401
+ * exactly when it no longer resolves. The body carries a `family` the route rejects
+ * (400) while parsing, before any mint, so a credential that still resolves is
+ * refused rather than handed a token. (An empty body would NOT do: the route pins a
+ * missing target org to the credential's own org and mints.)
+ * Never throws; a transport failure is `revoked: false` with `mintStatus: null`.
+ */
+/** Not a mint family, so the route's body parse refuses it (400) before minting. */
+export const REVOCATION_WITNESS_FAMILY = 'revocation-witness';
+
+export async function witnessCliCredentialRevocation({ mintHost, credential, pluginVersion, fetchImpl = fetch }) {
+  if (!credential) return { revoked: true, mintStatus: null };
+  try {
+    const response = await fetchImpl(`${mintHost}/api/auth/operator-token`, {
+      method: 'POST',
+      headers: upstreamHeaders(pluginVersion, {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${credential}`,
+        ...stagingProtectionBypassHeaders(),
+      }),
+      body: JSON.stringify({ family: REVOCATION_WITNESS_FAMILY }),
+      signal: AbortSignal.timeout(REVOKE_ON_EXIT_TIMEOUT_MS),
+    });
+    return { revoked: response.status === 401, mintStatus: response.status };
+  } catch {
+    return { revoked: false, mintStatus: null };
+  }
+}
+
+/** Disconnect's revoke step: log out, then witness. `credentialRevoked` is the
+ * witness's verdict, never the logout's status. */
+export async function revokeAndWitnessCliCredential({
+  mintHost,
+  credential,
+  pluginVersion,
+  revoke = revokeCliCredential,
+  witness = witnessCliCredentialRevocation,
+}) {
+  const logoutOk = await revoke({ mintHost, credential, pluginVersion });
+  const { revoked, mintStatus } = await witness({ mintHost, credential, pluginVersion });
+  return { credentialRevoked: revoked, revocationWitness: { logoutOk, mintStatus } };
 }
 
 // ---------------------------------------------------------------------------
@@ -2212,9 +2313,9 @@ export function createProxyServer({
       }
       try {
         const payload = JSON.parse((await readBody(req)).toString('utf8'));
-        const result = await requestActivation(payload?.commit_sha);
+        const { body, witness } = await requestActivation(payload?.commit_sha, { witness: payload?.witness === true });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ ok: true, result }));
+        res.end(JSON.stringify(witness ? { ok: true, result: body, witness } : { ok: true, result: body }));
       } catch (error) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'activation_failed' }));
@@ -3021,8 +3122,9 @@ export async function main(argv = process.argv.slice(2)) {
       lifecycleStatus = 'disconnecting';
       shutdownPromise = (async () => {
         const credentialIssued = typeof revokeOnExit === 'function';
-        const credentialRevoked = credentialIssued ? await revokeOnExit() : true;
-        return { stopped: true, credentialIssued, credentialRevoked };
+        if (!credentialIssued) return { stopped: true, credentialIssued, credentialRevoked: true };
+        const { credentialRevoked, revocationWitness } = await revokeOnExit();
+        return { stopped: true, credentialIssued, credentialRevoked, revocationWitness };
       })();
     }
     return shutdownPromise;
@@ -3139,7 +3241,11 @@ export async function main(argv = process.argv.slice(2)) {
     // the SUPERSEDED credential, and revoking it on exit would leave the live
     // one running to its full TTL.
     revokeOnExit = () =>
-      revokeCliCredential({ mintHost, credential: session.current().credential, pluginVersion: opts.pluginVersion });
+      revokeAndWitnessCliCredential({
+        mintHost,
+        credential: session.current().credential,
+        pluginVersion: opts.pluginVersion,
+      });
     // The credential is frozen to a server-resolved org — pin the proxy to it (the mint
     // route enforces this too), superseding the --org-slug default as source of truth.
     // session.renew() already refused a credential with no org (and revoked it),
@@ -3292,7 +3398,7 @@ export async function main(argv = process.argv.slice(2)) {
     controlNonce,
     consentGate,
     briefCache,
-    requestActivation: async (commitSha) => {
+    requestActivation: async (commitSha, { witness = false } = {}) => {
       const result = await activateCommitWithStepUp({
         mintHost,
         mcpHost,
@@ -3300,6 +3406,7 @@ export async function main(argv = process.argv.slice(2)) {
         orgSlug: opts.orgSlug,
         commitSha,
         pluginVersion: opts.pluginVersion,
+        witness,
       });
       // An activation is the one local event that changes what the brief says
       // about this org, so re-fetch it opportunistically. Fire-and-forget —
