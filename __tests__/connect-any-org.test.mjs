@@ -67,6 +67,21 @@ test('cynap-e2e on staging is unchanged — still headless with a known org id',
   assert.ok(plan.orgId, 'the e2e leg still resolves its org id offline');
 });
 
+test('cynap-e2e over PKCE never pins --allow-org — it takes the server-resolved path', async () => {
+  // Regression: the offline map used to pin cynap-e2e on EVERY mode, so the
+  // release journey's connect leg ("launched without --allow-org") could not
+  // pass on the one org it runs against.
+  const plan = await planConnect({
+    slug: CYNAP_E2E_SLUG,
+    proxyPath: '/plugin/bin/operator-proxy.mjs',
+    env: 'prod',
+    ...stubs,
+  });
+  assert.equal(plan.authMode, 'interactive');
+  assert.equal(plan.orgId, null, 'the credential carries the org, as for any customer org');
+  assert.ok(!plan.proxyArgv.includes('--allow-org'), `argv pinned an org: ${plan.proxyArgv.join(' ')}`);
+});
+
 test('prod always takes the consent path — the cookie leg can never widen to prod', () => {
   assert.equal(resolveAuthMode(CYNAP_E2E_SLUG, 'prod'), 'interactive');
   assert.equal(resolveAuthMode('acme-clinic-uk', 'prod'), 'interactive');
