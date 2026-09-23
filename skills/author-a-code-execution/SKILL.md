@@ -1,6 +1,6 @@
 ---
 name: author-a-code-execution
-description: Author a mode:code_execution automation — a single-file TypeScript handler (entrypoint:worker) or a headless agent session (entrypoint:opencode), the cheapest way to add selective LLM calls plus deterministic logic and writes to the org database, or a browser/filesystem agent task. Use after choose-the-right-mode routes here.
+description: Author a mode:code_execution automation — a single-file TypeScript handler (entrypoint:worker) or a headless agent session (entrypoint:opencode), the cheapest way to add selective LLM calls plus deterministic logic and writes to the org database, a scripted browser job (worker + capabilities:["browser"] + session_providers), or an open-ended browser/filesystem agent task. Use after choose-the-right-mode routes here.
 ---
 
 # author-a-code-execution — Code-Execution-Mode Authoring
@@ -22,18 +22,60 @@ native versus BYOK billing before choosing a model.
   `ctx.tools.llm.complete()` calls, no chat loop. `mode:handler` is RETIRED — migrate to
   `mode:code_execution` for this deliverable shape. Use for classification/extraction plus
   deterministic TypeScript logic and writes to the org database.
-- **`opencode`** — a headless agent chat session on the browser-capable
-  agent image. Add `capabilities: ['browser']` to get the Chromium image
-  (≥4GB tier) for browser automation.
+- **`opencode`** — a headless agent chat session on the agent image.
   `mode:agent` is RETIRED — migrate to `mode:code_execution`
-  for browser/filesystem/multi-turn workloads. **Prefer `worker` for classification/extraction** —
-  only reach for `opencode` when the task genuinely needs browser,
-  filesystem, or a long-running multi-turn agent workflow.
+  for filesystem/multi-turn workloads. **Prefer `worker` for classification/extraction** —
+  only reach for `opencode` when the task genuinely needs an agent that
+  decides its own next step.
 
 Both entrypoints share the same `allowed_tools`/`http_allowlist` contract
 below. This skill focuses on the `worker` entrypoint (the common case); for
 `opencode`, the config shape is the same minus `handler.ts` — the sandbox
 drives an LLM chat turn directly.
+
+## Browser work — two first-class routes
+
+`execution.capabilities: ["browser"]` is valid with EITHER entrypoint. It is
+intent: the platform picks the Chromium-capable image at the ≥4GB tier. The
+only capability value the platform accepts today is `"browser"`.
+
+| Route | `execution` | What drives the browser | Use when |
+|---|---|---|---|
+| **worker + browser** | `"entrypoint": "worker"`, `"capabilities": ["browser"]`, plus `handler.ts` | Your handler, deterministically: it runs the agent-browser CLI (`ab`, on PATH) itself. No LLM in the loop. | The pages and steps are known in advance — a nightly scrape, a sync that walks a list, a form an invoice writer fills. This is the production pattern for scripted browser jobs. |
+| **opencode + browser** | `"entrypoint": "opencode"`, `"capabilities": ["browser"]` | An agent chat turn. | The page flow is not known in advance and needs judgment at each step. |
+
+A logged-in browser job adds a **stored session**:
+
+```json
+"execution": {
+  "mode": "code_execution",
+  "entrypoint": "worker",
+  "capabilities": ["browser"],
+  "session_providers": ["<provider>"],
+  "http_allowlist": ["*.<provider-host>"],
+  "allowed_tools": ["knowledge.storeBatch"],
+  "max_runtime_ms": 900000
+}
+```
+
+- `session_providers` injects the org's stored session for each named
+  provider as `ctx.input.secrets.<provider>_session` — a JSON string
+  `{cookies, userAgent}`. Your handler applies it (set the cookies and user
+  agent on agent-browser before the first navigation).
+- Injection is non-fatal: a missing or invalid session leaves the secret
+  unset. The handler must fail closed when it is absent — return a failure,
+  never scrape logged-out pages and report success.
+- Egress is still gated by `http_allowlist`: list the provider's hosts.
+- `session_providers` also works WITHOUT the browser capability, for a worker
+  that calls the provider over `ctx.tools.http` with the session's cookies.
+- Browser runs are switched on per environment by the platform. A config the
+  platform accepts is not proof that browser runs are enabled where it runs —
+  check the run's log before calling a new browser job done.
+
+Before you tell anyone a browser job would be the org's first, read the
+org's existing configs' `execution.capabilities` and
+`execution.session_providers` (the operator context lists them in its
+capability index). `mode` and `entrypoint` alone cannot show a browser job.
 
 ## Deliverable shape (worker entrypoint) — exactly TWO files
 
@@ -215,10 +257,11 @@ shipping).
 
 ## Authoring checklist
 
-1. Confirm `code_execution` is right (`choose-the-right-mode`) — if this
-   needs a full chat session for browser/filesystem/multi-turn work, use
-   `entrypoint: 'opencode'` (add `capabilities: ['browser']` for browser);
-   otherwise `entrypoint: 'worker'` with a `.ts` handler.
+1. Confirm `code_execution` is right (`choose-the-right-mode`). A scripted
+   browser job is `entrypoint: 'worker'` + `capabilities: ['browser']` (+
+   `session_providers` when it logs in); an open-ended agent task is
+   `entrypoint: 'opencode'` (add `capabilities: ['browser']` if it needs a
+   browser); everything else is `entrypoint: 'worker'` with a `.ts` handler.
 2. Draft `handler.ts` as a single file — inline everything, no imports
    beyond type-only SDK imports.
 3. Do NOT declare a top-level `tools: []` — it's rejected for

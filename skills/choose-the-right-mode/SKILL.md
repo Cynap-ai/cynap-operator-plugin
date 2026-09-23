@@ -52,7 +52,11 @@ availability are independent of execution mode.
    `ctx.tools.llm.complete()` calls) for the classification/extraction/
    org-database-write case, or `entrypoint: 'opencode'` (a headless agent chat
    session, add `capabilities: ['browser']` if it needs a browser) for the
-   agentic-workflow case. **Prefer `entrypoint: 'worker'` with
+   agentic-workflow case. **A scripted browser job — known pages, known
+   steps — is `entrypoint: 'worker'` + `capabilities: ['browser']`**, with
+   `session_providers` when it needs the org's stored login: the handler
+   drives the browser itself and no LLM is in the loop. Reach for
+   `opencode` + browser only when the page flow needs judgment. **Prefer `entrypoint: 'worker'` with
    `ctx.tools.llm.complete(prompt, { model })`** and a cheap fast model
    (Gemini Flash class) over a full headless agent session wherever the task is
    really classification/extraction — it's cheaper, unit-testable via
@@ -65,7 +69,8 @@ The single most common mis-route: authoring a conversational bot as
 `code_execution` with `entrypoint: 'opencode'` because that's the "AI mode"
 that sounds right. It is not — conversational bots are **Flows & Bots
 (Flow-Runner)**, full stop. The headless-agent entrypoint is reserved for
-browser/filesystem/multi-turn DATA tasks, not customer-facing chat.
+open-ended browser/filesystem/multi-turn DATA tasks, not customer-facing chat
+(a scripted browser job is a `worker`, not an agent session).
 
 The second most common mis-route: assuming `deterministic` mode can't call
 an LLM at all, then reaching for `code_execution` when `deterministic` would
@@ -82,8 +87,9 @@ action is `code_execution` (`entrypoint: 'opencode'`) or `flow`. See
 ## Links
 
 - Conversational bot → `author-a-flow`
-- TypeScript handler with selective LLM / org-database writes, or a headless
-  browser/filesystem agent session → `author-a-code-execution`
+- TypeScript handler with selective LLM / org-database writes, a scripted
+  browser job (worker + browser capability), or a headless browser/filesystem
+  agent session → `author-a-code-execution`
 - Fixed-step scheduled sync/reconciler/ETL → `author-a-deterministic-automation`
 - Schema/entity changes (any mode) → `author-a-schema-change`
 - Shared cross-mode constraints → `platform-invariants`
