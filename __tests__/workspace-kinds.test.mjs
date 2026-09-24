@@ -42,6 +42,14 @@ test('classifyForPush refuses checks/** — the exact reason /cynap-checks reads
   assert.equal(refusal.entrance, 'git');
 });
 
+test('classifyForPush refuses reclaims.json through the git entrance', () => {
+  assert.deepEqual(classifyForPush('reclaims.json', classifyPath), {
+    path: 'reclaims.json',
+    kind: 'reclaims',
+    entrance: 'git',
+  });
+});
+
 test('classifyForPush refuses handler source with the handler_upload entrance', () => {
   const refusal = classifyForPush('automations/handlers/foo/handler.ts', classifyPath);
   assert.equal(refusal.kind, 'handler-source');

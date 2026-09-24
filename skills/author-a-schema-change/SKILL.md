@@ -17,6 +17,27 @@ automations may read/write entities whose shape you define here. Read
 context/schema.json
 ```
 
+Author only additive changes through the operator workspace. Start from the
+current accepted parent, then use `workspace_validate` to inspect the schema
+plan and its proposed DDL. A schema change needs the org owner's approval:
+`workspace_commit` records the plan, `/cynap-checks <commit-sha>` verifies the
+pending bytes, and `/cynap-activate <commit-sha>` opens the consent page with
+the exact delta and DDL before applying it. Wait for the activation's terminal
+status; a submitted command alone does not prove the DB effect or live publish.
+
+The admitted operator set is new entity types, nullable fields on dedicated
+tables, required boolean fields whose existing rows read false, and metadata
+annotations. Existing field type, requiredness, name, enum values, searchability,
+uniqueness, dedicated table placement, and removals are outside that set.
+Treat a `schema_change_not_admitted` result as a git PR plus owner migration
+decision; do not reshape the change to evade the refusal.
+
+To reclaim a schema file from operator provenance for git, add a reviewed
+`reclaims.json` entry in the customer's org workspace through a git PR. `provenance`
+requires identical bytes; `content` requires the live ETag and an admissible
+change or a ticket naming the destructive migration runbook. Reclaims are
+git-only and cannot be submitted through `workspace_commit`.
+
 The `entities[]` array, each entry an `EntitySchema`:
 
 ```typescript
@@ -72,24 +93,13 @@ export interface EntitySchemaField {
    contain one of these words (e.g. "the trigger for a follow-up"), rephrase
    it — there is no mechanical fix, the validator rejects the whole entity.
 
-3. **After deploy, verify the entity actually registered — silence is not
-   success.** The deployed config is validated fail-closed BEFORE any entity
-   registers: a blocked-pattern violation fails the whole file. But a
-   *different* per-entity registration error (e.g. a malformed field) is
-   still only logged, not surfaced to you as the author.
-   **Consequence:**
-   a stale registry or a missing table for one entity can persist silently
-   — after any schema change, verify the entity actually registered (e.g.
-   via a schema query), don't assume "no error surfaced to me" means
-   "every entity in the file registered."
+3. **Verify the terminal effect and resulting registry.** The schema apply
+   checks the touched physical objects, registry rows, relationships, and
+   columns. A failed or pending activation is not a successful deploy.
 
-4. **Adding a field to an entity that already has a dedicated table does not
-   retroactively alter the live table.** There is no v1 schema-evolution
-   tooling — the table is created once, on first registration.
-   **Declare the FULL schema upfront** for any entity
-   you intend to give a `dedicated_table` — treat later field additions to
-   an already-dedicated-table entity as needing explicit verification, not a
-   trivial JSON edit.
+4. **Adding a field to a dedicated table is conditional.** Only the admitted
+   additive set can add a physical column. Inspect the plan and consent page;
+   a column or registry mismatch refuses with `schema_state_diverged`.
 
 5. **Use `getSchemaRegistry()` / `resolveTableForType()` — never hardcode
    `'entities'` as a table name** in any downstream authoring (handler,
@@ -159,13 +169,13 @@ stored.
 4. Scan every description for a BLOCKED keyword (DROP/ALTER/CREATE/
    TRUNCATE/DELETE FROM/INSERT INTO/UPDATE SET/TRIGGER/PROCEDURE/FUNCTION/
    EXEC/EXECUTE/GRANT/REVOKE) — rephrase if present.
-5. If this entity needs a `dedicated_table`, declare the FULL field set now
-   — don't plan to "add fields later" without re-verifying that the field
-   actually lands.
+5. If this entity needs a `dedicated_table`, inspect each planned physical
+   change, including later additive fields.
 6. If this entity has a pipeline (stage-based lifecycle), declare `stages`,
    `terminal_stages`, and `forward_only` together.
-7. After deploy, verify the entity actually registered (don't assume
-   silence means success — see gotcha 3).
+7. Validate and commit, run `/cynap-checks <commit-sha>`, then have the owner
+   review the consent page through `/cynap-activate <commit-sha>`. Confirm the
+   terminal activation and registry state.
 8. In any other authoring skill that reads/writes this entity type, use
    `getSchemaRegistry()`/`resolveTableForType()`, never a hardcoded table
    name.
