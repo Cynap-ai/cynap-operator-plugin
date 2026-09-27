@@ -22,6 +22,7 @@ import {
   resolveOrgSlug,
   mcpCall,
   isProxyUnreachableError,
+  TOOL_NOT_AVAILABLE_CODE,
 } from '../lib/workspace-sync.mjs';
 
 function scratchDir() {
@@ -355,4 +356,36 @@ test('a successful call is untouched by any of this', async () => {
     }),
   });
   assert.deepEqual(result, { commit_sha: 'abc', entries: [] });
+});
+
+// ---------------------------------------------------------------------------
+// mcpCall — a tool the server refuses BEFORE it runs answers `isError` with plain
+// text. rj-2026-09-27-69f48f77 crashed on exactly that (`Unexpected token 'T'`).
+// ---------------------------------------------------------------------------
+
+function toolResult(result) {
+  return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 1, result }) };
+}
+
+test('a surface-denied tool comes back as { ok: false, code: tool_not_available }, not a SyntaxError', async () => {
+  const message = "Tool 'workspace_activate_commit' is not available on this connection";
+  const answer = await mcpCall('http://127.0.0.1:8790/mcp', 'workspace_activate_commit', {}, {
+    fetchImpl: async () => toolResult({ isError: true, content: [{ type: 'text', text: message }] }),
+  });
+  assert.deepEqual(answer, { ok: false, code: TOOL_NOT_AVAILABLE_CODE, message });
+});
+
+test('any other plain-text isError is a tool_error refusal carrying the text verbatim', async () => {
+  const answer = await mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
+    fetchImpl: async () => toolResult({ isError: true, content: [{ type: 'text', text: 'Permission denied: requires x' }] }),
+  });
+  assert.deepEqual(answer, { ok: false, code: 'tool_error', message: 'Permission denied: requires x' });
+});
+
+test('non-JSON text on a SUCCESSFUL result still throws — only refusals are reshaped', async () => {
+  await assert.rejects(() =>
+    mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
+      fetchImpl: async () => toolResult({ content: [{ type: 'text', text: 'not json' }] }),
+    })
+  );
 });

@@ -35,7 +35,8 @@
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync, fstatSync } from 'node:fs';
+import { Socket } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -701,6 +702,265 @@ export function readLaunchRecord({ cwd = process.cwd(), readFileImpl = readFileS
   }
 }
 
+// ---------------------------------------------------------------------------
+// Self-update credential handoff
+//
+// A self-update restart used to revoke the credential and let the successor
+// open a SECOND browser consent — which nobody is watching mid-call, so the
+// successor timed out and the org went dark. Instead the predecessor hands the
+// credential it already holds to its successor over a PRIVATE channel: an
+// inherited socket on fd 3 of the successor. The credential never touches argv,
+// env, disk or a log. The env var below names only the fd NUMBER.
+//
+// The successor acknowledges adoption over the same socket. No acknowledgement
+// means the handoff failed: the predecessor revokes its credential (so a failed
+// handoff still leaves "replaced ⇒ revoked" intact) and the successor falls
+// back to browser consent exactly as before.
+// ---------------------------------------------------------------------------
+
+/** Names the inherited fd carrying the handoff. Never carries the credential. */
+export const CREDENTIAL_HANDOFF_FD_ENV = 'CYNAP_OPERATOR_HANDOFF_FD';
+const CREDENTIAL_HANDOFF_FD = 3;
+const CREDENTIAL_HANDOFF_ACK = 'adopted';
+const CREDENTIAL_HANDOFF_VERSION = 1;
+const CREDENTIAL_HANDOFF_MAX_BYTES = 16 * 1024;
+/** How long the predecessor waits for the successor to adopt the credential. */
+export const CREDENTIAL_HANDOFF_ACK_TIMEOUT_MS = 30_000;
+/** How long the successor waits for the payload once it has found the fd. */
+export const CREDENTIAL_HANDOFF_READ_TIMEOUT_MS = 5_000;
+
+/**
+ * Spawns the successor from the launch record with the credential on an
+ * inherited socket (fd 3), then waits for it to acknowledge adoption.
+ *
+ * Resolves `{ ok, spawned, reason }`; never rejects. `spawned` tells the caller
+ * whether a successor is already running — a failed handoff with `spawned`
+ * true must NOT launch a second one (it would race it for the port).
+ */
+export function handOffCredential({
+  launchRecord,
+  record,
+  cwd = process.cwd(),
+  env = process.env,
+  spawnImpl = spawn,
+  ackTimeoutMs = CREDENTIAL_HANDOFF_ACK_TIMEOUT_MS,
+}) {
+  const command = launchRecord?.launchCommand;
+  if (typeof command !== 'string' || command.length === 0) {
+    return Promise.resolve({ ok: false, spawned: false, reason: 'no_launch_record' });
+  }
+  let child;
+  try {
+    child = spawnImpl('/bin/sh', ['-c', command], {
+      cwd,
+      detached: true,
+      stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
+      env: { ...env, [CREDENTIAL_HANDOFF_FD_ENV]: String(CREDENTIAL_HANDOFF_FD) },
+    });
+  } catch {
+    return Promise.resolve({ ok: false, spawned: false, reason: 'spawn_failed' });
+  }
+  const channel = child.stdio?.[CREDENTIAL_HANDOFF_FD];
+  if (!channel) {
+    return Promise.resolve({ ok: false, spawned: true, reason: 'no_channel' });
+  }
+  child.unref();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let received = '';
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      channel.destroy();
+      resolve(outcome);
+    };
+    const timer = setTimeout(
+      () => finish({ ok: false, spawned: true, reason: 'not_acknowledged' }),
+      ackTimeoutMs
+    );
+    child.once('error', () => finish({ ok: false, spawned: false, reason: 'spawn_failed' }));
+    channel.setEncoding('utf8');
+    channel.on('error', () => finish({ ok: false, spawned: true, reason: 'channel_error' }));
+    channel.on('end', () => finish({ ok: false, spawned: true, reason: 'channel_closed' }));
+    channel.on('data', (chunk) => {
+      received += chunk;
+      const newline = received.indexOf('\n');
+      if (newline === -1) return;
+      const acknowledged = received.slice(0, newline).trim() === CREDENTIAL_HANDOFF_ACK;
+      finish(
+        acknowledged
+          ? { ok: true, spawned: true, reason: 'adopted' }
+          : { ok: false, spawned: true, reason: 'refused' }
+      );
+    });
+    channel.write(`${JSON.stringify({ v: CREDENTIAL_HANDOFF_VERSION, ...record })}\n`);
+  });
+}
+
+/** Why a handoff record is unusable, or null when it is usable. Checks the
+ * record names THIS successor's org and plane, so a handoff can never move a
+ * credential to a different tenant or environment. */
+export function credentialHandoffProblem(record, { orgSlug, mintHost, nowMs = Date.now() }) {
+  if (!record || typeof record !== 'object') return 'not_an_object';
+  if (record.v !== CREDENTIAL_HANDOFF_VERSION) return 'unknown_version';
+  if (typeof record.credential !== 'string' || !record.credential.startsWith(CLI_CREDENTIAL_PREFIX)) {
+    return 'not_a_cli_credential';
+  }
+  if (typeof record.orgId !== 'string' || record.orgId.length === 0) return 'no_org';
+  if (record.orgSlug !== orgSlug) return 'org_slug_mismatch';
+  if (record.mintHost !== mintHost) return 'plane_mismatch';
+  if (record.expiresAt !== null && record.expiresAt !== undefined) {
+    const expiresMs = Date.parse(record.expiresAt);
+    if (!Number.isFinite(expiresMs)) return 'unreadable_expiry';
+    if (expiresMs <= nowMs) return 'expired';
+  }
+  return null;
+}
+
+function readHandoffLine(channel, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let received = '';
+    const finish = (line) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      channel.pause();
+      resolve(line);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    channel.setEncoding('utf8');
+    channel.on('data', (chunk) => {
+      received += chunk;
+      const newline = received.indexOf('\n');
+      if (newline !== -1) finish(received.slice(0, newline));
+      else if (received.length > CREDENTIAL_HANDOFF_MAX_BYTES) finish(null);
+    });
+    channel.once('end', () => finish(null));
+  });
+}
+
+/**
+ * The successor's half. Returns `null` when no handoff was offered (a normal
+ * start), and also when one was offered but is unusable — in which case it logs
+ * the fallback. Otherwise returns `{ record, acknowledge, decline }`: call
+ * `acknowledge()` only after the credential is adopted.
+ *
+ * Deletes the fd marker from `env` first, so nothing this process spawns
+ * (browser opener, plugin updater) inherits it.
+ */
+export async function receiveCredentialHandoff({
+  orgSlug,
+  mintHost,
+  env = process.env,
+  now = Date.now,
+  statFd = fstatSync,
+  openChannel = (fd) => new Socket({ fd, readable: true, writable: true }),
+  timeoutMs = CREDENTIAL_HANDOFF_READ_TIMEOUT_MS,
+  out = process.stderr,
+}) {
+  const marker = env[CREDENTIAL_HANDOFF_FD_ENV];
+  if (marker === undefined) return null;
+  delete env[CREDENTIAL_HANDOFF_FD_ENV];
+
+  let channel = null;
+  const fallBack = (reason) => {
+    channel?.destroy();
+    out.write(
+      `[operator-proxy] credential handoff from the previous proxy failed (${reason}) — falling back to ` +
+        'browser consent.\n'
+    );
+    return null;
+  };
+
+  const fd = Number(marker);
+  if (!Number.isInteger(fd) || fd < CREDENTIAL_HANDOFF_FD) return fallBack('bad_fd_marker');
+  try {
+    const stat = statFd(fd);
+    if (!stat.isSocket() && !stat.isFIFO()) return fallBack('fd_not_a_channel');
+  } catch {
+    return fallBack('fd_not_open');
+  }
+  try {
+    channel = openChannel(fd);
+  } catch {
+    return fallBack('fd_unreadable');
+  }
+  channel.on('error', (error) => {
+    out.write(`[operator-proxy] credential handoff channel error: ${error?.code ?? 'unknown'}\n`);
+  });
+
+  const line = await readHandoffLine(channel, timeoutMs);
+  if (line === null) return fallBack('no_payload');
+  let record;
+  try {
+    record = JSON.parse(line);
+  } catch {
+    return fallBack('unparseable_payload');
+  }
+  const problem = credentialHandoffProblem(record, { orgSlug, mintHost, nowMs: now() });
+  if (problem) return fallBack(problem);
+
+  return {
+    record: { credential: record.credential, orgId: record.orgId, expiresAt: record.expiresAt ?? null },
+    acknowledge: () => channel.end(`${CREDENTIAL_HANDOFF_ACK}\n`),
+    decline: (reason) => fallBack(reason),
+  };
+}
+
+/**
+ * The self-update restart, once the successor build is resolved. With a held
+ * credential: release the port, hand the credential over, and exit WITHOUT
+ * revoking it. If the handoff fails, fall back: revoke it (the successor then
+ * opens browser consent itself) and launch a successor only if the handoff did
+ * not already start one. Without a credential (the --e2e cookie leg): revoke is
+ * trivially proven, release the port, relaunch.
+ *
+ * Resolves the exit code. The caller exits; this never does.
+ */
+export async function restartIntoSuccessor({
+  successor,
+  held,
+  releasePort,
+  retire,
+  handOff = handOffCredential,
+  relaunch = relaunchFromLaunchRecord,
+  out = process.stderr,
+}) {
+  if (held?.credential) {
+    await releasePort();
+    const handed = await handOff({ launchRecord: successor, record: held });
+    if (handed.ok) {
+      out.write(
+        '[operator-proxy] self-update: handed this proxy\'s credential to the successor; it will not open a ' +
+          'new browser consent.\n'
+      );
+      return 0;
+    }
+    out.write(
+      `[operator-proxy] self-update: credential handoff failed (${handed.reason}) — falling back: revoking ` +
+        'this credential; the successor will reopen browser consent.\n'
+    );
+    const retired = await retire();
+    if (retired.credentialRevoked !== true) {
+      out.write('[operator-proxy] self-update: revoke_failed after a failed handoff.\n');
+      return 1;
+    }
+    if (handed.spawned) return 0;
+    return relaunch({ launchRecord: successor }).ok ? 0 : 1;
+  }
+
+  const retired = await retire();
+  if (retired.credentialRevoked !== true) {
+    out.write('[operator-proxy] self-update: revoke_failed; successor not launched.\n');
+    return 1;
+  }
+  await releasePort();
+  return relaunch({ launchRecord: successor }).ok ? 0 : 1;
+}
+
 /**
  * Decides what to do about a `plugin_outdated` answer: update, then verify the
  * on-disk version actually moved. Every step is a guard, and every refusal leaves
@@ -762,7 +1022,8 @@ export function handlePluginOutdated({
 
     out.write(
       `[operator-proxy] self-update: plugin ${pluginVersion ?? '<none>'} -> ${installed}. Restarting this proxy ` +
-        'so the new build is what serves the next call; it will re-authenticate on start.\n'
+        'so the new build is what serves the next call; it hands its credential to the successor, so no ' +
+        'second browser consent is needed.\n'
     );
     return 'ready_to_restart';
   } finally {
@@ -1081,6 +1342,57 @@ export function consentFailureMessage(outcome, detail) {
   }
 }
 
+/** The /health status of a proxy whose startup consent nobody answered. It
+ * keeps its control plane up (so /cynap-connect can see it and restart the
+ * login) instead of exiting and leaving the stable port empty. */
+export const LOGIN_TIMED_OUT_STATUS = 'login_timed_out';
+export const LOGIN_TIMED_OUT_MESSAGE =
+  'The operator proxy is up, but its browser sign-in timed out — nobody approved it. Run /cynap-connect to ' +
+  'restart the sign-in.';
+
+/** True when a startup login failed only because nobody answered consent in
+ * time: pkceLoopbackLogin's "operator login timed out", deviceCodeLogin's
+ * "device authorization timed out", or the consent gate's TIMEOUT outcome. */
+export function isLoginTimeout(error) {
+  if (error instanceof ConsentError) return error.outcome === CONSENT_OUTCOMES.TIMEOUT;
+  const text = error instanceof Error ? error.message : String(error);
+  return /\b(?:login|authorization) timed out\b/i.test(text);
+}
+
+/**
+ * The startup credential, from exactly one of two sources: the predecessor's
+ * handoff (a self-update restart — no browser), or else one browser consent.
+ * A handoff that cannot be adopted is declined and falls back to consent.
+ *
+ * Resolves `'handed_over' | 'consented' | 'login_timed_out'`. Any other login
+ * failure is logged and rethrown, exactly as before.
+ */
+export async function acquireStartupCredential({ receiveHandoff, adopt, consent, out = process.stderr }) {
+  const handoff = await receiveHandoff();
+  if (handoff) {
+    try {
+      adopt(handoff.record);
+      handoff.acknowledge();
+      out.write('[operator-proxy] adopted the credential handed over by the previous proxy — no browser consent.\n');
+      return 'handed_over';
+    } catch (error) {
+      handoff.decline(`not_adoptable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  try {
+    await consent();
+    return 'consented';
+  } catch (error) {
+    out.write(`[operator-proxy] operator login failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    if (!isLoginTimeout(error)) throw error;
+    out.write(
+      `[operator-proxy] control plane stays up with status ${LOGIN_TIMED_OUT_STATUS}; run /cynap-connect to ` +
+        'restart the sign-in.\n'
+    );
+    return LOGIN_TIMED_OUT_STATUS;
+  }
+}
+
 /** Classifies an upstream/mint failure as re-authable or not. Returns a
  * CONSENT_REASONS value, or null when consent could not possibly help.
  *
@@ -1296,9 +1608,29 @@ export function createOperatorCredentialSession({
     return { credential, orgId, expiresAt };
   }
 
+  /** Adopt a credential handed over by the predecessor proxy (a self-update
+   * restart) instead of running a login. Only ever the FIRST credential of a
+   * process, and only one already frozen to an org — so it can never replace
+   * a live credential or unpin the org. Throws; never revokes (the credential
+   * is still the predecessor's until this process acknowledges it). */
+  function adopt(record) {
+    if (credential) throw new Error('a credential is already held — refusing to adopt a handed-over one.');
+    if (typeof record?.credential !== 'string' || record.credential.length === 0) {
+      throw new Error('the handed-over record carries no credential.');
+    }
+    if (typeof record.orgId !== 'string' || record.orgId.length === 0) {
+      throw new Error('the handed-over credential names no organization — refusing to mint.');
+    }
+    credential = record.credential;
+    orgId = record.orgId;
+    expiresAt = record.expiresAt ?? null;
+    return { credential, orgId, expiresAt };
+  }
+
   return {
     getAuthHeaders,
     renew,
+    adopt,
     current: () => ({ credential, orgId, expiresAt }),
   };
 }
@@ -2148,6 +2480,11 @@ export function createLifecycleServer({
       return;
     }
 
+    if (getHealth().status === LOGIN_TIMED_OUT_STATUS) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'operator_login_timed_out', message: LOGIN_TIMED_OUT_MESSAGE }));
+      return;
+    }
     res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '1' });
     res.end(JSON.stringify({ error: 'operator_authorization_pending' }));
   });
@@ -3119,6 +3456,9 @@ export async function main(argv = process.argv.slice(2)) {
   // CLI-scoped credential, `{ Cookie: … }` for the staging e2e-session leg.
   let getAuthHeaders;
   let revokeOnExit = null;
+  /** The credential session, once one holds a credential — read by the
+   * self-update restart to hand the credential to its successor. */
+  let credentialSession = null;
   /** The automatic-consent chokepoint for this process — built once, below,
    * and handed to BOTH the token manager (mint-side failures) and the proxy
    * server (upstream 401s) so there is exactly one consent policy and one
@@ -3239,14 +3579,22 @@ export async function main(argv = process.argv.slice(2)) {
       void briefCache?.refresh('reauth');
       return renewed;
     };
+    let startup;
     try {
-      await consent();
-    } catch (err) {
-      process.stderr.write(
-        `[operator-proxy] operator login failed: ${err instanceof Error ? err.message : String(err)}\n`
-      );
+      startup = await acquireStartupCredential({
+        receiveHandoff: () => receiveCredentialHandoff({ orgSlug: opts.orgSlug, mintHost }),
+        adopt: (record) => setCredentialExpiresAt(session.adopt(record).expiresAt),
+        consent,
+      });
+    } catch {
+      // acquireStartupCredential already logged the failure.
       process.exit(1);
     }
+    if (startup === LOGIN_TIMED_OUT_STATUS) {
+      lifecycleStatus = LOGIN_TIMED_OUT_STATUS;
+      return;
+    }
+    credentialSession = session;
     getAuthHeaders = session.getAuthHeaders;
     consentGate = createConsentGate({ consent });
     // Read the credential through session.current() at call time, never a
@@ -3284,6 +3632,17 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     await tokenManager.getToken();
   } catch (error) {
+    // A handed-over credential the server no longer accepts reopens consent
+    // here; if nobody answers it, stay up and say so rather than exit. The
+    // held credential is still revoked by the /cynap-connect that restarts it.
+    if (isLoginTimeout(error)) {
+      process.stderr.write(
+        `[operator-proxy] initial mint needed browser consent and it timed out; control plane stays up with ` +
+          `status ${LOGIN_TIMED_OUT_STATUS}. Run /cynap-connect to restart the sign-in.\n`
+      );
+      lifecycleStatus = LOGIN_TIMED_OUT_STATUS;
+      return;
+    }
     await disconnect();
     throw error;
   }
@@ -3373,28 +3732,29 @@ export async function main(argv = process.argv.slice(2)) {
       );
     }
 
-    // A successor may launch only after this process has proven its credential
-    // revoked. Credentials are process-memory state and are never handed over.
-    void (async () => {
-      const retired = await disconnect();
-      if (retired.credentialRevoked !== true) {
-        process.stderr.write('[operator-proxy] self-update: revoke_failed; successor not launched.\n');
-        process.exitCode = 1;
-        return;
+    // The successor inherits this process's credential over a private socket
+    // (restartIntoSuccessor); only a failed handoff revokes it and makes the
+    // successor reopen browser consent.
+    const held = credentialSession?.current();
+    const releasePort = () =>
+      new Promise((resolve) => {
+        lifecycleServer.close(() => resolve());
+        setTimeout(resolve, 1000).unref();
+      });
+    restartIntoSuccessor({
+      successor,
+      held: held?.credential ? { ...held, orgSlug: opts.orgSlug, mintHost } : null,
+      releasePort,
+      retire: disconnect,
+    }).then(
+      (exitCode) => process.exit(exitCode),
+      (error) => {
+        process.stderr.write(
+          `[operator-proxy] self-update: restart failed: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+        process.exit(1);
       }
-      let left = false;
-      const leave = () => {
-        if (left) return;
-        left = true;
-        const relaunched = relaunchFromLaunchRecord({ launchRecord: successor });
-        process.exit(relaunched.ok ? 0 : 1);
-      };
-      lifecycleServer.close(leave);
-      setTimeout(leave, 1000).unref();
-    })().catch((error) => {
-      process.stderr.write(`[operator-proxy] self-update: revoke_failed: ${error instanceof Error ? error.message : String(error)}\n`);
-      process.exitCode = 1;
-    });
+    );
   };
 
   readyProxyServer = createProxyServer({
