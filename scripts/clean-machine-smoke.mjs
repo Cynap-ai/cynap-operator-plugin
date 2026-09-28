@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createServer } from 'node:net';
@@ -534,6 +534,78 @@ export async function runCleanMachineSmoke({
   }
 }
 
+/**
+ * The post-publish journey at PR time, against the LOCAL projection.
+ *
+ * Two publishes once failed only after merge: the projected mirror lacked this very script
+ * ("Cannot find module '…/mirror/scripts/clean-machine-smoke.mjs'") and the previous tag's
+ * self-update returned `verification_failed`. Both are properties of the projected tree, so this
+ * projects it with the real publish pipeline and runs the PROJECTED copy of this script's
+ * `--post-publish` journey, as the publish job does.
+ *
+ * The current version is not published yet, so a local clone of the public mirror gets the
+ * projection committed and tagged on top, exactly as a publish would, and git's `insteadOf`
+ * redirects the public mirror URL to it for every command the journey runs (the CLI's marketplace
+ * clones and the previous tag's own self-update included). Previous tags are the real published ones.
+ */
+const PUBLIC_MIRROR_URL = 'https://github.com/Cynap-ai/cynap-operator-plugin.git';
+const JOURNEY_LEGS = 5;
+
+export async function runLocalProjectionJourney({ execFileSyncImpl = execFileSync, stdout = process.stdout } = {}) {
+  let publish;
+  let pluginRoot;
+  try {
+    ({ publish } = await import('./publish-public-mirror.mjs'));
+    ({ PLUGIN_ROOT: pluginRoot } = await import('./mirror-projection.mjs'));
+  } catch {
+    throw new Error('clean-machine-smoke: --local-projection needs the monorepo source tree (the projection machinery is absent)');
+  }
+  const { version } = JSON.parse(readFileSync(join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
+  // realpath: under a symlinked tmpdir (macOS /var -> /private/var) the projected script's own
+  // entry-point check is false, and it would exit 0 having run nothing.
+  const workDir = realpathSync(mkdtempSync(join(tmpdir(), 'cynap-clean-machine-projection-')));
+  const destDir = join(workDir, 'projection');
+  const mirrorClone = join(workDir, 'mirror.git');
+  const git = (args, cwd) => execFileSyncImpl('git', ['-c', 'user.name=clean-machine-smoke', '-c', 'user.email=smoke@localhost', ...args], { cwd, stdio: 'pipe' });
+  try {
+    publish({ destDir });
+    git(['clone', '--quiet', PUBLIC_MIRROR_URL, mirrorClone], workDir);
+    git(['rm', '-r', '--quiet', '.'], mirrorClone);
+    cpSync(destDir, mirrorClone, { recursive: true });
+    git(['add', '-A'], mirrorClone);
+    git(['commit', '--quiet', '--allow-empty', '-m', `release v${version} (local projection)`], mirrorClone);
+    git(['tag', '--force', '-a', `v${version}`, '-m', `v${version} (local projection)`], mirrorClone);
+    const env = {
+      ...process.env,
+      // The legs spawn proxies from installs under tmpdir; a symlinked tmpdir breaks their
+      // entry-point check the same way, so hand the journey the resolved path.
+      TMPDIR: realpathSync(tmpdir()),
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: `url.${mirrorClone}.insteadOf`,
+      GIT_CONFIG_VALUE_0: PUBLIC_MIRROR_URL,
+    };
+    let output;
+    try {
+      output = execFileSyncImpl(
+        process.execPath,
+        [join(destDir, 'scripts', 'clean-machine-smoke.mjs'), '--post-publish', '--current-version', version, '--mirror-dir', destDir, '--mirror-repo', 'Cynap-ai/cynap-operator-plugin'],
+        { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }
+      );
+    } catch (error) {
+      stdout.write(failureText(error));
+      throw new Error('clean-machine-smoke: the projected post-publish journey failed (see the leg annotations above)');
+    }
+    stdout.write(output);
+    // A pass and a no-op must not look alike: every leg reports PASS or NOT RUN by name.
+    const reported = output.split('\n').filter((line) => /^\[clean-machine-smoke\] (PASS — |.+: NOT RUN )/.test(line)).length;
+    if (reported < JOURNEY_LEGS) {
+      throw new Error(`clean-machine-smoke: the projected journey reported ${reported} of ${JOURNEY_LEGS} legs`);
+    }
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
 async function main(argv = process.argv.slice(2)) {
   try {
     if (argv[0] === '--post-publish') {
@@ -543,6 +615,10 @@ async function main(argv = process.argv.slice(2)) {
         mirrorDir: readOption('--mirror-dir'),
         mirrorRepo: readOption('--mirror-repo'),
       });
+      return;
+    }
+    if (argv[0] === '--local-projection') {
+      await runLocalProjectionJourney();
       return;
     }
     await runCleanMachineSmoke();
