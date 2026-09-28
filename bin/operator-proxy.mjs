@@ -99,6 +99,7 @@ export const IDEMPOTENT_TOOL_NAMES = new Set([
   'runs_query',
   'journal_count',
   'run_evidence_get',
+  'automation_runs_list',
 ]);
 
 /** API Gateway's integration timeout is ~29-31s; treat any 504 as the cold-start signal. */

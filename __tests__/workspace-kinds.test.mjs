@@ -50,10 +50,9 @@ test('classifyForPush refuses reclaims.json through the git entrance', () => {
   });
 });
 
-test('classifyForPush refuses handler source with the handler_upload entrance', () => {
-  const refusal = classifyForPush('automations/handlers/foo/handler.ts', classifyPath);
-  assert.equal(refusal.kind, 'handler-source');
-  assert.equal(refusal.entrance, 'handler_upload');
+test('classifyForPush admits handler source into the owner-approved commit path', () => {
+  assert.equal(classifyForPush('automations/handlers/foo/handler.ts', classifyPath), null);
+  assert.equal(classifyForPush('automations/foo.ts', classifyPath), null);
 });
 
 test('classifyForPush allows a commit-only operator note (never refused locally)', () => {

@@ -5,6 +5,12 @@ description: Author a mode:code_execution automation — a single-file TypeScrip
 
 # author-a-code-execution — Code-Execution-Mode Authoring
 
+## Publish a handler change
+
+Commit the handler source and its matching config through `workspace_commit`. Run the checks and obtain a passing handler preview for that exact bundle. The organization owner then reviews the server-read commit and handler diff in the approval page; approval freezes the commit, bundle hash and live generation. The owner activates that approved commit through `workspace_activate_commit`. Do not use `handler_upload` or paste source into an approval form.
+
+If activation returns `handler_unproven`, obtain a passing preview for the exact bundle. `bundle_hash_mismatch` means the checked bundle differs from the approved one. `handler_base_moved` means the live generation advanced; make a new commit against the new base and request a fresh approval. `handler_effect_absent` means recovery fenced an effect that never committed; inspect the receipt and retry through the new commit path. A bad handler is repaired forward with a new commit, approval and activation. Do not roll back an older pointer over a newer generation.
+
 You are authoring a **`mode:code_execution` automation** for one customer
 org — it is the only code-bearing mode on this platform (`mode:handler` and
 `mode:agent` are **REMOVED** — migrate to `mode:code_execution`). It runs in
