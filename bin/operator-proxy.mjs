@@ -2462,13 +2462,15 @@ export async function uploadSessionTrail({
  * Bind the stable local port before browser authorization starts. This single listener
  * is the cross-process startup lease: concurrent connectors observe `authorizing` and
  * wait, while SessionStart sees a live control plane and does not launch a twin.
- * Once ready, non-control requests are delegated to the full proxy server.
+ * Once ready, non-control requests are delegated to the full proxy server; before
+ * that, MCP traffic goes to `preReady`.
  */
 export function createLifecycleServer({
   getHealth,
   onDisconnect,
   getReadyServer,
   controlNonce,
+  preReady = null,
   exitAfterResponse = () => {},
 }) {
   return createServer(async (req, res) => {
@@ -2507,6 +2509,8 @@ export function createLifecycleServer({
       return;
     }
 
+    if (preReady && (await preReady.handle(req, res))) return;
+
     if (getHealth().status === LOGIN_TIMED_OUT_STATUS) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'operator_login_timed_out', message: LOGIN_TIMED_OUT_MESSAGE }));
@@ -2515,6 +2519,127 @@ export function createLifecycleServer({
     res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '1' });
     res.end(JSON.stringify({ error: 'operator_authorization_pending' }));
   });
+}
+
+/**
+ * The `initialize` answer this proxy gives LOCALLY, before and after it is ready. Each
+ * capability declares `listChanged`, because a client that connected while this proxy
+ * was still authorizing was given empty lists and needs the notification that replaces
+ * them. Returns `{ id, result }` for `sendJsonRpcResult`.
+ */
+export function localInitializeAnswer({ body, orgSlug, mcpHost, pluginVersion }) {
+  let id = null;
+  let protocolVersion = DEFAULT_PROTOCOL_VERSION;
+  try {
+    const parsed = JSON.parse(body.toString('utf8'));
+    id = parsed.id ?? null;
+    if (typeof parsed.params?.protocolVersion === 'string') protocolVersion = parsed.params.protocolVersion;
+  } catch {
+    // Only reached for a body extractMethod() already parsed as `initialize`; id stays
+    // null and the protocol version the default.
+  }
+  const instructions = buildOperatorInstructions({ orgSlug, env: envLabelFromMcpHost(mcpHost) });
+  return {
+    id,
+    result: {
+      protocolVersion,
+      serverInfo: { name: 'cynap-operator', version: pluginVersion ?? 'unknown' },
+      // Advertise the upstream's complete capability set. A client caches what the
+      // handshake advertises and never re-polls it — declaring only `tools` would
+      // disable prompts/list and resources/list for the whole session.
+      capabilities: {
+        tools: { listChanged: true },
+        prompts: { listChanged: true },
+        resources: { listChanged: true },
+      },
+      // Omitted (never a placeholder URI) when no org is pinned yet — see
+      // buildOperatorInstructions. AC1.
+      ...(instructions !== undefined ? { instructions } : {}),
+    },
+  };
+}
+
+/** What each list call answers while this proxy is not ready yet. */
+const PRE_READY_EMPTY_LISTS = Object.freeze({
+  'tools/list': { tools: [] },
+  'prompts/list': { prompts: [] },
+  'resources/list': { resources: [] },
+  'resources/templates/list': { resourceTemplates: [] },
+});
+const LIST_CHANGED_NOTIFICATIONS = [
+  'notifications/tools/list_changed',
+  'notifications/prompts/list_changed',
+  'notifications/resources/list_changed',
+];
+
+/**
+ * The MCP surface of a proxy that is still authorizing.
+ *
+ * It used to answer every MCP request 503. Claude Code retries a refused
+ * `initialize` four times over about six seconds, then marks the server failed for
+ * the rest of the session, so a session opened during the browser sign-in had no
+ * operator tools until someone ran /mcp. Measured against Claude Code 2.1: a server
+ * that answers the handshake and serves empty lists keeps the client connected; the
+ * client holds a GET event stream open, reopens it about a second after it closes
+ * (as when /cynap-connect retires this proxy for a fresh one), and re-lists on a
+ * `list_changed` notification.
+ *
+ * So until ready: `initialize` is answered locally, list calls answer empty,
+ * notifications are accepted, and GET event streams are held. `announceReady()`
+ * sends every `list_changed` on those streams and closes them; the client's re-list
+ * and its reopened stream then reach the ready proxy. Tool calls and anything else
+ * are still refused by the caller, so no call runs before there is a credential.
+ */
+export function createPreReadyMcp({ answerInitialize }) {
+  const streams = new Set();
+  return {
+    /** Returns true when it answered the request. */
+    async handle(req, res) {
+      if (req.url !== LOCAL_MCP_PATH) return false;
+      if (req.method === 'GET') {
+        if (!String(req.headers.accept ?? '').includes('text/event-stream')) return false;
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
+        res.write(': operator authorization pending\n\n');
+        streams.add(res);
+        res.on('close', () => streams.delete(res));
+        return true;
+      }
+      if (req.method !== 'POST') return false;
+      const body = await readBody(req);
+      let message;
+      try {
+        message = JSON.parse(body.toString('utf8'));
+      } catch {
+        return false;
+      }
+      const method = typeof message?.method === 'string' ? message.method : null;
+      if (method === 'initialize') {
+        const { id, result } = answerInitialize(body);
+        sendJsonRpcResult(res, id, result);
+        return true;
+      }
+      if (method?.startsWith('notifications/') && message.id === undefined) {
+        res.writeHead(202);
+        res.end();
+        return true;
+      }
+      if (method && Object.hasOwn(PRE_READY_EMPTY_LISTS, method)) {
+        sendJsonRpcResult(res, message.id ?? null, PRE_READY_EMPTY_LISTS[method]);
+        return true;
+      }
+      return false;
+    },
+    /** Tell every waiting client to re-list, then close its stream. */
+    announceReady() {
+      for (const res of streams) {
+        for (const method of LIST_CHANGED_NOTIFICATIONS) {
+          res.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', method })}\n\n`);
+        }
+        res.end();
+      }
+      streams.clear();
+    },
+  };
 }
 
 /** Publish the local control nonce only after this process owns the stable port. */
@@ -2816,34 +2941,8 @@ export function createProxyServer({
       // handshake: fire-and-forget below.
       if (extractMethod(body) === 'initialize') {
         warmBackendAsync();
-        let id = null;
-        let protocolVersion = DEFAULT_PROTOCOL_VERSION;
-        try {
-          const parsed = JSON.parse(body.toString('utf8'));
-          id = parsed.id ?? null;
-          if (typeof parsed.params?.protocolVersion === 'string') {
-            protocolVersion = parsed.params.protocolVersion;
-          }
-        } catch {
-          // extractMethod() above only returns 'initialize' for a body that
-          // parsed cleanly, so this branch is unreachable in practice — kept
-          // as a defensive fallback (id stays null, protocolVersion default).
-        }
-        const instructions = buildOperatorInstructions({ orgSlug, env: envLabelFromMcpHost(mcpHost) });
-        sendJsonRpcResult(res, id, {
-          protocolVersion,
-          serverInfo: { name: 'cynap-operator', version: pluginVersion ?? 'unknown' },
-          // Advertise the upstream's complete capability set. An
-          // MCP client caches whatever this handshake advertises and never
-          // re-polls it — declaring only `tools` would permanently disable
-          // prompts/list + resources/list for the entire session. A later forwarded
-          // resources/list or prompts/list just goes upstream like any other
-          // idempotent call — this only fixes what the handshake ADVERTISES.
-          capabilities: { tools: {}, prompts: {}, resources: {} },
-          // Omitted (never a placeholder URI) when no org is pinned yet — see
-          // buildOperatorInstructions. AC1.
-          ...(instructions !== undefined ? { instructions } : {}),
-        });
+        const { id, result } = localInitializeAnswer({ body, orgSlug, mcpHost, pluginVersion });
+        sendJsonRpcResult(res, id, result);
         return;
       }
 
@@ -3597,7 +3696,12 @@ export async function main(argv = process.argv.slice(2)) {
     setTimeout(() => process.exit(exitCode), 1000).unref();
   };
 
+  const preReadyMcp = createPreReadyMcp({
+    answerInitialize: (body) =>
+      localInitializeAnswer({ body, orgSlug: opts.orgSlug, mcpHost, pluginVersion: opts.pluginVersion }),
+  });
   const lifecycleServer = createLifecycleServer({
+    preReady: preReadyMcp,
     getHealth: () =>
       buildHealthPayload({
         ok: lifecycleStatus === 'ready',
@@ -3916,6 +4020,7 @@ export async function main(argv = process.argv.slice(2)) {
     onPluginOutdated,
   });
   lifecycleStatus = 'ready';
+  preReadyMcp.announceReady();
   process.stderr.write(
     `[operator-proxy] ready on http://127.0.0.1:${opts.port}${LOCAL_MCP_PATH} ` +
       `→ ${mcpHost}${UPSTREAM_MCP_PATH} (session-end: http://127.0.0.1:${opts.port}${SESSION_END_PATH})\n`
