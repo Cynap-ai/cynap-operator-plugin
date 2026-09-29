@@ -126,6 +126,65 @@ test('cd to a path outside the workspace is denied', () => {
   assert.ok(isDeny(stdout));
 });
 
+// The three false denials observed 2026-09-29 in a acme-clinic-uk operator
+// session and its Workflow lanes, replayed in their real shapes.
+test('cd into the scratchpad root (no trailing slash) is allowed', () => {
+  const { home, workspace } = makeFakeHome();
+  const command = "cd /private/tmp/claude-999999 && cat > s.py <<'EOF'\nprint(1)\nEOF\npython3 s.py";
+  assert.equal(runHook({ cwd: workspace, tool_name: 'Bash', tool_input: { command } }, { home }), '');
+});
+
+test('cd into the workspace followed by `;` is allowed', () => {
+  const { home, workspace } = makeFakeHome();
+  const command = `cd ${workspace}; for f in a b; do cmp -s x/$f y/$f && echo same || echo changed; done`;
+  assert.equal(runHook({ cwd: workspace, tool_name: 'Bash', tool_input: { command } }, { home }), '');
+});
+
+test('a cat heredoc into the workspace whose prose mentions git or `->` is allowed', () => {
+  const { home, workspace } = makeFakeHome();
+  const command = `cat > ${join(workspace, 'status.md')} <<'EOF'\n# Status\n- checks is git-only; plugin 0.19.13 -> 0.19.14\n- see \`workspace_receipts {"commit":"<sha>"}\` > /etc/x\nEOF`;
+  assert.equal(runHook({ cwd: workspace, tool_name: 'Bash', tool_input: { command } }, { home }), '');
+});
+
+test('the guardrail holds: repo paths, git, and shell-fed heredocs stay denied', () => {
+  const { home, workspace } = makeFakeHome();
+  const repo = join(home, 'code', 'cynap-monorepo-next');
+  const denied = [
+    `cd ${repo}; ls`,
+    `cd ${repo}&&ls`,
+    `cat > ${join(repo, 'x.md')} <<'EOF'\nhello\nEOF`,
+    `echo hi > ${repo}/x.md;`,
+    "bash <<'EOF'\ngit push\nEOF",
+    "cat <<'EOF' | sh\ngit push\nEOF",
+    "cat > s.sh <<'EOF'\nx\nEOF\ngit status",
+    'cd /private/tmp && git status',
+  ];
+  for (const command of denied) {
+    const stdout = runHook({ cwd: workspace, tool_name: 'Bash', tool_input: { command } }, { home });
+    assert.ok(isDeny(stdout), `expected a deny for: ${command}`);
+  }
+  const writeStdout = runHook(
+    { cwd: workspace, tool_name: 'Write', tool_input: { file_path: join(repo, 'apps', 'x.ts') } },
+    { home }
+  );
+  assert.ok(isDeny(writeStdout), 'a Write into the monorepo must stay denied');
+});
+
+test('a Write from a subagent whose cwd is a nested workspace dir reaches the scratchpad', () => {
+  const { home, workspace } = makeFakeHome();
+  const nested = join(workspace, 'merge-lane');
+  mkdirSync(nested, { recursive: true });
+  const stdout = runHook(
+    {
+      cwd: nested,
+      tool_name: 'Write',
+      tool_input: { file_path: '/private/tmp/claude-999999/-Users-x-CynapOperator-acme-org/sid/scratchpad/lane-a/out.json' },
+    },
+    { home }
+  );
+  assert.equal(stdout, '');
+});
+
 test('a monorepo (non-operator) cwd is a total no-op', () => {
   const { home } = makeFakeHome();
   const monorepoCwd = scratchDir('cynap-guard-monorepo-');
