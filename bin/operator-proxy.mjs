@@ -40,7 +40,7 @@ import { Socket } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
@@ -486,12 +486,31 @@ function observedPluginVersion(pluginListOutput) {
   return findInstalledPluginRecord(pluginListOutput)?.version ?? null;
 }
 
-export function runPluginSelfUpdate({ minimum, execFileImpl = execFileSync, out = process.stderr } = {}) {
+/**
+ * Runs one `claude …` command WITHOUT blocking the event loop and resolves with
+ * its stdout. The self-update runs inside a serving proxy: a synchronous exec
+ * froze /health for the whole update, so /cynap-connect read the silent proxy
+ * as dead and launched a twin over it. Rejects with execFile's error
+ * (`code`, `stderr`) exactly as execFileSync threw it.
+ */
+export function runClaudeCommand(binary, argv, options) {
+  return new Promise((resolve, reject) => {
+    execFile(binary, argv, options, (error, stdout, stderr) => {
+      if (error) {
+        reject(Object.assign(error, { stderr: error.stderr ?? stderr }));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+export async function runPluginSelfUpdate({ minimum, execFileImpl = runClaudeCommand, out = process.stderr } = {}) {
   let finalPluginListOutput = null;
   for (const argv of PLUGIN_SELF_UPDATE_ARGV) {
     const step = `claude ${argv.join(' ')}`;
     try {
-      const output = execFileImpl('claude', argv, {
+      const output = await execFileImpl('claude', argv, {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 120_000,
@@ -557,10 +576,10 @@ export function runPluginSelfUpdate({ minimum, execFileImpl = execFileSync, out 
  * exactly this: resolve the successor from the registry's
  * `installPath` everywhere a launch is replayed.
  */
-export function readInstalledPlugin({ execFileImpl = execFileSync } = {}) {
+export async function readInstalledPlugin({ execFileImpl = runClaudeCommand } = {}) {
   let output;
   try {
-    output = execFileImpl('claude', ['plugin', 'list', '--json'], {
+    output = await execFileImpl('claude', ['plugin', 'list', '--json'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 120_000,
@@ -972,13 +991,13 @@ export async function restartIntoSuccessor({
  * "restart now"; the caller owns the restart because the port must be released
  * before the successor can bind it, and only the caller holds the listener.
  */
-export function handlePluginOutdated({
+export async function handlePluginOutdated({
   minimum,
   pluginVersion,
   guard,
   launchRecord,
   runUpdate = runPluginSelfUpdate,
-  readInstalled = () => readInstalledPlugin()?.version ?? null,
+  readInstalled = async () => (await readInstalledPlugin())?.version ?? null,
   out = process.stderr,
 }) {
   if (!guard.claim(minimum)) return 'already_attempted';
@@ -988,10 +1007,10 @@ export function handlePluginOutdated({
         `required ${minimum}. Installing the latest build from the public mirror…\n`
     );
 
-    const updated = runUpdate({ minimum, out });
+    const updated = await runUpdate({ minimum, out });
     if (!updated.ok) return updated.reason;
 
-    const installed = readInstalled({ launchRecord });
+    const installed = await readInstalled({ launchRecord });
     if (installed === null) {
       out.write(
         '[operator-proxy] self-update: could not read the installed plugin version after updating — not ' +
@@ -3921,9 +3940,9 @@ export async function main(argv = process.argv.slice(2)) {
   // lifecycle server owns the port, and the successor cannot bind it until this
   // process lets go.
   const selfUpdateGuard = createPluginSelfUpdateGuard();
-  const onPluginOutdated = ({ minimum }) => {
+  const handleOutdated = async ({ minimum }) => {
     const launchRecord = readLaunchRecord();
-    const outcome = handlePluginOutdated({
+    const outcome = await handlePluginOutdated({
       minimum,
       pluginVersion: opts.pluginVersion,
       guard: selfUpdateGuard,
@@ -3938,7 +3957,7 @@ export async function main(argv = process.argv.slice(2)) {
     // has just made stale — replaying it verbatim relaunches the predecessor
     // build (the 2026-09-22 0.17.5 -> 0.17.3 restart). Both halves must resolve;
     // a proxy that cannot name its successor keeps its credential and stays up.
-    const installed = readInstalledPlugin();
+    const installed = await readInstalledPlugin();
     const successor = installed ? rebaseLaunchRecord(launchRecord, installed.installPath) : null;
     if (!successor) {
       process.stderr.write(
@@ -3984,6 +4003,16 @@ export async function main(argv = process.argv.slice(2)) {
         process.exit(1);
       }
     );
+  };
+
+  // Fire-and-forget from the response path: the update runs off the event
+  // loop's critical path, and a throw is narrated rather than lost.
+  const onPluginOutdated = (outdated) => {
+    handleOutdated(outdated).catch((error) => {
+      process.stderr.write(
+        `[operator-proxy] self-update: failed: ${error instanceof Error ? error.message : String(error)}\n`
+      );
+    });
   };
 
   readyProxyServer = createProxyServer({

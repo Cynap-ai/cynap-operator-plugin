@@ -11,10 +11,6 @@ customer org. **Pick the mode before writing any config or code.** Read
 makes an AI call, also read `configure-customer-ai`; funding and provider
 availability are independent of execution mode.
 
-## Retired modes
-
-`mode:agent` and `mode:handler` are retired — migrate to mode:code_execution.
-
 ## The 3 live modes
 
 | Mode | Runtime | AI shape | Billing implication | Deliverable shape |

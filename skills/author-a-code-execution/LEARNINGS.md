@@ -1,7 +1,7 @@
 # LEARNINGS — author-a-code-execution (cross-org)
 
 Cross-org procedural wisdom for `mode:code_execution` (`entrypoint:worker`)
-authoring — the mode `mode:handler` migrated into. Read at task start;
+authoring. Read at task start;
 append at task end. No customer-specific strings.
 
 ---
@@ -58,5 +58,4 @@ append at task end. No customer-specific strings.
 
 ---
 
-**Last updated:** 2026-08-11 (migrated from `mode:handler` to
-`mode:code_execution`; dispatch_mode question resolved).
+**Last updated:** 2026-08-11 (states `mode:code_execution` only).

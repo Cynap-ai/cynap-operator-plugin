@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runOperatorConnect } from '../lib/operator-connect.mjs';
+import { runOperatorConnect, waitForOperatorHealth } from '../lib/operator-connect.mjs';
 import { formatConnectMessage, parseConnectArgs } from '../bin/cynap-connect.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -327,4 +327,80 @@ test('a conflicting local proxy is refused instead of crossing org identity', as
       }),
     /other-org/
   );
+});
+
+const SUCCESSOR_PLAN = { slug: 'cynap', env: 'prod', port: 39123, workingDir: '/tmp/CynapOperator/cynap' };
+const LAUNCHED_AT = '2026-09-28T19:00:00.000Z';
+
+test('a self-update successor that took the port after our launch is accepted despite its different pid', async () => {
+  const successor = {
+    ok: true, status: 'ready', org: 'cynap', env: 'prod', authMode: 'interactive',
+    pluginVersion: '0.19.11', pid: 49614, startedAt: '2026-09-28T19:00:04.000Z',
+  };
+  const health = await waitForOperatorHealth({
+    plan: SUCCESSOR_PLAN, probe: async () => successor, expectedPid: 49153, launchedAt: LAUNCHED_AT, pluginVersion: '0.19.11',
+  });
+  assert.equal(health.pid, 49614);
+});
+
+test('an older proxy still squatting the port is refused, not mistaken for our launch', async () => {
+  const base = { ok: true, status: 'ready', org: 'cynap', env: 'prod', authMode: 'interactive', pid: 80632 };
+  for (const stale of [
+    { ...base, pluginVersion: '0.19.11', startedAt: '2026-09-28T18:00:00.000Z' },
+    { ...base, pluginVersion: '0.19.9', startedAt: '2026-09-28T19:00:04.000Z' },
+  ]) {
+    await assert.rejects(
+      waitForOperatorHealth({
+        plan: SUCCESSOR_PLAN, probe: async () => stale, expectedPid: 49153, launchedAt: LAUNCHED_AT, pluginVersion: '0.19.11',
+      }),
+      /did not match launched pid 49153/
+    );
+  }
+});
+
+test('a busy port is polled through instead of failing the identity check', async () => {
+  const ready = { ok: true, status: 'ready', org: 'cynap', env: 'prod', authMode: 'interactive', pid: 7 };
+  const answers = [{ ok: false, status: 'busy' }, null, ready];
+  const health = await waitForOperatorHealth({
+    plan: SUCCESSOR_PLAN, probe: async () => answers.shift(), sleep: async () => {},
+  });
+  assert.equal(health, ready);
+});
+
+test('a connect that found the port busy judges the proxy that finally answers', async () => {
+  let launched = false;
+  await assert.rejects(
+    runOperatorConnect({
+      slug: 'cynap', proxyPath: '/plugin/bin/operator-proxy-launcher.mjs', pluginVersion: '0.19.9',
+      plan: async () => ({
+        slug: 'cynap', env: 'prod', authMode: 'interactive', action: 'wait', port: 39123,
+        workingDir: '/tmp/CynapOperator/cynap', mcpJsonPath: '/tmp/CynapOperator/cynap/.mcp.json',
+        health: { ok: false, status: 'busy' },
+      }),
+      launch: async () => { launched = true; },
+      waitForHealth: async () => ({
+        ok: true, status: 'ready', org: 'cynap', env: 'prod', authMode: 'interactive', pluginVersion: '0.19.11', pid: 9,
+      }),
+    }),
+    /the connector already runs 0\.19\.11\. Run \/reload-plugins/
+  );
+  assert.equal(launched, false);
+});
+
+test('an authorizing lease from a newer connector is refused at once, without waiting on its sign-in', async () => {
+  let waited = false;
+  await assert.rejects(
+    runOperatorConnect({
+      slug: 'cynap', proxyPath: '/plugin/bin/operator-proxy-launcher.mjs', pluginVersion: '0.19.13',
+      plan: async () => ({
+        slug: 'cynap', env: 'prod', authMode: 'interactive', action: 'wait', port: 39123,
+        workingDir: '/tmp/CynapOperator/cynap', mcpJsonPath: '/tmp/CynapOperator/cynap/.mcp.json',
+        health: { ok: false, status: 'authorizing', org: 'cynap', env: 'prod', authMode: 'interactive', pluginVersion: '999.0.0' },
+      }),
+      launch: async () => { throw new Error('must not launch'); },
+      waitForHealth: async () => { waited = true; throw new Error('must not wait'); },
+    }),
+    /Run \/reload-plugins/
+  );
+  assert.equal(waited, false);
 });

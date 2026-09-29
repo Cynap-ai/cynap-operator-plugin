@@ -14,6 +14,7 @@ import {
   STABLE_PORT_BASE,
   STABLE_PORT_SLOTS,
   probeProxyHealth,
+  PROXY_BUSY_STATUS,
   decideProxyAction,
   buildDetachedLaunchCommand,
 } from '../lib/connect.mjs';
@@ -79,6 +80,24 @@ test('probeProxyHealth returns null on a non-200 or an unrecognized non-ok body'
   assert.equal(await probeProxyHealth({ port: 39001, fetchImpl: notOk }), null);
   const bodyNotOk = async () => ({ ok: true, json: async () => ({ ok: false }) });
   assert.equal(await probeProxyHealth({ port: 39001, fetchImpl: bodyNotOk }), null);
+});
+
+test('probeProxyHealth reports a proxy that holds the port but times out as busy, and connect waits on it', async () => {
+  // A proxy mid self-update stalls its event loop; the probe must not read that
+  // as "nothing listening" and launch a twin over it.
+  // A real stalled socket keeps the event loop alive; this fake holds a ref'd
+  // timer instead, because AbortSignal.timeout's own timer is unref'd.
+  const fetchImpl = (_url, { signal }) =>
+    new Promise((_resolve, reject) => {
+      const hold = setTimeout(() => {}, 5_000);
+      signal.addEventListener('abort', () => {
+        clearTimeout(hold);
+        reject(signal.reason);
+      });
+    });
+  const health = await probeProxyHealth({ port: 39001, timeoutMs: 10, fetchImpl });
+  assert.equal(health.status, PROXY_BUSY_STATUS);
+  assert.equal(decideProxyAction({ health, slug: 'cynap', env: 'prod', orgId: null }).action, 'wait');
 });
 
 test('probeProxyHealth preserves the managed authorizing phase as a startup lease', async () => {

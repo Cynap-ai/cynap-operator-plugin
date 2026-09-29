@@ -418,7 +418,8 @@ async function runAutonomousUpdateLeg(ctx, previousTag) {
         throw new Error('clean-machine-smoke: local plugin_outdated fixture was not recognized by the previous proxy');
       }
       const lines = [];
-      const outcome = oldProxy.handlePluginOutdated({
+      // Awaited: a previous tag may return the outcome directly or, from the async self-update on, a promise.
+      const outcome = await oldProxy.handlePluginOutdated({
         minimum: refusal.minimum,
         pluginVersion: oldVersion,
         guard: oldProxy.createPluginSelfUpdateGuard(),

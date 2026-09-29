@@ -12,8 +12,7 @@ Commit the handler source and its matching config through `workspace_commit`. Ru
 If activation returns `handler_unproven`, obtain a passing preview for the exact bundle. `bundle_hash_mismatch` means the checked bundle differs from the approved one. `handler_base_moved` means the live generation advanced; make a new commit against the new base and request a fresh approval. `handler_effect_absent` means recovery fenced an effect that never committed; inspect the receipt and retry through the new commit path. A bad handler is repaired forward with a new commit, approval and activation. Do not roll back an older pointer over a newer generation.
 
 You are authoring a **`mode:code_execution` automation** for one customer
-org — it is the only code-bearing mode on this platform (`mode:handler` and
-`mode:agent` are **REMOVED** — migrate to `mode:code_execution`). It runs in
+org — it is the only code-bearing mode on this platform. It runs in
 a per-run isolated runtime. If you haven't confirmed this is the right mode,
 go read `choose-the-right-mode` first. Read `platform-invariants` before
 this skill if you haven't this session. If the handler uses `ctx.tools.llm`
@@ -25,11 +24,9 @@ native versus BYOK billing before choosing a model.
 `execution.entrypoint` picks the runtime shape (default `'worker'`):
 
 - **`worker`** (default) — runs your single-file `handler.ts`, selective
-  `ctx.tools.llm.complete()` calls, no chat loop. `mode:handler` is RETIRED — migrate to
-  `mode:code_execution` for this deliverable shape. Use for classification/extraction plus
+  `ctx.tools.llm.complete()` calls, no chat loop. Use for classification/extraction plus
   deterministic TypeScript logic and writes to the org database.
-- **`opencode`** — a headless agent chat session on the agent image.
-  `mode:agent` is RETIRED — migrate to `mode:code_execution`
+- **`opencode`** — a headless agent chat session on the agent image,
   for filesystem/multi-turn workloads. **Prefer `worker` for classification/extraction** —
   only reach for `opencode` when the task genuinely needs an agent that
   decides its own next step.
@@ -118,8 +115,7 @@ nested bundle.)
 **No top-level `tools: []`.** `mode:code_execution` REJECTS it at parse time:
 "`tools[]`
 is ignored for mode:code_execution - declare callable ctx.tools in
-execution.allowed_tools instead." `mode:handler` is retired — migrate to `mode:code_execution`
-and move the old top-level `tools[]` declarations to `execution.allowed_tools`.
+execution.allowed_tools instead." Declare every callable in `execution.allowed_tools`.
 
 `handler.ts`:
 
@@ -246,9 +242,7 @@ For a real example WITH `allowed_tools` populated and a knowledge write,
 see `automations/handlers/acme-stage-evaluator/config.json`
 (`"allowed_tools": ["knowledge.advancedQuery", "knowledge.store",
 "knowledge.executeSql"]`) and its `handler.ts` for the `executeSql`
-UPDATE-by-id pattern. (That example predates the `mode:code_execution`
-migration and still commits the now-RETIRED `mode` literal — port it by
-replacing that literal with `"mode": "code_execution"` and dropping any
+UPDATE-by-id pattern. (Check that its `mode` is `"code_execution"` and it has no
 top-level `tools: []` before treating it as a template.)
 
 ## MockCynapContext — write the test before you write the handler
