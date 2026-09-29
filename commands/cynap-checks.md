@@ -41,7 +41,8 @@ The runner, from your current org working directory:
    just authored — NOT the workspace read tools, which serve the stale deployed HEAD) and the
    HEAD bytes for the suite files, into a single snapshot.
 3. **Interprets** the closed vocabulary (`file_exists`, `json_path_equals`, `json_path_matches`,
-   `json_array_length`, `json_path_absent`/`present`, `schema_field_present`) against that
+   `json_array_length`, `json_path_absent`/`present`, `schema_field_present`; every op except
+   `file_exists` accepts an optional `allow_absent: true`, which passes when the file is missing) against that
    snapshot — every assertion is a pure predicate, no code execution.
 4. **Computes** the resultant-content fingerprint over the same snapshot and **reports** the
    terminal verdict via `checks_verdict_report`.
