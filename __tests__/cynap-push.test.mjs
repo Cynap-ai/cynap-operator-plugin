@@ -70,6 +70,28 @@ test('push: refuses locally on a git-entrance-only kind, naming the entrance —
   }
 });
 
+test('push: a batch of deleted handler sources passes the local effect check; mixed with a live handler it refuses', async () => {
+  const dir = scratchDir();
+  try {
+    mkdirSync(join(dir, 'automations'), { recursive: true });
+    const files = { 'automations/ghost-a.ts': 'a'.repeat(64), 'automations/ghost-b.ts': 'b'.repeat(64) };
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files });
+    // Past the local pre-check the push reaches the server, which alone decides orphanhood.
+    await assert.rejects(
+      push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'prune'], fetchImpl: fakeFetch({}) }),
+      /no handler registered/,
+    );
+
+    writeFileSync(join(dir, 'automations', 'live.ts'), 'export default async () => 1;');
+    const mixed = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'prune'], fetchImpl: fakeFetch({}) });
+    assert.equal(mixed.ok, false);
+    assert.equal(mixed.reason, 'commit_spans_irreversible_effects');
+    assert.deepEqual(mixed.effects, ['handler:ghost-a', 'handler:ghost-b', 'handler:live']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('push: a checks/ failure against the PLANNED bytes refuses, with no skip flag', async () => {
   const dir = scratchDir();
   try {

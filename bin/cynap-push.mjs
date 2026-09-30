@@ -97,10 +97,10 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
 
   // Step 1: refuse locally on a non-activatable path, naming each path's entrance (spec §4.3/§7.3).
   const touched = [...plan.creates, ...plan.updates, ...plan.deletes];
-  const effects = checkPushEffects(touched, classifyPath, effectForKind);
+  const effects = checkPushEffects(touched, classifyPath, effectForKind, plan.deletes);
   if (effects) {
     return { ok: false, reason: 'commit_spans_irreversible_effects', effects,
-      message: 'Commit each irreversible effect separately, with only permitted riders.' };
+      message: 'Commit each irreversible effect separately, with only permitted riders. Deleted handler sources may be committed only with inert files.' };
   }
   const refusals = touched.map((path) => classifyForPush(path, classifyPath)).filter(Boolean);
   if (refusals.length > 0) {

@@ -20,6 +20,16 @@ test('effect pre-check follows the bundled SDK kind registry', () => {
   assert.deepEqual(checkPushEffects(['automations/handlers/x/handler.ts', 'automations/handlers/y/config.json'], classifyPath, effectForKind), ['handler:x']);
 });
 
+test('deleted handler sources are no handler effect and ride only with inert files', () => {
+  const check = (paths, deletes) => checkPushEffects(paths, classifyPath, effectForKind, deletes);
+  assert.equal(check(['automations/a.ts', 'automations/handlers/b/handler.ts', 'context/notes.md'], ['automations/a.ts', 'automations/handlers/b/handler.ts']), null);
+  assert.deepEqual(check(['automations/a.ts', 'automations/handlers/x/handler.ts', 'automations/handlers/x/config.json'], ['automations/a.ts']), ['handler:a', 'handler:x']);
+  assert.deepEqual(check(['automations/a.ts', 'context/schema.json'], ['automations/a.ts']), ['handler:a', 'schema']);
+  assert.deepEqual(check(['automations/a.ts', 'automations/a.json'], ['automations/a.ts', 'automations/a.json']), ['handler:a']);
+  // Without the deletion set, two handler sources stay two effects.
+  assert.deepEqual(check(['automations/a.ts', 'automations/handlers/b/handler.ts']), ['handler:a', 'handler:b']);
+});
+
 test('classifyForPush refuses a generated path', () => {
   const refusal = classifyForPush('automations/metrics/whatever.json', classifyPath);
   assert.deepEqual(refusal, { path: 'automations/metrics/whatever.json', kind: 'generated', entrance: null });
