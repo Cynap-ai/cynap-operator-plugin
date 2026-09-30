@@ -124,6 +124,14 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
     resolvePlanned: (path) => (plannedBytes.has(path) ? plannedBytes.get(path) : undefined),
     evaluateChecks,
     collectFingerprintPaths,
+    // The pull already holds most of what the preflight reads: reuse a local file whose sha256
+    // is the one asked for, and read over the wire only what differs.
+    resolveLocal: (path, sha256) => {
+      if (local.get(path) !== sha256) return undefined;
+      const bytes = readFileSync(join(dir, path));
+      return sha256Hex(bytes) === sha256 ? new Uint8Array(bytes) : undefined;
+    },
+    base: { sha: state.base, files: base },
   });
   if (preflight.ran && preflight.run.status === 'fail') {
     const f = preflight.firstFailure;
