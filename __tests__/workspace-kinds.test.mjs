@@ -36,10 +36,8 @@ test('classifyForPush refuses a git-entrance-only kind, naming the entrance', ()
   assert.equal(refusal.entrance, 'git');
 });
 
-test('classifyForPush refuses checks/** — the exact reason /cynap-checks reads HEAD, never pending', () => {
-  const refusal = classifyForPush('checks/suite.json', classifyPath);
-  assert.equal(refusal.kind, 'checks');
-  assert.equal(refusal.entrance, 'git');
+test('classifyForPush admits checks/** — checks are plane-activatable, so /cynap-checks reads pending', () => {
+  assert.equal(classifyForPush('checks/suite.json', classifyPath), null);
 });
 
 test('classifyForPush refuses reclaims.json through the git entrance', () => {

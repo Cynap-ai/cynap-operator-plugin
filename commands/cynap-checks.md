@@ -33,13 +33,12 @@ node ${CLAUDE_PLUGIN_ROOT}/bin/cynap-checks-runner.mjs --commit-sha <commit-sha>
 
 The runner, from your current org working directory:
 
-1. **Loads the gate from HEAD.** Reads the deployed `checks/**` suites through the operator
-   proxy (HEAD-correct — checks are git-PR-only, so a local *draft* checks file gates nothing).
-   If your local `checks/` differs from the deployed HEAD, it **refuses** — merge the checks
-   change via git first; a draft gates nothing until merged.
+1. **Loads your pending suites.** Reads the `checks/**` suites from your LOCAL working directory —
+   the same pending suites the activation gate evaluates. A change to an existing
+   suite must be committed alone; activation refuses it otherwise (`gate_change_not_alone`).
 2. **Snapshots once.** Reads each asserted-over file's **LOCAL pending bytes** (the changes you
-   just authored — NOT the workspace read tools, which serve the stale deployed HEAD) and the
-   HEAD bytes for the suite files, into a single snapshot.
+   just authored — NOT the workspace read tools, which serve the stale deployed HEAD) into a
+   single snapshot.
 3. **Interprets** the closed vocabulary (`file_exists`, `json_path_equals`, `json_path_matches`,
    `json_array_length`, `json_path_absent`/`present`, `schema_field_present`; every op except
    `file_exists` accepts an optional `allow_absent: true`, which passes when the file is missing) against that
@@ -59,9 +58,6 @@ The runner, from your current org working directory:
   persisted for `commit_sha`. You may proceed to `/cynap-activate <commit_sha>`.
 - **fail** — at least one invariant is violated by your pending change; the runner prints the
   first failing assertion. Fix the config and re-commit + re-run — do NOT activate.
-- **refused (local checks drift)** — your `checks/` differs from the deployed HEAD. Merge the
-  checks change through the git-PR entrance first (a second human reviews any change to the gate
-  itself), then re-run.
 
 An org with **no** `checks/` tree passes vacuously — there is nothing to run, and activation is
 unaffected.
