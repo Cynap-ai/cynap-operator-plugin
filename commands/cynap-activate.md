@@ -1,6 +1,6 @@
 ---
 description: Request owner step-up and activate an accepted Cynap workspace commit.
-argument-hint: "<commit-sha>"
+argument-hint: "<commit-sha> [--reconcile]"
 ---
 
 # /cynap-activate
@@ -17,3 +17,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-activate.mjs" $ARGUMENTS
 The local proxy opens the owner PKCE approval page, then uses the resulting
 single-use purpose credential for exactly one `workspace_activate_commit` call.
 Do not use device approval or call `workspace_activate_commit` directly.
+
+## `--reconcile` (rare, opt-in)
+
+Add `--reconcile` only when `next_action.kind` is `baseline_required` because the live files
+carry no provenance stamp. It adopts those live files and overwrites them with the commit's
+content. It still requires the owner step-up and the single-use purpose credential, exactly as
+without the flag. Never use it for any other `next_action`.
+
+```sh
+node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-activate.mjs" <commit-sha> --reconcile
+```

@@ -2170,6 +2170,7 @@ export async function activateCommitWithStepUp({
   commitSha,
   pluginVersion,
   witness = false,
+  reconcile = false,
   login = pkceLoopbackLogin,
   fetchImpl = fetch,
   out = process.stderr,
@@ -2203,7 +2204,12 @@ export async function activateCommitWithStepUp({
     });
     return { status: response.status, ok: response.ok, text: await readUpstreamResponseText(response) };
   };
-  const activation = await callWithPurposeCredential('workspace_activate_commit', { commit_sha: commitSha });
+  // `reconcile_operator_edits` is the ONLY optional arg, and is present only when the operator
+  // asked for it: every other argument stays exactly {commit_sha}.
+  const activation = await callWithPurposeCredential(
+    'workspace_activate_commit',
+    reconcile ? { commit_sha: commitSha, reconcile_operator_edits: true } : { commit_sha: commitSha }
+  );
   if (!activation.ok) throw new Error(`workspace activation failed: ${activation.status}`);
   if (!witness) return { body: activation.text, witness: null };
   // Release-journey witness (Spec A §9 → Spec D §8.2 leg 5). The purpose credential
@@ -2940,7 +2946,13 @@ export function createProxyServer({
       }
       try {
         const payload = JSON.parse((await readBody(req)).toString('utf8'));
-        const { body, witness } = await requestActivation(payload?.commit_sha, { witness: payload?.witness === true });
+        if (payload?.reconcile_operator_edits !== undefined && typeof payload.reconcile_operator_edits !== 'boolean') {
+          throw new Error('reconcile_operator_edits must be a boolean');
+        }
+        const { body, witness } = await requestActivation(payload?.commit_sha, {
+          witness: payload?.witness === true,
+          reconcile: payload?.reconcile_operator_edits === true,
+        });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify(witness ? { ok: true, result: body, witness } : { ok: true, result: body }));
       } catch (error) {
@@ -4115,7 +4127,7 @@ export async function main(argv = process.argv.slice(2)) {
     controlNonce,
     consentGate,
     briefCache,
-    requestActivation: async (commitSha, { witness = false } = {}) => {
+    requestActivation: async (commitSha, { witness = false, reconcile = false } = {}) => {
       const result = await activateCommitWithStepUp({
         mintHost,
         mcpHost,
@@ -4124,6 +4136,7 @@ export async function main(argv = process.argv.slice(2)) {
         commitSha,
         pluginVersion: opts.pluginVersion,
         witness,
+        reconcile,
       });
       // An activation is the one local event that changes what the brief says
       // about this org, so re-fetch it opportunistically. Fire-and-forget —
