@@ -1,13 +1,13 @@
 {
   "notice": "GENERATED MIRROR — do not edit directly. Produced by the mirror publisher.",
-  "sourceSha": "1f17e616f781a24eafd802a7b108475afcde2792",
+  "sourceSha": "e4bf0c9a9032ea3de9db97da9ab916860b7d6821",
   "transformVersion": 1,
   "generatedBy": "publish-public-mirror.mjs",
   "files": {
-    ".claude-plugin/marketplace.json": "46b8d5069250ef117a8d88351f1f4ee83ae0623d9dc76a872cfacf22e1026837",
-    ".claude-plugin/plugin.json": "1f2f047e68ca1965eb887e610c357940002b60cc580cbb4836616958a3253507",
-    ".codex-plugin/plugin.json": "46a4e4be01e64c54114eec15e3037dd63cfdd2cab5ccfa906e29761f1106969a",
-    "README.md": "038cdd52ba936fe3291b1d3076cd856c2910b3c15ab8ff2ca3f713a2ab9b67a9",
+    ".claude-plugin/marketplace.json": "ca33ca9fb523ff8872886f508293106464641dcdf2743164435154e455a75e59",
+    ".claude-plugin/plugin.json": "5235cd3f255cd0e9520015712eb809c3beb552b44e91448ffdb00b2ab3219a99",
+    ".codex-plugin/plugin.json": "ecd7fb0028ee542ece53555af4f774c24fd90e17652fcb62e667ad39501647d1",
+    "README.md": "ef67acf9470532e416dec2c7991c1275e3011a9aefb858f1d2128fd3089c2606",
     "__tests__/connect-any-org.test.mjs": "66b056a803d43db1a3e8b4ef0cf2621f2034d6835042338a02f1c212a98cfe8a",
     "__tests__/connect-supervision.test.mjs": "d0ba49d5399d01c247694c5ea681d3599d20805b91f0d9e9d68e8fb333261ae7",
     "__tests__/connect.test.mjs": "10f4da14f1f329539418c1e9d6a09e5e3209f70a0a565968f2b450b6d53c0251",
