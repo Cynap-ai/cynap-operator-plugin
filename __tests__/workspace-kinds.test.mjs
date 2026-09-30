@@ -31,8 +31,8 @@ test('classifyForPush refuses an unknown path', () => {
 });
 
 test('classifyForPush refuses a git-entrance-only kind, naming the entrance', () => {
-  const refusal = classifyForPush('manifest.json', classifyPath); // org-manifest, DEFERRED
-  assert.equal(refusal.kind, 'org-manifest');
+  const refusal = classifyForPush('solutions.json', classifyPath); // solution-manifest, DEFERRED
+  assert.equal(refusal.kind, 'solution-manifest');
   assert.equal(refusal.entrance, 'git');
 });
 
