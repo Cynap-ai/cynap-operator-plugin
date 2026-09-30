@@ -263,10 +263,12 @@ export const HOSTS = {
   staging: {
     mintHost: 'https://staging.cynap.ai',
     mcpHost: 'https://staging.mcp.cynap.ai',
+    previewHost: 'https://staging.mcp.cynap.ai',
   },
   prod: {
     mintHost: 'https://cynap.ai',
     mcpHost: 'https://api.cynap.ai',
+    previewHost: 'https://mcp.cynap.ai',
   },
 };
 
@@ -299,6 +301,50 @@ export const CONTEXT_PATH = '/context';
 
 /** Owner-only, nonce-gated local control route used by /cynap-activate. */
 export const ACTIVATE_PATH = '/activate';
+/** Nonce-gated preview control route. The operator token remains inside the proxy. */
+export const PREVIEW_PATH = '/preview';
+
+/** The local preview route's upstream leg; exported so its auth/body contract is tested without a socket. */
+export async function forwardPreviewRequest({ method, input, previewId, orgSlug, mcpHost, tokenManager, pluginVersion, fetchImpl = fetch }) {
+  let upstreamPath;
+  let body;
+  if (method === 'POST') {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input?.automationId ?? '') ||
+        !/^[a-f0-9]{40,64}$/.test(input?.commitSha ?? '')) {
+      return { status: 400, body: { error: 'invalid_preview_request' } };
+    }
+    upstreamPath = '/preview/execute';
+    body = JSON.stringify({ orgSlug, automationId: input.automationId, commitSha: input.commitSha });
+  } else if (method === 'GET' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(previewId ?? '')) {
+    upstreamPath = `/preview/status/${previewId}`;
+  } else {
+    return { status: 400, body: { error: 'invalid_preview_id' } };
+  }
+  const token = await tokenManager.getToken();
+  const previewHost = mcpHost === HOSTS.prod.mcpHost ? HOSTS.prod.previewHost : mcpHost;
+  const upstream = await fetchImpl(`${previewHost}${upstreamPath}`, {
+    method,
+    headers: upstreamHeaders(pluginVersion, {
+      Authorization: `Bearer ${token}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...stagingProtectionBypassHeaders(),
+    }),
+    ...(body ? { body } : {}),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const answer = await upstream.json().catch(() => ({}));
+  return { status: upstream.status, body: {
+    ...(typeof answer.previewId === 'string' ? { previewId: answer.previewId } : {}),
+    ...(typeof answer.status === 'string' ? { status: answer.status } : {}),
+    ...(typeof answer.failureCode === 'string' ? { failureCode: answer.failureCode } : {}),
+    ...(typeof answer.operatorText === 'string' ? { operatorText: answer.operatorText } : {}),
+    ...(typeof answer.error === 'string' ? { error: answer.error } : {}),
+    ...(typeof answer.retryAfterMs === 'number' ? { retryAfterMs: answer.retryAfterMs } : {}),
+    ...(Array.isArray(answer.effectKinds) ? { effectKinds: answer.effectKinds.filter((item) =>
+      typeof item?.kind === 'string' && Number.isInteger(item?.count) && item.count >= 0
+    ).map((item) => ({ kind: item.kind, count: item.count })) } : {}),
+  } };
+}
 
 /** Nonce-gated local control route used by /cynap-run-script. It mints a READ-ONLY token
  * through the portal's operator-script-token route and hands it to the runner — never the
@@ -2958,6 +3004,34 @@ export function createProxyServer({
       } catch (error) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'activation_failed' }));
+      }
+      return;
+    }
+
+    if ((req.method === 'POST' && req.url === PREVIEW_PATH) ||
+        (req.method === 'GET' && req.url?.startsWith(`${PREVIEW_PATH}/status/`))) {
+      const reply = (status, payload) => {
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(payload));
+      };
+      if (!controlNonce || req.headers[CONTROL_HEADER] !== controlNonce) {
+        reply(403, { error: 'invalid_local_control_nonce' });
+        return;
+      }
+      if (!tokenManager || !mcpHost || !orgSlug) {
+        reply(503, { error: 'preview_unavailable' });
+        return;
+      }
+      try {
+        const input = req.method === 'POST' ? JSON.parse((await readBody(req)).toString('utf8')) : undefined;
+        const result = await forwardPreviewRequest({
+          method: req.method, input,
+          previewId: req.method === 'GET' ? req.url.slice(`${PREVIEW_PATH}/status/`.length) : undefined,
+          orgSlug, mcpHost, tokenManager, pluginVersion, fetchImpl,
+        });
+        reply(result.status, result.body);
+      } catch (error) {
+        reply(502, { error: error instanceof Error ? error.message : 'preview_request_failed' });
       }
       return;
     }
