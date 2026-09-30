@@ -29,6 +29,15 @@ never diffed, never pushed. A remote path landing under `.cynap/`, an absolute o
 symlink anywhere on the write path, or two remote paths that collide once case-folded all make
 the pull refuse before anything is written.
 
+## The test context
+
+Every successful pull also installs the org test context: it copies the plugin's bundle to
+`<dir>/.cynap/testing.mjs` and writes the root `<dir>/package.json`, whose `imports` maps
+`#cynap/testing` to it (see `/cynap-test`). The plugin owns both paths — they are rewritten on
+every pull, never tracked in `state.json` and never pushed, and the platform refuses any
+`package.json` in a commit. An org's own root `package.json`, if it still has one, is left out of
+the sync.
+
 ## Usage
 
 ```

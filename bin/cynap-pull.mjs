@@ -14,6 +14,7 @@ import {
   deleteFileIfExists,
   findCaseCollisions,
   hasSymlinkOnPath,
+  PLUGIN_OWNED_ROOT_FILES,
   listLocalFiles,
   mapWithConcurrency,
   mcpCall,
@@ -25,6 +26,7 @@ import {
   writeStateAtomic,
 } from '../lib/workspace-sync.mjs';
 import { threeWayDiff } from '../lib/workspace-diff.mjs';
+import { installTestingContext } from '../lib/testing-context.mjs';
 
 export function parsePullArgs(argv) {
   const args = { dir: null, takeRemote: [], proxyUrl: null };
@@ -63,7 +65,10 @@ export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   if (tree?.ok === false) throw new Error(`workspace_tree refused: ${tree.code} — ${tree.message ?? ''}`);
   const commitSha = tree.commit_sha;
   const entries = Array.isArray(tree.entries) ? tree.entries : [];
-  const fileEntries = entries.filter((e) => e.type === 'file');
+  // A legacy org may still carry its own root package.json; the plugin owns that path locally,
+  // so the pull neither writes nor tracks it (the org drops the file in its own exit change).
+  const skippedPluginOwned = entries.filter((e) => e.type === 'file' && PLUGIN_OWNED_ROOT_FILES.has(e.path)).map((e) => e.path);
+  const fileEntries = entries.filter((e) => e.type === 'file' && !PLUGIN_OWNED_ROOT_FILES.has(e.path));
 
   // Reserved-path + case-collision refusals cover the WHOLE pull before any write (spec §7.1).
   for (const entry of fileEntries) assertSafeRemotePath(entry.path);
@@ -132,8 +137,18 @@ export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
 
   const nextFiles = Object.fromEntries(remote);
   writeStateAtomic(dir, { org, base: commitSha, files: nextFiles });
+  const pluginOwned = installTestingContext(dir);
 
-  return { ok: true, dir, base: commitSha, written: written.sort(), deleted: deleted.sort(), keptLocal: diff.keepLocal };
+  return {
+    ok: true,
+    dir,
+    base: commitSha,
+    written: written.sort(),
+    deleted: deleted.sort(),
+    keptLocal: diff.keepLocal,
+    pluginOwned,
+    skippedPluginOwned,
+  };
 }
 
 export async function main(argv = process.argv.slice(2)) {

@@ -46,6 +46,25 @@ The runner, from your current org working directory:
 4. **Computes** the resultant-content fingerprint over the same snapshot and **reports** the
    terminal verdict via `checks_verdict_report`.
 
+## Strict handler typecheck
+
+Before the checks, the runner typechecks every handler source (`automations/*.ts` and
+`automations/handlers/*/handler.ts`) with strict `tsc`, against the `@cynap/sdk` declarations
+this plugin ships and Node's own types. The platform's own handler check is best-effort, so this
+is where a type error is caught before it ships. Each error prints as
+`path:line:column TSxxxx message`, and a failure exits 3.
+
+Run it on its own before `/cynap-push` — no commit sha needed:
+
+```
+node ${CLAUDE_PLUGIN_ROOT}/bin/cynap-checks-runner.mjs --typecheck-only
+```
+
+The pinned compiler is installed once into `~/.cache/cynap-operator/typecheck/` with `npm`. When
+that is not possible (no `npm`, offline), the typecheck reports **NOT RUN** with the reason — it
+never reports a pass it did not earn. Point `CYNAP_TYPECHECK_TOOLCHAIN` at a directory whose
+`node_modules` already holds `typescript`, `@types/node` and `zod` to skip the install.
+
 ## Usage
 
 ```

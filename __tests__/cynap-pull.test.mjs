@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { pull } from '../bin/cynap-pull.mjs';
-import { readState, sha256Hex, writeStateAtomic, WorkspaceSyncError } from '../lib/workspace-sync.mjs';
+import { listLocalFiles, readState, sha256Hex, writeStateAtomic, WorkspaceSyncError } from '../lib/workspace-sync.mjs';
 
 const TIP_SHA = 'c'.repeat(64);
 // Real hashes of the fixture bytes: pull verifies every fetched file against the tree's sha256,
@@ -298,5 +298,43 @@ test('pull: a symlinked .cynap/ directory refuses before any state is read or wr
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('pull: installs the #cynap/testing context and owns the root package.json', async () => {
+  const dir = scratchDir();
+  try {
+    const legacyPackageJson = '{"name":"legacy-org-tests"}';
+    const H_PKG = sha256Hex(Buffer.from(legacyPackageJson));
+    const fetchImpl = fakeFetch({
+      workspace_tree: () => ({
+        ok: true,
+        commit_sha: TIP_SHA,
+        entries: [
+          { path: 'a.json', kind: 'automation', type: 'file', size_bytes: 7, sha256: H_A },
+          { path: 'package.json', kind: 'unknown', type: 'file', size_bytes: 27, sha256: H_PKG },
+        ],
+      }),
+      workspace_get_file: ({ path }) => {
+        assert.notEqual(path, 'package.json', 'the plugin-owned root package.json must never be fetched');
+        return { ok: true, commit_sha: TIP_SHA, path, kind: 'automation', encoding: 'utf8', content: '{"a":1}', sha256: H_A };
+      },
+    });
+
+    const result = await pull({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir], fetchImpl });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.written, ['a.json']);
+    assert.deepEqual(result.skippedPluginOwned, ['package.json']);
+    assert.deepEqual(result.pluginOwned, ['.cynap/testing.mjs', 'package.json']);
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    assert.deepEqual(pkg.imports, { '#cynap/testing': './.cynap/testing.mjs' });
+    assert.equal(pkg.type, 'module');
+    assert.ok(readFileSync(join(dir, '.cynap', 'testing.mjs'), 'utf8').includes('createMockContext'));
+    // Neither plugin-owned path is tracked, so neither can ever appear as a push change.
+    assert.deepEqual(Object.keys(readState(dir).files), ['a.json']);
+    assert.deepEqual(listLocalFiles(dir), ['a.json']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

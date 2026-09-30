@@ -300,6 +300,14 @@ export const CONTEXT_PATH = '/context';
 /** Owner-only, nonce-gated local control route used by /cynap-activate. */
 export const ACTIVATE_PATH = '/activate';
 
+/** Nonce-gated local control route used by /cynap-run-script. It mints a READ-ONLY token
+ * through the portal's operator-script-token route and hands it to the runner — never the
+ * proxy's own token, which can commit. */
+export const SCRIPT_TOKEN_PATH = '/script-token';
+
+/** The only two scope families the script-token route issues. */
+export const SCRIPT_TOKEN_FAMILIES = new Set(['workspace', 'ops']);
+
 /** Managed local shutdown path. The proxy performs its own credential revocation and
  * returns the outcome before exiting; callers never signal a health-supplied PID. */
 export const DISCONNECT_PATH = '/disconnect';
@@ -1836,6 +1844,46 @@ export function stagingProtectionBypassHeaders(env = process.env) {
   };
 }
 
+/**
+ * Mints a read-only operator-script token (`workspace:read` or `workspace:read-ops`) through
+ * POST /api/auth/operator-script-token with this proxy's CLI credential. The route has no way
+ * to widen the scope, so whatever holds the result can only call read tools. Never cached:
+ * each /cynap-run-script invocation gets its own short-lived token.
+ */
+export async function mintScriptToken({ mintHost, targetOrgId, family, getAuthHeaders, pluginVersion, fetchImpl = fetch }) {
+  if (!SCRIPT_TOKEN_FAMILIES.has(family)) {
+    throw new Error(`script-token: unknown family "${family}" — expected workspace or ops`);
+  }
+  const authHeaders = getAuthHeaders();
+  if (!authHeaders || Object.keys(authHeaders).length === 0) {
+    throw new Error('No operator credential available — run /cynap-connect first.');
+  }
+  const res = await fetchImpl(`${mintHost}/api/auth/operator-script-token`, {
+    method: 'POST',
+    headers: upstreamHeaders(pluginVersion, {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+      ...stagingProtectionBypassHeaders(),
+    }),
+    body: JSON.stringify({ targetOrgId, family }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    const error = new Error(`operator-script-token mint failed: ${res.status} ${body}`.trim());
+    error.status = res.status;
+    throw error;
+  }
+  const data = await res.json();
+  if (typeof data?.token !== 'string' || data.token.length === 0) {
+    throw new Error('operator-script-token mint returned no token');
+  }
+  return {
+    token: data.token,
+    expires_in: typeof data.expires_in === 'number' ? data.expires_in : OPERATOR_TTL_SECONDS,
+    scope: typeof data.scope === 'string' ? data.scope : null,
+  };
+}
+
 // macOS Keychain fallback for the staging Protection-Bypass secret.
 export const KEYCHAIN_SERVICE = 'cynap-operator';
 export const KEYCHAIN_ACCOUNT = 'staging-protection-bypass';
@@ -2898,6 +2946,42 @@ export function createProxyServer({
       } catch (error) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'activation_failed' }));
+      }
+      return;
+    }
+
+    // /cynap-run-script's token source. Nonce-gated like /activate. The reply carries the
+    // minted READ-ONLY token plus the org identity the runner must match against its working
+    // directory — never this proxy's own (commit-capable) token.
+    if (req.method === 'POST' && req.url === SCRIPT_TOKEN_PATH) {
+      const reply = (status, payload) => {
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(payload));
+      };
+      if (!controlNonce || req.headers[CONTROL_HEADER] !== controlNonce) {
+        reply(403, { error: 'invalid_local_control_nonce' });
+        return;
+      }
+      if (typeof getAuthHeaders !== 'function' || !mintHost || !orgId) {
+        reply(503, { error: 'script_token_unavailable' });
+        return;
+      }
+      try {
+        const payload = JSON.parse((await readBody(req)).toString('utf8'));
+        const mint = () =>
+          mintScriptToken({ mintHost, targetOrgId: orgId, family: payload?.family, getAuthHeaders, pluginVersion, fetchImpl });
+        const minted = consentGate ? await withAutoConsent(mint, { gate: consentGate }) : await mint();
+        reply(200, {
+          ok: true,
+          ...minted,
+          org_slug: orgSlug,
+          org_id: orgId,
+          mcp_url: `${mcpHost}${mcpPath}`,
+        });
+      } catch (error) {
+        reply(typeof error?.status === 'number' && error.status === 403 ? 403 : 400, {
+          error: error instanceof Error ? error.message : 'script_token_failed',
+        });
       }
       return;
     }

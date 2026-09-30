@@ -28,6 +28,7 @@ import {
 // connection- and consent-failure sentences could only ever be right in one of
 // them.
 import { mcpCall } from '../lib/workspace-sync.mjs';
+import { reportTypecheck } from '../lib/handler-typecheck.mjs';
 
 const DEFAULT_PROXY_URL = process.env.CYNAP_OPERATOR_MCP_URL ?? 'http://127.0.0.1:8790/mcp';
 
@@ -38,8 +39,20 @@ function parseArgs(argv) {
     if (flag === '--commit-sha') args.commitSha = argv[++i];
     else if (flag === '--workdir') args.workdir = argv[++i];
     else if (flag === '--proxy-url') args.proxyUrl = argv[++i];
+    else if (flag === '--typecheck-only') args.typecheckOnly = true;
   }
   return args;
+}
+
+// Strict `tsc` over the handler sources, run before the checks so failures surface before a push.
+// `--typecheck-only` stops there (no commit sha needed); a failure exits 3.
+function typecheckFirst(args) {
+  const typecheck = reportTypecheck(args.workdir);
+  if (args.typecheckOnly) {
+    process.stdout.write(`${JSON.stringify({ typecheck }, null, 2)}\n`);
+    process.exit(typecheck.status === 'fail' ? 3 : 0);
+  }
+  return typecheck;
 }
 
 function die(message) {
@@ -70,6 +83,7 @@ function readLocalBytes(workdir, relPath) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const typecheck = typecheckFirst(args);
   if (!args.commitSha || !/^[0-9a-f]{64}$/.test(args.commitSha)) {
     die('missing/invalid --commit-sha (expect the 64-hex commit hash just committed)');
   }
@@ -112,9 +126,9 @@ async function main() {
   });
 
   process.stdout.write(
-    `${JSON.stringify({ status: run.status, total: run.total, passed: run.passed, failed: run.failed, resultant_fingerprint: fingerprint, reported }, null, 2)}\n`
+    `${JSON.stringify({ status: run.status, total: run.total, passed: run.passed, failed: run.failed, resultant_fingerprint: fingerprint, reported, typecheck }, null, 2)}\n`
   );
-  process.exit(run.status === 'pass' ? 0 : 2);
+  process.exit(run.status !== 'pass' ? 2 : typecheck.status === 'fail' ? 3 : 0);
 }
 
 main().catch((error) => die(error instanceof Error ? error.message : String(error)));
