@@ -17,7 +17,9 @@ Plans creates/updates/deletes against `.cynap/state.json`, then:
 2. **Runs the org's `checks/` suite**, if it has one, with the same engine as `/cynap-checks`,
    against this push's planned bytes. Refuses on failure. **There is no skip flag** — a commit
    that can't activate blocks the chain for everyone behind it.
-3. **Validates** with `workspace_validate` and refuses on findings.
+3. **Validates** with `workspace_validate` and refuses on findings. Every refusal, dry run or
+   real, prints each error (`[code] path:line: message`), the server's message, and the
+   `validation run:` id.
 4. **Commits** with `workspace_commit` (`expected_head_sha` = the last pull's sha, a required
    `-m`). `parent_mismatch` means the tip moved — run `/cynap-pull` first. `chain_full` names
    the commit to activate or discard before pushing again. A byte-identical retry reports as a

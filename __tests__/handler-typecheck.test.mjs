@@ -29,6 +29,8 @@ test('selects exactly the handler-source paths', () => {
       'automations/handlers/a/handler.ts',
       'automations/handlers/a/helper.ts',
       'automations/__tests__/x.test.ts',
+      'automations/foo.test.ts',
+      'automations/handlers/a/__tests__/y.test.ts',
       'automations/nested/deep.ts',
       'context/notes.ts',
     ]) {

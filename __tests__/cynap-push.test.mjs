@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { formatSurfaceRefusal, formatValidationErrors, push } from '../bin/cynap-push.mjs';
+import { formatRefusal, formatSurfaceRefusal, formatValidationErrors, push } from '../bin/cynap-push.mjs';
 import { readState, sha256Hex, writeStateAtomic, WorkspaceSyncError } from '../lib/workspace-sync.mjs';
 
 const NEW_SHA = 'd'.repeat(64);
@@ -376,4 +376,89 @@ test('push: --rebuild refuses a value that is not a surface id', async () => {
     push({ cwd: '/tmp/op/cynap-e2e', argv: ['-m', 'x', '--rebuild', '../etc'], fetchImpl: fakeFetch({}) }),
     /--rebuild needs a surface id/
   );
+});
+
+// A refusal names its reason — every finding with its code, path, line and message, and
+// the validation run id — on both the dry run and the real push. `validation_failed` alone is not one.
+const RUN_ID = '11111111-2222-4333-8444-555555555555';
+const FINDING = {
+  severity: 'error',
+  code: 'validation_failed',
+  path: 'automations/a.ts',
+  line: 3,
+  message: "Missing default export.",
+};
+
+for (const dryRun of [true, false]) {
+  test(`push: a refused validation run prints every error and the run id${dryRun ? ' (dry run)' : ''}`, async () => {
+    const dir = scratchDir();
+    try {
+      mkdirSync(join(dir, 'automations'), { recursive: true });
+      writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+      writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+      const run = { id: RUN_ID, phase: 'pre_commit', status: 'failed', errors: [FINDING], warnings: [] };
+      const fetchImpl = fakeFetch({
+        ...noChecksOnLive(),
+        workspace_validate: () => run,
+        workspace_commit: () => ({ ok: false, code: 'validation_failed', run }),
+      });
+      const argv = dryRun ? ['--dir', dir, '--dry-run'] : ['--dir', dir, '-m', 'edit'];
+      const result = await push({ cwd: '/tmp/op/cynap-e2e', argv, fetchImpl });
+      assert.equal(result.ok, false);
+      assert.equal(result.validationRunId, RUN_ID);
+      const text = formatRefusal(result);
+      assert.match(text, /\[validation_failed\] automations\/a\.ts:3: Missing default export\./);
+      assert.match(text, new RegExp(`validation run: ${RUN_ID}`));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('push: a real commit refusal from the server (validation_failed) prints its run errors and id', async () => {
+  const dir = scratchDir();
+  try {
+    mkdirSync(join(dir, 'automations'), { recursive: true });
+    writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+    const fetchImpl = fakeFetch({
+      ...noChecksOnLive(),
+      workspace_validate: () => ({ id: RUN_ID, status: 'passed', errors: [], warnings: [] }),
+      workspace_commit: () => ({ ok: false, code: 'validation_failed', run: { id: RUN_ID, status: 'failed', errors: [FINDING] } }),
+    });
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'edit'], fetchImpl });
+    assert.equal(result.reason, 'validation_failed');
+    assert.deepEqual(result.validationErrors, [FINDING]);
+    assert.match(formatRefusal(result), /validation run: 1111/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push: a structured refusal without a run (gate_change_not_alone) prints its message and paths', async () => {
+  const dir = scratchDir();
+  try {
+    mkdirSync(join(dir, 'automations'), { recursive: true });
+    writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+    const refusal = {
+      ok: false,
+      code: 'gate_change_not_alone',
+      gate_change_paths: ['checks/x.check.json'],
+      other_paths: ['automations/a.json'],
+      message: 'checks/x.check.json changes an existing checks suite, and the changeset also touches automations/a.json. Commit a gate change alone.',
+    };
+    for (const dryRun of [true, false]) {
+      const fetchImpl = fakeFetch({ ...noChecksOnLive(), workspace_validate: () => refusal, workspace_commit: () => refusal });
+      const argv = dryRun ? ['--dir', dir, '--dry-run'] : ['--dir', dir, '-m', 'edit'];
+      const result = await push({ cwd: '/tmp/op/cynap-e2e', argv, fetchImpl });
+      assert.equal(result.reason, 'gate_change_not_alone');
+      const text = formatRefusal(result);
+      assert.match(text, /gate_change_not_alone/);
+      assert.match(text, /Commit a gate change alone/);
+      assert.match(text, /gate_change_paths: checks\/x\.check\.json/);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

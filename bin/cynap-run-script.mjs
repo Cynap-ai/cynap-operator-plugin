@@ -26,7 +26,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveWorkingDir, stablePortForSlug } from '../lib/connect.mjs';
 import { assertConnectedOrg, hasSymlinkOnPath, readState, resolveOrgSlug } from '../lib/workspace-sync.mjs';
 import { assertNetworkGated, assertSupportedNode, SANDBOX_ENV, sandboxExecArgv } from '../lib/sandboxed-node.mjs';
-import { CONTROL_FILE, CONTROL_HEADER, SCRIPT_TOKEN_PATH } from './operator-proxy.mjs';
+import { CONTROL_FILE, CONTROL_HEADER, SCRIPT_TOKEN_PATH, upstreamHeaders } from './operator-proxy.mjs';
+import { readPluginVersion } from './operator-proxy-launcher.mjs';
 
 const HOST_PATH = join(dirname(fileURLToPath(import.meta.url)), 'cynap-script-host.mjs');
 export const SCRIPTS_PREFIX = 'operator/scripts/';
@@ -117,19 +118,26 @@ function decodeRpcBody(text) {
   }
 }
 
-/** One JSON-RPC request to the operator MCP endpoint with a script token. */
-export async function rpc({ mcpUrl, token, method, params, fetchImpl = fetch }) {
+/**
+ * One JSON-RPC request to the operator MCP endpoint with a script token. It reports the plugin
+ * version exactly as the operator proxy does (`upstreamHeaders`), so a server that enforces a
+ * minimum sees the real version and not `installed: null`.
+ */
+export async function rpc({ mcpUrl, token, method, params, pluginVersion, fetchImpl = fetch }) {
   const res = await fetchImpl(mcpUrl, {
     method: 'POST',
-    headers: {
+    headers: upstreamHeaders(pluginVersion, {
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
       Authorization: `Bearer ${token}`,
-    },
+    }),
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
-  const envelope = decodeRpcBody(await res.text());
-  if (!res.ok) throw new Error(`${method} HTTP ${res.status}${envelope?.error ? `: ${JSON.stringify(envelope.error)}` : ''}`);
+  const text = await res.text();
+  const envelope = decodeRpcBody(text);
+  // A refusal body that is not a JSON-RPC error (`plugin_outdated` is one) reaches the script
+  // author verbatim: the code and the minimum are the whole message.
+  if (!res.ok) throw new Error(`${method} HTTP ${res.status}${envelope?.error ? `: ${JSON.stringify(envelope.error)}` : text ? `: ${text.slice(0, 2000)}` : ''}`);
   if (!envelope) throw new Error(`${method}: unreadable response`);
   if (envelope.error) throw new Error(`${method} refused: ${JSON.stringify(envelope.error)}`);
   return envelope.result ?? {};
@@ -155,12 +163,12 @@ function toolValue(name, result) {
  * token lists goes out on the ops token; everything else on the workspace token, so a write
  * tool reaches the server and is refused THERE, by scope.
  */
-export function createBroker({ workspace, ops, fetchImpl = fetch }) {
+export function createBroker({ workspace, ops, pluginVersion, fetchImpl = fetch }) {
   let opsTools = null;
   async function opsToolNames() {
     if (!ops) return new Set();
     if (!opsTools) {
-      const listed = await rpc({ ...ops, method: 'tools/list', params: {}, fetchImpl });
+      const listed = await rpc({ ...ops, method: 'tools/list', params: {}, pluginVersion, fetchImpl });
       opsTools = new Set((listed.tools ?? []).map((t) => t.name));
     }
     return opsTools;
@@ -168,11 +176,11 @@ export function createBroker({ workspace, ops, fetchImpl = fetch }) {
   return {
     async call(name, args) {
       const target = (await opsToolNames()).has(name) ? ops : workspace;
-      const result = await rpc({ ...target, method: 'tools/call', params: { name, arguments: args ?? {} }, fetchImpl });
+      const result = await rpc({ ...target, method: 'tools/call', params: { name, arguments: args ?? {} }, pluginVersion, fetchImpl });
       return toolValue(name, result);
     },
     async list() {
-      const listed = await rpc({ ...workspace, method: 'tools/list', params: {}, fetchImpl });
+      const listed = await rpc({ ...workspace, method: 'tools/list', params: {}, pluginVersion, fetchImpl });
       const names = new Set((listed.tools ?? []).map((t) => t.name));
       for (const name of await opsToolNames()) names.add(name);
       return [...names].sort();
@@ -220,7 +228,7 @@ export function runSandboxedScript({ dir, scriptAbs, org, scriptArgs, broker, fo
   });
 }
 
-export async function runScript({ cwd = process.cwd(), argv = [], fetchImpl = fetch, forkImpl = fork, proxyBase } = {}) {
+export async function runScript({ cwd = process.cwd(), argv = [], fetchImpl = fetch, forkImpl = fork, proxyBase, pluginVersion = readPluginVersion() } = {}) {
   assertSupportedNode();
   assertNetworkGated();
   const args = parseRunScriptArgs(argv);
@@ -245,7 +253,7 @@ export async function runScript({ cwd = process.cwd(), argv = [], fetchImpl = fe
     if (error?.status !== 403) throw error;
   }
 
-  const broker = createBroker({ workspace, ops, fetchImpl });
+  const broker = createBroker({ workspace, ops, pluginVersion, fetchImpl });
   return runSandboxedScript({ dir, scriptAbs, org, scriptArgs: args.scriptArgs, broker, forkImpl });
 }
 

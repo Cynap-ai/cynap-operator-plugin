@@ -145,7 +145,14 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   // Step 3: validate against the tip; refuse on findings.
   const validated = await call('workspace_validate', { changes });
   if (validated?.ok === false) {
-    return { ok: false, reason: 'validation_failed', result: validated, message: `workspace_validate refused: ${validated.code}` };
+    return {
+      ok: false,
+      reason: validated.code ?? 'validation_failed',
+      result: validated,
+      validationErrors: refusalErrors(validated),
+      validationRunId: refusalRunId(validated),
+      message: `workspace_validate refused: ${validated.code}${validated.message ? ` — ${validated.message}` : ''}`,
+    };
   }
   // A validation RUN that failed carries no `ok` field — only `status` and its findings. It is
   // the verdict workspace_commit reaches for these bytes, so a dry run must not report it as a pass.
@@ -156,6 +163,7 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
       reason: 'validation_failed',
       result: validated,
       validationErrors: errors,
+      validationRunId: refusalRunId(validated),
       message: `workspace_validate found ${errors.length} error${errors.length === 1 ? '' : 's'} — workspace_commit refuses these bytes.`,
     };
   }
@@ -206,8 +214,9 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
       ok: false,
       reason: committed.code,
       result: committed,
-      ...(Array.isArray(committed.run?.errors) ? { validationErrors: committed.run.errors } : {}),
-      message: `workspace_commit refused: ${committed.code}`,
+      validationErrors: refusalErrors(committed),
+      validationRunId: refusalRunId(committed),
+      message: `workspace_commit refused: ${committed.code}${committed.message ? ` — ${committed.message}` : ''}`,
     };
   }
 
@@ -248,22 +257,62 @@ export function formatSurfaceRefusal(result) {
   return lines.join('\n');
 }
 
-/** The validation findings block: one line per error, capped. */
+/** The findings of a refused validation run: a commit refusal nests the run, a dry run IS the run. */
+function refusalErrors(refusal) {
+  const errors = refusal?.run?.errors ?? refusal?.errors;
+  return Array.isArray(errors) ? errors : [];
+}
+
+function refusalRunId(refusal) {
+  const id = refusal?.run?.id ?? refusal?.id;
+  return typeof id === 'string' ? id : null;
+}
+
+/** The structured fields a non-run refusal carries besides its message (paths, forbidden, gate paths). */
+export function formatRefusalDetails(refusal) {
+  if (!refusal || typeof refusal !== 'object') return '';
+  const lines = [];
+  for (const entry of [...(refusal.paths ?? []), ...(refusal.forbidden ?? [])]) {
+    if (entry?.path) lines.push(`  ${entry.path}${entry.kind ? ` (${entry.kind})` : ''}${entry.entrance ? ` — entrance: ${entry.entrance}` : ''}`);
+  }
+  for (const key of ['gate_change_paths', 'other_paths']) {
+    if (Array.isArray(refusal[key])) lines.push(`  ${key}: ${refusal[key].join(', ')}`);
+  }
+  if (Array.isArray(refusal.effects)) lines.push(`  effects: ${refusal.effects.join(', ')}`);
+  if (Array.isArray(refusal.schema_deltas)) lines.push(...refusal.schema_deltas.map((delta) => `  ${delta}`));
+  return lines.join('\n');
+}
+
+/** The validation findings block: one line per error — code, path, line, message — capped. */
 export function formatValidationErrors(errors) {
-  const lines = errors.slice(0, 50).map((finding) => `  ${finding.path ? `${finding.path}: ` : ''}${finding.message}`);
+  const lines = errors.slice(0, 50).map((finding) => {
+    const at = finding.path ? `${finding.path}${finding.line ? `:${finding.line}` : ''}: ` : '';
+    return `  ${finding.code ? `[${finding.code}] ` : ''}${at}${finding.message}`;
+  });
   if (errors.length > 50) lines.push(`  … ${errors.length - 50} more`);
   return lines.join('\n');
 }
 
-function printRefusal(result) {
-  process.stderr.write(`cynap-push: ${result.message}\n`);
-  if (result.validationErrors?.length) process.stderr.write(`${formatValidationErrors(result.validationErrors)}\n`);
+/** The full stderr text of a refusal: message, every finding (code, path, line, message), the run id, next step. */
+export function formatRefusal(result) {
+  const out = [`cynap-push: ${result.message}`];
+  if (result.validationErrors?.length) out.push(formatValidationErrors(result.validationErrors));
+  else {
+    const details = formatRefusalDetails(result.result);
+    if (details) out.push(details);
+  }
+  if (result.validationRunId) out.push(`validation run: ${result.validationRunId}`);
   if (Object.hasOwn(SURFACE_REFUSAL_MESSAGES, result.reason)) {
     const block = formatSurfaceRefusal(result);
-    if (block) process.stderr.write(`${block}\n`);
+    if (block) out.push(block);
   }
-  if (result.reason === 'parent_mismatch') process.stderr.write('Run /cynap-pull, then re-run /cynap-push.\n');
-  if (result.reason === 'checks_failed') process.stderr.write('Fix the config and re-run — there is no skip flag.\n');
+  if (result.reason === 'parent_mismatch') out.push('Run /cynap-pull, then re-run /cynap-push.');
+  if (result.reason === 'checks_failed') out.push('Fix the config and re-run — there is no skip flag.');
+  return `${out.join('\n')}\n`;
+}
+
+function printRefusal(result) {
+  process.stderr.write(formatRefusal(result));
 }
 
 export async function main(argv = process.argv.slice(2)) {

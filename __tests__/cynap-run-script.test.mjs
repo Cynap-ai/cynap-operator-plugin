@@ -8,7 +8,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { runScript, parseRunScriptArgs, resolveScript } from '../bin/cynap-run-script.mjs';
+import { createBroker, rpc, runScript, parseRunScriptArgs, resolveScript } from '../bin/cynap-run-script.mjs';
+import { readPluginVersion } from '../bin/operator-proxy-launcher.mjs';
 import { assertNetworkGated } from '../lib/sandboxed-node.mjs';
 
 const ORG = 'acme';
@@ -219,4 +220,65 @@ test('on Node < 25 runScript refuses before starting the script, naming the vers
     runScript({ cwd, argv: ['operator/scripts/x.mjs'], fetchImpl: fakeNetwork().fetchImpl }),
     new RegExp(`Node ${process.versions.node.replaceAll('.', '\\.')} cannot deny network access to a sandboxed script — operator scripts need Node >= 25`)
   );
+});
+
+// A script's MCP reads carry the plugin version the way the operator proxy's calls do
+// (`x-cynap-plugin-version`), so a server that enforces a minimum never sees `installed: null`.
+test('rpc sends the plugin version header on every request', async () => {
+  const seen = [];
+  const fetchImpl = async (_url, init) => {
+    seen.push(init.headers);
+    return json(200, { jsonrpc: '2.0', id: 1, result: { tools: [] } });
+  };
+  await rpc({ mcpUrl: 'https://mcp.example/mcp/operator', token: WS_TOKEN, method: 'tools/list', params: {}, pluginVersion: '9.9.9', fetchImpl });
+  assert.equal(seen[0]['x-cynap-plugin-version'], '9.9.9');
+  assert.equal(seen[0].Authorization, `Bearer ${WS_TOKEN}`);
+});
+
+test('the broker threads the version through both tokens and both verbs', async () => {
+  const versions = [];
+  const fetchImpl = async (_url, init) => {
+    versions.push(init.headers['x-cynap-plugin-version']);
+    const body = JSON.parse(init.body);
+    return json(200, {
+      jsonrpc: '2.0',
+      id: 1,
+      result: body.method === 'tools/list' ? { tools: [{ name: 'runs_list' }] } : { content: [{ type: 'text', text: '{"ok":true}' }] },
+    });
+  };
+  const target = { mcpUrl: 'https://mcp.example/mcp/operator' };
+  const broker = createBroker({
+    workspace: { ...target, token: WS_TOKEN },
+    ops: { ...target, token: OPS_TOKEN },
+    pluginVersion: '1.2.3',
+    fetchImpl,
+  });
+  await broker.list();
+  await broker.call('runs_list', {});
+  await broker.call('workspace_status', {});
+  assert.ok(versions.length >= 3);
+  assert.deepEqual([...new Set(versions)], ['1.2.3']);
+});
+
+test('a plugin_outdated answer reaches the script author verbatim', async () => {
+  const outdated = { code: 'plugin_outdated', installed: null, minimum: '0.19.23' };
+  const httpRefusal = async () => json(426, outdated);
+  await assert.rejects(
+    rpc({ mcpUrl: 'https://mcp.example/mcp/operator', token: WS_TOKEN, method: 'tools/call', params: {}, pluginVersion: '0.0.1', fetchImpl: httpRefusal }),
+    (error) => /plugin_outdated/.test(error.message) && /"minimum":"0\.19\.23"/.test(error.message)
+  );
+  const toolRefusal = async () =>
+    json(200, { jsonrpc: '2.0', id: 1, result: { isError: true, content: [{ type: 'text', text: JSON.stringify(outdated) }] } });
+  const broker = createBroker({ workspace: { mcpUrl: 'https://mcp.example/mcp/operator', token: WS_TOKEN }, ops: null, pluginVersion: '0.0.1', fetchImpl: toolRefusal });
+  await assert.rejects(broker.call('journal_query', {}), (error) => /journal_query refused: .*plugin_outdated.*0\.19\.23/.test(error.message));
+});
+
+test('runScript reads the installed plugin version by default and sends it on script reads', needsNode25, async () => {
+  writeScript('operator/scripts/read.mjs', `export default async function ({ mcp }) { return mcp.call('workspace_status', {}); }`);
+  const net = fakeNetwork();
+  const result = await runScript({ cwd, argv: ['operator/scripts/read.mjs'], fetchImpl: net.fetchImpl });
+  assert.equal(result.ok, true, result.error);
+  const reads = net.seen.filter((c) => !c.url.endsWith('/script-token'));
+  assert.ok(reads.length > 0);
+  for (const read of reads) assert.equal(read.headers['x-cynap-plugin-version'], readPluginVersion());
 });
