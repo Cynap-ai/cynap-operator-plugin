@@ -50,8 +50,8 @@ The runner, from your current org working directory:
 
 Before the checks, the runner typechecks every handler source (`automations/*.ts` and
 `automations/handlers/*/handler.ts`) with strict `tsc`, against the `@cynap/sdk` declarations
-this plugin ships and Node's own types. The platform's own handler check is best-effort, so this
-is where a type error is caught before it ships. Each error prints as
+this plugin ships and Node's own types. The platform runs the same check, from the same pins and
+options, when you commit — so an error caught here is one `/cynap-push` would refuse. Each error prints as
 `path:line:column TSxxxx message`, and a failure exits 3.
 
 Run it on its own before `/cynap-push` — no commit sha needed:

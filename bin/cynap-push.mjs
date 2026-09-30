@@ -147,6 +147,18 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   if (validated?.ok === false) {
     return { ok: false, reason: 'validation_failed', result: validated, message: `workspace_validate refused: ${validated.code}` };
   }
+  // A validation RUN that failed carries no `ok` field — only `status` and its findings. It is
+  // the verdict workspace_commit reaches for these bytes, so a dry run must not report it as a pass.
+  if (validated?.status === 'failed') {
+    const errors = Array.isArray(validated.errors) ? validated.errors : [];
+    return {
+      ok: false,
+      reason: 'validation_failed',
+      result: validated,
+      validationErrors: errors,
+      message: `workspace_validate found ${errors.length} error${errors.length === 1 ? '' : 's'} — workspace_commit refuses these bytes.`,
+    };
+  }
 
   if (args.dryRun) {
     return { ok: true, dryRun: true, plan, checksRan: preflight.ran, validated };
@@ -190,7 +202,13 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
         message: `${committed.code}: ${SURFACE_REFUSAL_MESSAGES[committed.code]}.`,
       };
     }
-    return { ok: false, reason: committed.code, result: committed, message: `workspace_commit refused: ${committed.code}` };
+    return {
+      ok: false,
+      reason: committed.code,
+      result: committed,
+      ...(Array.isArray(committed.run?.errors) ? { validationErrors: committed.run.errors } : {}),
+      message: `workspace_commit refused: ${committed.code}`,
+    };
   }
 
   const commitSha = committed.commit.commit_sha;
@@ -230,8 +248,16 @@ export function formatSurfaceRefusal(result) {
   return lines.join('\n');
 }
 
+/** The validation findings block: one line per error, capped. */
+export function formatValidationErrors(errors) {
+  const lines = errors.slice(0, 50).map((finding) => `  ${finding.path ? `${finding.path}: ` : ''}${finding.message}`);
+  if (errors.length > 50) lines.push(`  … ${errors.length - 50} more`);
+  return lines.join('\n');
+}
+
 function printRefusal(result) {
   process.stderr.write(`cynap-push: ${result.message}\n`);
+  if (result.validationErrors?.length) process.stderr.write(`${formatValidationErrors(result.validationErrors)}\n`);
   if (Object.hasOwn(SURFACE_REFUSAL_MESSAGES, result.reason)) {
     const block = formatSurfaceRefusal(result);
     if (block) process.stderr.write(`${block}\n`);

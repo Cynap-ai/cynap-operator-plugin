@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +15,7 @@ import {
   typecheckHandlers,
 } from '../lib/handler-typecheck.mjs';
 import { CYNAP_SDK_DECLARATIONS, SDK_TYPE_PINS } from '../lib/cynap-sdk-types.mjs';
+import { HANDLER_COMPILER_OPTIONS, TOOLCHAIN_PINS as CONTRACT_PINS } from '../lib/handler-typecheck-contract.mjs';
 
 function scratch() {
   return mkdtempSync(join(tmpdir(), 'cynap-typecheck-unit-'));
@@ -104,4 +105,35 @@ test('the toolchain pins the compiler and schema library the declarations were b
   assert.equal(TOOLCHAIN_PINS.zod, SDK_TYPE_PINS.zod);
   assert.match(TOOLCHAIN_PINS['@types/node'], /^22\./);
   assert.ok(CYNAP_SDK_DECLARATIONS['index.d.ts'], 'the bundled declarations have no barrel');
+});
+
+// The platform typechecks the same source at commit time and must reach the same
+// verdict, so it imports lib/handler-typecheck-contract.mjs. This pins that the local runner
+// reads the contract too, rather than keeping pins or options of its own.
+test('the local runner checks with the contract pins and compiler options, and nothing else', () => {
+  assert.equal(TOOLCHAIN_PINS, CONTRACT_PINS);
+  assert.deepEqual(Object.keys(CONTRACT_PINS).sort(), ['@types/node', 'typescript', 'undici-types', 'zod']);
+
+  const dir = scratch();
+  try {
+    mkdirSync(join(dir, 'automations'));
+    writeFileSync(join(dir, 'automations', 'x.ts'), 'export {};\n');
+    let written;
+    const result = typecheckHandlers(dir, {
+      toolchain: { ok: true, root: '/toolchain' },
+      // Stands in for the compiler process: read the tsconfig the runner handed it.
+      execImpl: (_node, args) => {
+        written = JSON.parse(readFileSync(args[args.indexOf('-p') + 1], 'utf8'));
+        return '';
+      },
+    });
+    assert.equal(result.ok, true);
+    const { typeRoots, paths, ...shared } = written.compilerOptions;
+    assert.deepEqual(shared, JSON.parse(JSON.stringify(HANDLER_COMPILER_OPTIONS)));
+    assert.deepEqual(typeRoots, [join('/toolchain', 'node_modules', '@types')]);
+    assert.deepEqual(Object.keys(paths), ['@cynap/sdk', '@cynap/sdk/*']);
+    assert.deepEqual(written.files, [join(dir, 'automations', 'x.ts')]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

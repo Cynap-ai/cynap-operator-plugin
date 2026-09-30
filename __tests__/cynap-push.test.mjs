@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { formatSurfaceRefusal, push } from '../bin/cynap-push.mjs';
+import { formatSurfaceRefusal, formatValidationErrors, push } from '../bin/cynap-push.mjs';
 import { readState, sha256Hex, writeStateAtomic, WorkspaceSyncError } from '../lib/workspace-sync.mjs';
 
 const NEW_SHA = 'd'.repeat(64);
@@ -150,6 +150,42 @@ test('push: --dry-run stops after validate — workspace_commit is never called'
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A validation RUN that failed has no `ok` field — `{ status: 'failed', errors }` — and
+// is what workspace_commit then refuses with `validation_failed`. Reading only `ok === false` let
+// a dry run report bytes as pushable that the commit refused.
+for (const dryRun of [true, false]) {
+  test(`push: a FAILED validation run is a refusal${dryRun ? ' under --dry-run' : ''} — workspace_commit is never called`, async () => {
+    const dir = scratchDir();
+    try {
+      mkdirSync(join(dir, 'automations'), { recursive: true });
+      writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+      writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+      const finding = {
+        severity: 'error',
+        code: 'validation_failed',
+        path: 'automations/a.ts',
+        message: "TS2353 at automations/a.ts:3:5 — 'order_by' does not exist in type 'AdvancedQueryParams'.",
+      };
+      const fetchImpl = fakeFetch({
+        ...noChecksOnLive(),
+        workspace_validate: () => ({ phase: 'pre_commit', status: 'failed', errors: [finding], warnings: [] }),
+        workspace_commit: () => {
+          throw new Error('workspace_commit must not be called after a failed validation run');
+        },
+      });
+      const argv = dryRun ? ['--dir', dir, '--dry-run'] : ['--dir', dir, '-m', 'edit'];
+      const result = await push({ cwd: '/tmp/op/cynap-e2e', argv, fetchImpl });
+      assert.equal(result.ok, false);
+      assert.equal(result.dryRun, undefined);
+      assert.equal(result.reason, 'validation_failed');
+      assert.deepEqual(result.validationErrors, [finding]);
+      assert.match(formatValidationErrors(result.validationErrors), /automations\/a\.ts: TS2353 at/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('push: a successful commit updates state and reports the chain position, with no activation yet', async () => {
   const dir = scratchDir();
