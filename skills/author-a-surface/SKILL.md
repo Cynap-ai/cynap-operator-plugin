@@ -48,6 +48,7 @@ names. The backend validator and builder check both manifests before commit.
 | `manifest_schema`, `duplicate_route`, `duplicate_view` | Correct required fields and unique route paths/views. |
 | `missing_file`, `disallowed_file`, `file_too_large`, `source_too_large`, `not_utf8` | Restore required files, remove unsupported assets, shrink source, or encode text as UTF-8. |
 | `bundle_over_cap` | Reduce inlined assets or imports. |
+| `surface_page_heading` | Remove the page-level `<h1>`; the host header owns the page title. Name a record or section with `<h2>` or below. |
 
 `surface_lint_failed` carries the source file, line, and rule. Other refusal
 codes include `surface_manifest_invalid`, `surface_import_rejected`,
