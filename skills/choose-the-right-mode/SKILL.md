@@ -122,8 +122,8 @@ Read this before editing a pulled org tree. Each row names the SDK path kind;
 `activate` = `/cynap-push` then `/cynap-activate <sha>` with owner consent.
 `commit-only` = `/cynap-push`; a commit containing **only** commit-only kinds
 auto-activates. `preview` = push, obtain a passing handler preview for that
-exact commit, then activate. `human` = not operator-routable; ask a human to
-take the reviewed git/owner route. Generated and unknown paths are refused.
+exact commit, then activate. `human` = not operator-routable; stop, report the exact operation
+you could not do, and continue the other draft work. Generated and unknown paths are refused.
 
 ¹ Only the additive schema set in `author-a-schema-change` is admitted. An
 existing live file without a provenance baseline may require

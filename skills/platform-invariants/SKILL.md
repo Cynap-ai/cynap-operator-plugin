@@ -10,7 +10,7 @@ skill is the shared digest every other authoring skill (`author-a-flow`,
 `author-a-code-execution`, `author-a-deterministic-automation`,
 `author-a-schema-change`) assumes you have read first. It is self-contained
 and authoritative enough to act on — treat the rules below as the rules, and
-when in doubt, ask rather than guessing.
+when the workspace cannot answer a business question, ask rather than guessing.
 
 Customer-read files must contain no internal ticket or document identifiers,
 invariant codes, vendor datastore/runtime names, raw internal table names,
@@ -18,6 +18,22 @@ platform-only package names, or placeholder text describing internal safety
 rules. This applies to Markdown, SQL comments, and display text in JSON
 (names, descriptions, roles, labels, titles, and summaries). Use customer
 language; keep internal references in private engineering records.
+
+## Lifecycle: automatic until activation
+
+Everything before activation is a draft. Run it automatically and never ask the human in chat:
+`/cynap-connect`, pull, editing workspace files, `/cynap-checks`, `/cynap-test`,
+`/cynap-push --dry-run`, `/cynap-push` (a push commits to the org's accepted chain; it is a draft,
+not a deploy, and nothing reaches customers until activation), `/cynap-preview`, `/cynap-status`,
+plugin update and reload, and any read-only MCP call. When a step refuses, fix the cause and retry
+yourself using the printed `next:` line.
+
+Production is `/cynap-activate`. Run it when the work is ready; the owner's browser step-up is the
+approval, so do not ask in chat before running it. Run it, then tell the human the step-up is waiting
+for them, and in the same message report what will go live (commit, files, irreversible effects).
+
+Stop and ask the human only for a genuine business decision the workspace cannot answer, a refusal
+with no `next:` route, or anything destructive outside the workspace.
 
 ## Platform-owned vs operator-declared settings
 

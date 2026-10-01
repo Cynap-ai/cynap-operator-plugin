@@ -9,6 +9,9 @@ argument-hint: "-m <message> [--intent <edit|repair|revert|provision|migration|d
 node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-push.mjs" $ARGUMENTS
 ```
 
+A push is a draft: it commits to the org's accepted chain and deploys nothing. Run it without asking
+in chat; the owner approves at `/cynap-activate`. See the lifecycle rule in `platform-invariants`.
+
 Plans creates/updates/deletes against `.cynap/state.json`, then:
 
 1. **Refuses locally** if the plan touches a `generated`/`unknown` path or a
@@ -52,7 +55,7 @@ rule that fired) and a one-line fix. Nothing is committed on a refusal.
 
 **`--rebuild <surfaceId>`** commits no file changes and rebuilds that surface against the current
 platform builder — how a new Surface SDK minor reaches an approved surface (there are no silent
-platform rebuilds). The rebuild goes through the normal Owner approval like any commit.
+platform rebuilds). The rebuild is a draft like any push; the Owner approves it at activation.
 
 **Runtime changes need `/cynap-activate <commit_sha>` separately.** A commit
 containing only commit-only files auto-activates.

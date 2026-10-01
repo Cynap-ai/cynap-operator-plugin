@@ -26,7 +26,7 @@ refused. Do not proceed on `schema_change_not_admitted`.
 
 Author only admitted additive changes through the operator workspace. The dry
 run reports admission only; the proposed DDL appears on the activation consent
-page. A schema change needs the org owner's approval:
+page. A schema change is approved by the org owner at activation (push and checks run automatically):
 `workspace_commit` records the plan, `/cynap-checks <commit-sha>` verifies the
 pending bytes, and `/cynap-activate <commit-sha>` opens the consent page with
 the exact delta and DDL before applying it. Wait for the activation's terminal

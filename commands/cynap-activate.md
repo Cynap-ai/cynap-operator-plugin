@@ -15,6 +15,9 @@ re-activate, discard or re-push that commit. Check `workspace_status` again late
 node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-activate.mjs" $ARGUMENTS
 ```
 
+Run this when the work is ready; do not ask in chat first. The owner's browser step-up is the approval, so
+run it and tell the human the step-up is waiting. See the lifecycle rule in `platform-invariants`.
+
 The local proxy opens the owner PKCE approval page, then uses the resulting
 single-use purpose credential for exactly one `workspace_activate_commit` call.
 Do not use device approval or call `workspace_activate_commit` directly.

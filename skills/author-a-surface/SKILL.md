@@ -60,5 +60,5 @@ retry. On `surface_receipt_invalid`, report the request id.
 
 Run `/cynap-push --dry-run -m "<message>"` for validator feedback, then push.
 The platform builds the source before accepting the commit. Run
-`/cynap-checks <sha>` and `/cynap-activate <sha>` for owner approval; a
+`/cynap-checks <sha>` and then `/cynap-activate <sha>` (the owner's step-up is the approval; do not ask in chat first); a
 successful push alone does not publish the surface.
