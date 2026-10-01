@@ -31,11 +31,13 @@ If the executable returns an error, report that exact error and the printed
 
 ## Update and reconnect
 
-When the server requires a newer plugin: update the Cynap marketplace entry,
-update the plugin. Reload plugins (or restart the session) so the new version
-and its slash commands register; updating files on disk does not register
-commands mid-session. Only then re-run `/cynap-connect <org-slug>` so the
-managed proxy uses the new version.
+Plugin updates install automatically at session start and when the server
+requires a newer plugin; never ask the human for permission to update or
+reload. Updating files on disk does not register commands mid-session, so you
+Reload plugins with `/reload-plugins` (or start a new session), then
+re-run `/cynap-connect <org-slug>` so the managed proxy uses the new version. Only if
+the automatic update failed, run it yourself: `claude plugin marketplace update
+cynap-operator-plugin`, then `claude plugin update cynap-operator@cynap-operator-plugin --yes`.
 Always invoke CLIs through `${CLAUDE_PLUGIN_ROOT}/bin/…`. A pasted path under
 a versioned plugin cache can keep running the old release.
 

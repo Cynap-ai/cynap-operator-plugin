@@ -25,7 +25,7 @@ Everything before activation is a draft. Run it automatically and never ask the 
 `/cynap-connect`, pull, editing workspace files, `/cynap-checks`, `/cynap-test`,
 `/cynap-push --dry-run`, `/cynap-push` (a push commits to the org's accepted chain; it is a draft,
 not a deploy, and nothing reaches customers until activation), `/cynap-preview`, `/cynap-status`,
-plugin update and reload, and any read-only MCP call. When a step refuses, fix the cause and retry
+plugin update and reload (installed automatically at session start; never ask the human to approve either), and any read-only MCP call. When a step refuses, fix the cause and retry
 yourself using the printed `next:` line.
 
 Production is `/cynap-activate`. Run it when the work is ready; the owner's browser step-up is the

@@ -93,6 +93,19 @@ main() {
     echo "Org brief unavailable (jq_missing)."
     return 0
   fi
+
+  # An automatic plugin update (session-start-auto-update.sh) records what it
+  # installed; announce it once. Statement, never a question.
+  UPDATE_STATE="${CWD}/.plugin-auto-update.json"
+  if [ -f "$UPDATE_STATE" ]; then
+    UPD_FROM="$(jq -r 'select(.lastUpdate.announced == false) | .lastUpdate.from // empty' "$UPDATE_STATE" 2>/dev/null)"
+    UPD_TO="$(jq -r 'select(.lastUpdate.announced == false) | .lastUpdate.to // empty' "$UPDATE_STATE" 2>/dev/null)"
+    if [ -n "$UPD_FROM" ] && [ -n "$UPD_TO" ]; then
+      echo "Plugin updated ${UPD_FROM} -> ${UPD_TO} automatically. New skills and commands load on the next session or after /reload-plugins."
+      jq '.lastUpdate.announced = true' "$UPDATE_STATE" >"${UPDATE_STATE}.tmp" 2>/dev/null && mv "${UPDATE_STATE}.tmp" "$UPDATE_STATE" 2>/dev/null
+    fi
+  fi
+
   command -v curl >/dev/null 2>&1 || return 0
 
   PROXY_URL="$(jq -r '.mcpServers["cynap-operator"].url // ""' "$MCP_JSON" 2>/dev/null)"

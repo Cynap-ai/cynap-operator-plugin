@@ -35,7 +35,7 @@
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync, fstatSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync, fstatSync, statSync, rmSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
@@ -775,6 +775,149 @@ export function readLaunchRecord({ cwd = process.cwd(), readFileImpl = readFileS
     return JSON.parse(readFileImpl(join(cwd, 'proxy-launch.json'), 'utf8'));
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PROACTIVE UPDATE AT SESSION START
+//
+// `plugin_outdated` only fires when the server minimum moves, and releases
+// deliberately do not move it. Without this, a newer release never reached a
+// running operator unless an agent asked the human for permission. Updating is
+// automatic: hooks/session-start-auto-update.sh calls this detached, in a
+// connected working dir only. It reuses the self-update install steps above and
+// never throws, so a failure can never touch session start.
+// ---------------------------------------------------------------------------
+
+export const PLUGIN_AUTO_UPDATE_STATE_FILE = '.plugin-auto-update.json';
+const PLUGIN_AUTO_UPDATE_LOCK_DIR = '.plugin-auto-update.lock';
+export const PLUGIN_AUTO_UPDATE_THROTTLE_MS = 6 * 60 * 60 * 1000;
+const PLUGIN_AUTO_UPDATE_LOCK_STALE_MS = 10 * 60 * 1000;
+
+function readAutoUpdateState(cwd) {
+  try {
+    const state = JSON.parse(readFileSync(join(cwd, PLUGIN_AUTO_UPDATE_STATE_FILE), 'utf8'));
+    return state && typeof state === 'object' && !Array.isArray(state) ? state : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The version the marketplace clone now offers for this plugin, or null. The
+ * clone's location comes from `claude plugin marketplace list --json`
+ * (`installLocation`); its catalog is `.claude-plugin/marketplace.json`. */
+async function readLatestMarketplaceVersion({ execFileImpl, readFileImpl }) {
+  const listing = await execFileImpl('claude', ['plugin', 'marketplace', 'list', '--json'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 120_000,
+  });
+  const marketplaces = JSON.parse(listing);
+  const entry = Array.isArray(marketplaces)
+    ? marketplaces.find((item) => item?.name === PLUGIN_MARKETPLACE_NAME)
+    : null;
+  if (!entry || typeof entry.installLocation !== 'string') return null;
+  const catalog = JSON.parse(readFileImpl(join(entry.installLocation, '.claude-plugin', 'marketplace.json'), 'utf8'));
+  const pluginName = PLUGIN_QUALIFIED_ID.split('@')[0];
+  const offered = catalog?.plugins?.find?.((item) => item?.name === pluginName);
+  return typeof offered?.version === 'string' ? offered.version : null;
+}
+
+/**
+ * Installs the latest published plugin release when it is newer than the
+ * installed one. Returns `{ ok, reason, ... }`; never throws.
+ *
+ * No-ops (reason): `not_connected` (cwd is not a connected operator dir),
+ * `throttled` (checked within the last 6h), `locked` (another session is
+ * updating), `current`. Failures are logged and swallowed: `no_installed_record`,
+ * `refresh_failed`, `no_latest_version`, plus whatever `runPluginSelfUpdate`
+ * reports. A successful install records `lastUpdate` for the session banner; the
+ * running proxy keeps its old build until its next restart.
+ */
+export async function runProactivePluginUpdate({
+  cwd,
+  nowMs = Date.now(),
+  execFileImpl = runClaudeCommand,
+  readFileImpl = readFileSync,
+  out = process.stderr,
+  throttleMs = PLUGIN_AUTO_UPDATE_THROTTLE_MS,
+} = {}) {
+  let lockDir = null;
+  try {
+    try {
+      if (!readFileImpl(join(cwd, '.mcp.json'), 'utf8').includes('cynap-operator')) {
+        return { ok: false, reason: 'not_connected' };
+      }
+    } catch {
+      return { ok: false, reason: 'not_connected' };
+    }
+    const state = readAutoUpdateState(cwd);
+    if (typeof state.checkedAtMs === 'number' && nowMs - state.checkedAtMs < throttleMs) {
+      return { ok: false, reason: 'throttled' };
+    }
+
+    const lockPath = join(cwd, PLUGIN_AUTO_UPDATE_LOCK_DIR);
+    for (let attempt = 0; lockDir === null; attempt += 1) {
+      try {
+        mkdirSync(lockPath);
+        lockDir = lockPath;
+      } catch (err) {
+        if (err?.code !== 'EEXIST') throw err;
+        const stale = attempt === 0 && nowMs - statSync(lockPath).mtimeMs > PLUGIN_AUTO_UPDATE_LOCK_STALE_MS;
+        if (!stale) return { ok: false, reason: 'locked' };
+        rmSync(lockPath, { recursive: true, force: true });
+      }
+    }
+
+    // Stamped before the work so a failing check is retried at the throttle
+    // interval, not on every session start.
+    const writeState = (next) =>
+      writeFileSync(
+        join(cwd, PLUGIN_AUTO_UPDATE_STATE_FILE),
+        `${JSON.stringify({ ...readAutoUpdateState(cwd), ...next }, null, 2)}\n`
+      );
+    writeState({ checkedAtMs: nowMs });
+
+    const installed = await readInstalledPlugin({ execFileImpl });
+    if (!installed) {
+      out.write('[operator-proxy] auto-update: no installed plugin record; skipped\n');
+      return { ok: false, reason: 'no_installed_record' };
+    }
+    try {
+      await execFileImpl('claude', ['plugin', 'marketplace', 'update', PLUGIN_MARKETPLACE_NAME], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 120_000,
+      });
+    } catch (err) {
+      out.write(`[operator-proxy] auto-update: marketplace refresh failed: ${String(err?.stderr ?? err?.message ?? err)}\n`);
+      return { ok: false, reason: 'refresh_failed' };
+    }
+    const latest = await readLatestMarketplaceVersion({ execFileImpl, readFileImpl });
+    if (!latest || !/^\d+\.\d+\.\d+$/.test(latest)) {
+      out.write('[operator-proxy] auto-update: marketplace offers no readable version; skipped\n');
+      return { ok: false, reason: 'no_latest_version' };
+    }
+    if (versionAtLeast(installed.version, latest)) {
+      return { ok: true, reason: 'current', installed: installed.version, latest };
+    }
+
+    out.write(`[operator-proxy] auto-update: installing ${installed.version} -> ${latest}\n`);
+    const result = await runPluginSelfUpdate({ minimum: latest, execFileImpl, out });
+    if (!result.ok) return { ...result, installed: installed.version, latest };
+    writeState({ lastUpdate: { from: installed.version, to: latest, atMs: nowMs, announced: false } });
+    return { ok: true, reason: 'updated', installed: installed.version, latest };
+  } catch (err) {
+    out.write(`[operator-proxy] auto-update: unexpected failure: ${err instanceof Error ? err.message : String(err)}\n`);
+    return { ok: false, reason: 'error' };
+  } finally {
+    if (lockDir) {
+      try {
+        rmSync(lockDir, { recursive: true, force: true });
+      } catch {
+        // a lock that could not be removed is reclaimed as stale by the next run
+      }
+    }
   }
 }
 
