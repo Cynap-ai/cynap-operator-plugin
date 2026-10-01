@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { operatorEffectOutput } from '../lib/effect-disclosure.mjs';
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,17 +22,10 @@ export function parsePreviewArgs(argv) {
 }
 
 export function previewSummary(body) {
-  const effectKinds = Array.isArray(body?.effectKinds)
-    ? body.effectKinds.filter((entry) => typeof entry?.kind === 'string' && Number.isInteger(entry?.count))
-      .map((entry) => ({ kind: entry.kind, count: entry.count }))
-    : [];
-  return {
-    status: body?.status ?? 'unknown',
-    attemptId: body?.previewId ?? null,
-    ...(body?.failureCode ? { failureCode: body.failureCode } : {}),
-    ...(body?.operatorText ? { operatorText: body.operatorText } : {}),
-    effectKinds,
-  };
+  const { previewId, ...rest } = body ?? {};
+  return { status: 'unknown', attemptId: null, effectKinds: [],
+    ...operatorEffectOutput({ ...rest, attemptId: previewId }) };
+
 }
 
 export async function runPreview({ slug, automationId, commitSha, fetchImpl = fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPolls = MAX_STATUS_POLLS, onStart = () => {}, nonceOverride = null }) {
@@ -55,7 +49,7 @@ export async function runPreview({ slug, automationId, commitSha, fetchImpl = fe
     await wait(Math.min(2000 * (poll + 1), 10_000));
     const response = await fetchImpl(`${base}/status/${previewId}`, { headers: { [CONTROL_HEADER]: nonce } });
     const body = await response.json();
-    if (!response.ok) throw new Error(`operator preview status failed: ${body?.error ?? response.status}`);
+    if (!response.ok) throw new Error(`operator preview status failed: HTTP ${response.status}`);
     if (body.status === 'pending' || body.status === 'preview_running') continue;
     return previewSummary(body);
   }
@@ -66,15 +60,15 @@ export async function main(argv = process.argv.slice(2)) {
   const args = parsePreviewArgs(argv);
   const result = await runPreview({
     slug: resolveOrgSlug(), ...args,
-    onStart: (started) => process.stdout.write(`${JSON.stringify(started)}\n`),
+    onStart: (started) => process.stdout.write(`${JSON.stringify(operatorEffectOutput(started))}\n`),
   });
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  process.stdout.write(`${JSON.stringify(operatorEffectOutput(result))}\n`);
   return result;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`cynap-preview: failed (${operatorEffectOutput(error).code ?? 'preview_failed'})\n`);
     process.exitCode = error?.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
   });
 }

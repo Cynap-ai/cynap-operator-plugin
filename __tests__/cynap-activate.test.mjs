@@ -134,3 +134,18 @@ test('failed preview prints only its safe summary and never starts owner approva
   assert.deepEqual(progress, [result]);
   assert.deepEqual(calls, []);
 });
+
+test('activation output uses the same closed disclosure for progress and JSON', async () => {
+  const { operatorEffectOutput } = await import('../lib/effect-disclosure.mjs');
+  const { formatRefusal } = await import('../lib/format-refusal.mjs');
+  const hostile = { ok: false, code: 'preview_ack_required', message: 'private-recipient',
+    effects: ['private-recipient'], sample: [{ body: 'private-recipient' }], acknowledgements: ['private-recipient'],
+    effectKinds: [{ kind: 'message', count: 1, target: 'private-recipient' }, { kind: 'private-recipient', count: 1 }],
+    next_action: { kind: 'step_up_and_activate', reason: 'private-recipient' } };
+  const projected = operatorEffectOutput(hostile);
+  assert.deepEqual(projected.effectKinds, [{ kind: 'message', count: 1 }]);
+  assert.ok(!JSON.stringify(projected).includes('private-recipient'));
+  for (const command of ['cynap-preview', 'cynap-activate']) {
+    assert.ok(!formatRefusal(hostile, { command }).includes('private-recipient'));
+  }
+});

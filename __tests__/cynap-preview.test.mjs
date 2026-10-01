@@ -24,7 +24,7 @@ test('previewSummary exposes only verdict, fixed text, and effect kinds with cou
     previewId: 'id', status: 'fail', failureCode: 'copy_create_failed', operatorText: 'The handler was not run.',
     effectKinds: [{ kind: 'message', count: 2, targetRef: 'patient-1' }], rows: [{ patient: 'private' }],
   }), {
-    status: 'fail', attemptId: 'id', failureCode: 'copy_create_failed', operatorText: 'The handler was not run.',
+    status: 'fail', attemptId: 'id', failureCode: 'copy_create_failed',
     effectKinds: [{ kind: 'message', count: 2 }],
   });
 });
@@ -46,4 +46,19 @@ test('plugin proxy sends the commit-based body with its member workspace token a
   assert.deepEqual(response.body, { previewId: '0b0f3a52-5b1c-4f3e-9a55-0d1c2e3f4a5b', status: 'pending' });
   assert.deepEqual(JSON.parse(calls[0].init.body), { orgSlug: 'cynap-e2e', automationId: 'invoice-sync', commitSha: SHA });
   assert.equal(calls[0].init.headers.Authorization, 'Bearer member-execute-preview');
+});
+
+test('preview disclosure drops hostile fields, unknown kinds, negative counts and nested targets', () => {
+  const output = previewSummary({ status: 'pass', previewId: 'id', operatorText: 'private-recipient',
+    target: 'private-recipient', effectKinds: [{ kind: 'secret-recipient', count: 1 }, { kind: 'message', count: -1 },
+      { kind: 'money', count: 2, nested: { targetRef: 'private-recipient' } }] });
+  assert.deepEqual(output.effectKinds, [{ kind: 'money', count: 2 }]);
+  assert.ok(!JSON.stringify(output).includes('private-recipient'));
+});
+
+
+test('capture tool failure survives the counts-and-kinds projection without error details', () => {
+  assert.deepEqual(previewSummary({ previewId: 'id', status: 'fail', failureCode: 'capture_tool_failed',
+    error: 'private', toolOutcomes: [{ targetRef: 'private' }], effectKinds: [{ kind: 'message', count: 0, body: 'private' }] }),
+    { status: 'fail', attemptId: 'id', failureCode: 'capture_tool_failed', effectKinds: [{ kind: 'message', count: 0 }] });
 });

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { operatorEffectOutput } from '../lib/effect-disclosure.mjs';
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -116,8 +117,8 @@ export async function runActivationFlow({ slug, commitSha, reconcile = false, st
 export async function main(argv = process.argv.slice(2)) {
   const { commitSha, reconcile, json } = parseActivateArgs(argv);
   const slug = resolveOrgSlug();
-  const result = await runActivationFlow({ slug, commitSha, reconcile,
-    onProgress: (status) => process.stdout.write(`${json ? JSON.stringify(status) : `preview: ${status.status}`}\n`) });
+  const result = operatorEffectOutput(await runActivationFlow({ slug, commitSha, reconcile,
+    onProgress: (status) => { const safe = operatorEffectOutput(status); process.stdout.write(`${json ? JSON.stringify(safe) : `preview: ${safe.status ?? 'unknown'}`}\n`); } }));
   if (json) process.stdout.write(`${JSON.stringify(result)}\n`);
   else if (result?.ok === false || result?.code) process.stdout.write(formatRefusal(result, { command: 'cynap-activate', commitSha }));
   else {
@@ -133,7 +134,7 @@ export async function main(argv = process.argv.slice(2)) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`cynap-activate: failed (${operatorEffectOutput(error).code ?? 'activation_failed'})\n`);
     process.exitCode = error?.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
   });
 }
