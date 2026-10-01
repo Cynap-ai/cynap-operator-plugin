@@ -7,7 +7,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { formatRefusal, formatSurfaceRefusal, formatValidationErrors, push } from '../bin/cynap-push.mjs';
+import { push } from '../bin/cynap-push.mjs';
+import { formatRefusal, formatSurfaceRefusal, formatValidationErrors } from '../lib/format-refusal.mjs';
 import { readState, sha256Hex, writeStateAtomic, WorkspaceSyncError } from '../lib/workspace-sync.mjs';
 
 const NEW_SHA = 'd'.repeat(64);
@@ -125,6 +126,7 @@ test('push: a checks/ failure against the PLANNED bytes refuses, with no skip fl
     const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'edit'], fetchImpl });
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'checks_failed');
+    assert.match(result.message, /already accepted; change it in its own push first/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -151,6 +153,16 @@ test('push: workspace_validate refusal stops before any commit', async () => {
   }
 });
 
+test('push: connected org A with --dir at B workspace refuses; at A workspace is allowed', async () => {
+  const dir = scratchDir();
+  try {
+    writeFileSync(join(dir, 'a.json'), '{"x":1}');
+    writeStateAtomic(dir, { org: 'some-other-org', base: 'b'.repeat(64), files: {} });
+    await assert.rejects(push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '--dry-run'], fetchImpl: fakeFetch({}) }),
+      (error) => error instanceof WorkspaceSyncError && /some-other-org/.test(error.message) && /cynap-e2e/.test(error.message) && /state\.json/.test(error.message));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('push: --dry-run stops after validate — workspace_commit is never called', async () => {
   const dir = scratchDir();
   try {
@@ -164,10 +176,14 @@ test('push: --dry-run stops after validate — workspace_commit is never called'
         throw new Error('workspace_commit must not be called during --dry-run');
       },
     });
-    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '--dry-run'], fetchImpl });
+    const phases = [];
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '--dry-run'], fetchImpl,
+      onPhase: (phase) => phases.push(phase) });
     assert.equal(result.ok, true);
     assert.equal(result.dryRun, true);
     assert.deepEqual(result.plan.creates, ['automations/a.json']);
+    assert.ok(phases.some((phase) => phase.includes('validating')));
+    assert.equal(result.checkBase, 'live-sha');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -242,6 +258,23 @@ test('push: a successful commit updates state and reports the chain position, wi
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('push carries the commit next action into its result before activation', async () => {
+  const dir = scratchDir();
+  try {
+    mkdirSync(join(dir, 'automations'), { recursive: true });
+    writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+    const command = `/cynap-activate ${NEW_SHA}`;
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'edit'], fetchImpl: fakeFetch({
+      ...noChecksOnLive(), workspace_validate: () => ({ ok: true, status: 'passed' }),
+      workspace_commit: () => ({ ok: true, commit: { commit_sha: NEW_SHA },
+        activation: { state: 'pending_activation', next_action: { kind: 'step_up_and_activate', command } } }),
+      workspace_get_commit: () => ({ ok: true, state: 'pending' }),
+    }) });
+    assert.equal(result.nextAction.command, command);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('push: parent_mismatch names the current tip and tells the caller to pull', async () => {

@@ -80,3 +80,20 @@ never reports a pass it did not earn. Point `CYNAP_TYPECHECK_TOOLCHAIN` at a dir
 
 An org with **no** `checks/` tree passes vacuously — there is nothing to run, and activation is
 unaffected.
+
+## Author checks that survive changes
+
+The push preflight uses the accepted live suites, except check files this push
+replaces with planned bytes. If an edit would violate a live suite that this
+push does not replace, update and activate that check first; pull again before
+the content change. Edits or deletions of existing check files must not share
+a commit with runtime changes (`gate_change_not_alone`). New check files may.
+
+For `json_path_*` assertions, prefer stable object keys over array positions.
+Do not pin an array index such as `$.entities[12]`; ordering changes can make
+the check fail while the intended entity still exists. The current JSONPath
+subset has no array filter by key. Use `schema_field_present` for entity
+fields, or a supported descendant count where that proves the invariant;
+otherwise change the data shape or report the missing selector capability.
+Cover each changed managed path
+with an exact-path assertion or activation can return `checks_uncovered_path`.

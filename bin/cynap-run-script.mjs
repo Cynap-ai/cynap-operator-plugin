@@ -24,7 +24,7 @@ import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { resolveWorkingDir, stablePortForSlug } from '../lib/connect.mjs';
-import { assertConnectedOrg, hasSymlinkOnPath, readState, resolveOrgSlug } from '../lib/workspace-sync.mjs';
+import { assertConnectedOrg, hasSymlinkOnPath, readState, resolveOrgSlug, resolveWorkspaceDir } from '../lib/workspace-sync.mjs';
 import { assertNetworkGated, assertSupportedNode, SANDBOX_ENV, sandboxExecArgv } from '../lib/sandboxed-node.mjs';
 import { CONTROL_FILE, CONTROL_HEADER, SCRIPT_TOKEN_PATH, upstreamHeaders } from './operator-proxy.mjs';
 import { readPluginVersion } from './operator-proxy-launcher.mjs';
@@ -233,10 +233,10 @@ export async function runScript({ cwd = process.cwd(), argv = [], fetchImpl = fe
   assertNetworkGated();
   const args = parseRunScriptArgs(argv);
   const org = resolveOrgSlug({ cwd });
-  const dir = args.dir ? resolvePath(cwd, args.dir) : resolvePath(cwd, `cynap-${org}`);
+  const dir = resolveWorkspaceDir({ cwd, dir: args.dir, org });
   const state = readState(dir);
   if (!state) throw new Error(`cynap-run-script: ${dir} is not a pulled working directory — run /cynap-pull first.`);
-  assertConnectedOrg(state, org);
+  assertConnectedOrg(state, org, dir);
   const scriptAbs = resolveScript(dir, args.scriptPath);
 
   const nonce = readFileSync(join(resolveWorkingDir(org), CONTROL_FILE), 'utf8').trim();

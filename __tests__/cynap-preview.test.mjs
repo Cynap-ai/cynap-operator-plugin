@@ -1,10 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parsePreviewArgs, previewSummary } from '../bin/cynap-preview.mjs';
+import { parsePreviewArgs, previewSummary, runPreview } from '../bin/cynap-preview.mjs';
 import { forwardPreviewRequest } from '../bin/operator-proxy.mjs';
 
 const SHA = 'a'.repeat(64);
+
+test('preview_unavailable explains the blocked chain and status route', async () => {
+  await assert.rejects(runPreview({ slug: 'cynap-e2e', automationId: 'invoice-sync', commitSha: SHA,
+    nonceOverride: 'test-nonce', fetchImpl: async () => ({ ok: false, status: 403,
+      json: async () => ({ error: 'preview_unavailable' }) }) }),
+  /preview admission is not open.*chain stays blocked.*check \/cynap-status/);
+});
 
 test('parsePreviewArgs requires a committed SHA and one automation id', () => {
   assert.deepEqual(parsePreviewArgs(['invoice-sync', SHA]), { automationId: 'invoice-sync', commitSha: SHA });

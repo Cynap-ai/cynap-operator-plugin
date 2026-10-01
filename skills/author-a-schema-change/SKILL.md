@@ -1,6 +1,6 @@
 ---
 name: author-a-schema-change
-description: Add or change an entity type in a customer org's schema.json — entity fields, dedicated tables, pipeline stages. Applies regardless of which automation mode a task otherwise routes to.
+description: Add an entity or admitted additive fields and annotations in a customer org's schema.json. Applies regardless of automation mode.
 ---
 
 # author-a-schema-change — Entity Schema Authoring
@@ -10,6 +10,8 @@ shape of the business knowledge the org's database holds. This is
 orthogonal to the 3-mode router (`choose-the-right-mode`): any mode's
 automations may read/write entities whose shape you define here. Read
 `platform-invariants` before this skill if you haven't this session.
+Check the path and operation in `choose-the-right-mode`'s workspace capability
+matrix before authoring.
 
 ## Deliverable shape
 
@@ -17,18 +19,31 @@ automations may read/write entities whose shape you define here. Read
 context/schema.json
 ```
 
-Author only additive changes through the operator workspace. Start from the
-current accepted parent, then use `workspace_validate` to inspect the schema
-plan and its proposed DDL. A schema change needs the org owner's approval:
+**Step 1: pull the current accepted parent, edit, then run
+`/cynap-push --dry-run -m "<message>"` before committing.** The dry run calls
+`workspace_validate` and reports whether the schema change is admitted or
+refused. Do not proceed on `schema_change_not_admitted`.
+
+Author only admitted additive changes through the operator workspace. The dry
+run reports admission only; the proposed DDL appears on the activation consent
+page. A schema change needs the org owner's approval:
 `workspace_commit` records the plan, `/cynap-checks <commit-sha>` verifies the
 pending bytes, and `/cynap-activate <commit-sha>` opens the consent page with
 the exact delta and DDL before applying it. Wait for the activation's terminal
 status; a submitted command alone does not prove the DB effect or live publish.
 
-The admitted operator set is new entity types, nullable fields on dedicated
-tables, required boolean fields whose existing rows read false, and metadata
-annotations. Existing field type, requiredness, name, enum values, searchability,
-uniqueness, dedicated table placement, and removals are outside that set.
+The admitted operator set is: new entity types with a new `typed_` dedicated
+table and eligible fields; nullable non-enum, non-searchable, non-unique fields
+on existing dedicated tables; required boolean fields whose existing rows
+read false; entity descriptions and field description/semantic annotations;
+and new relationships joining two existing entities. New entities/fields
+cannot use enum, searchable, unique, or reserved fields. Existing field type,
+requiredness, name, enum values, searchability, uniqueness, dedicated table
+placement, and removals are outside that set. Changes to existing entity
+shape, including `pipeline.stages`, `pipeline.dropout_stages`, and
+`pipeline.terminal_stages`, are **not** admitted. A newly created entity may
+declare its initial pipeline, but later pipeline changes need the reviewed
+git and owner migration route.
 Treat a `schema_change_not_admitted` result as a git PR plus owner migration
 decision; do not reshape the change to evade the refusal.
 
@@ -118,7 +133,8 @@ export interface EntitySchemaField {
 
 ## A minimal correct example
 
-Note the `priority` field below has **no top-level `description`** —
+This is a **new** entity. Its initial pipeline is allowed; editing the pipeline
+after creation is not. Note the `priority` field below has **no top-level `description`** —
 the prose lives under `semantic.description` in the committed file. This
 distinction matters (see gotcha 1 above): only the top-level
 `EntitySchemaField.description` (and `name`) are screened;
@@ -140,12 +156,11 @@ stored.
     "stage_evaluation_rules": { "In Progress": "started_at", "Done": "completed_at", "Cancelled": "cancelled_at" }
   },
   "fields": [
-    { "name": "name", "field_type": "text", "required": true },
+    { "name": "title", "field_type": "text", "required": true },
     {
       "name": "priority",
-      "field_type": "enum",
+      "field_type": "text",
       "required": false,
-      "enum_values": ["low", "normal", "high"],
       "semantic": {
         "display_label": "Priority",
         "description": "How urgently this work item should be handled. low is background work with no deadline. normal is the default. high is work that blocks something else. When absent the platform treats the item as normal.",
@@ -160,23 +175,25 @@ stored.
 
 ## Authoring checklist
 
-1. Choose `type` (a stable machine key — this becomes the entity type name
+1. Run `/cynap-pull` before editing, then `/cynap-push --dry-run -m "<message>"`
+   on the proposed edit. Resolve every admission finding before committing.
+2. Choose `type` (a stable machine key — this becomes the entity type name
    everywhere) and `display_name` (human-facing).
-2. Write `fields[]` with `field_type` from the closed enum; `enum` fields
-   MUST carry `enum_values`.
-3. Sanitize any free-text `description` at the authoring step: `;`→`,`,
+3. Write `fields[]` with an admitted `field_type`; new enum fields are not
+   operator-admitted.
+4. Sanitize any free-text `description` at the authoring step: `;`→`,`,
    `--`→`—`, `/*`→`/ *`. Never leave these characters for the validator.
-4. Scan every description for a BLOCKED keyword (DROP/ALTER/CREATE/
+5. Scan every description for a BLOCKED keyword (DROP/ALTER/CREATE/
    TRUNCATE/DELETE FROM/INSERT INTO/UPDATE SET/TRIGGER/PROCEDURE/FUNCTION/
    EXEC/EXECUTE/GRANT/REVOKE) — rephrase if present.
-5. If this entity needs a `dedicated_table`, inspect each planned physical
+6. If this entity needs a `dedicated_table`, inspect each planned physical
    change, including later additive fields.
-6. If this entity has a pipeline (stage-based lifecycle), declare `stages`,
-   `terminal_stages`, and `forward_only` together.
-7. Validate and commit, run `/cynap-checks <commit-sha>`, then have the owner
+7. Only for a **new** entity, declare its initial pipeline together. Never
+   change an existing entity's pipeline through the operator route.
+8. After a passing dry run, commit, run `/cynap-checks <commit-sha>`, then have the owner
    review the consent page through `/cynap-activate <commit-sha>`. Confirm the
    terminal activation and registry state.
-8. In any other authoring skill that reads/writes this entity type, use
+9. In any other authoring skill that reads/writes this entity type, use
    `getSchemaRegistry()`/`resolveTableForType()`, never a hardcoded table
    name.
 

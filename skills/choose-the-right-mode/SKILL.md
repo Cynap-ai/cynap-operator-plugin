@@ -80,6 +80,62 @@ still `deterministic`; an open-ended chat session that decides its own next
 action is `code_execution` (`entrypoint: 'opencode'`) or `flow`. See
 `author-a-deterministic-automation` for the exact vocabulary.
 
+## Workspace path capability matrix
+
+Read this before editing a pulled org tree. Each row names the SDK path kind;
+`create`, `update`, and `delete` are the planned operations from `/cynap-push`.
+
+| Kind | Org path | Create | Update | Delete |
+|---|---|---|---|---|
+| `org-manifest` | `manifest.json` | human | human | human |
+| `org-profile` | `profile.json` | activate | activate | activate |
+| `org-agents` | `agents.json` | activate | activate | activate |
+| `solution-manifest` | `solutions.json` | human | human | human |
+| `schema` | `context/schema.json` | activate¹ | activate¹ / reconcile⁵ | human |
+| `context-doc` | `context/**/*.json`, `context/**/*.md` | activate | activate | activate |
+| `automation` | `automations/*.json` | activate | activate | activate |
+| `handler-config` | `automations/handlers/*/config.json` | activate | activate | activate |
+| `handler-preview-input` | `automations/handlers/*/preview-input.json` | commit-only | commit-only | commit-only |
+| `handler-source` | `automations/*.ts`, `automations/handlers/*/handler.ts` | preview | preview | activate² |
+| `handler-manifest` | `automations/*.manifest.json` | human | human | human |
+| `automation-script` | `automations/scripts/**/*` | human | human | human |
+| `runtime-config` | `config/**/*.json` | human | human | human |
+| `skill` | `skills/**/*.md` | activate | activate | activate |
+| `agent` | `.opencode/agents/*.md` | activate | activate | activate |
+| `communication-bots` | `communication/bots.json` | activate | activate | activate |
+| `communication-flow` | `communication/flows/*/flow.json` | activate | activate | activate |
+| `communication-sender-bindings` | `communication/sender-bindings.json` | activate | activate | activate |
+| `portal-config` | `portal/config.json` | activate | activate | activate |
+| `analytics-metric` | `analytics/metrics/**/*.yaml` | activate | activate | activate |
+| `analytics-page` | `analytics/pages/*.yaml` | activate | activate | activate |
+| `analytics-saved-query` | `analytics/saved-queries/*.sql` | activate | activate | activate |
+| `operations-condition` | `operations/conditions/*.yaml` | activate | activate | activate |
+| `checks` | `checks/**/*.json` | activate | activate³ | activate³ |
+| `reclaims` | `reclaims.json` | human | human | human |
+| `operator-skill` | `operator/skills/*/SKILL.md` | commit-only | commit-only | commit-only |
+| `operator-script` | `operator/scripts/**` | commit-only | commit-only | commit-only |
+| `operator-note` | `operator/**/*.md` | commit-only | commit-only | commit-only |
+| `org-test` | test files and `__tests__/` | commit-only | commit-only | commit-only |
+| `surface-source` | `surfaces/*/**` (allowed source types) | activate⁴ | activate⁴ | activate⁴ |
+| `surface-bundle` | derived bundle; no authorable path | human | human | human |
+
+`activate` = `/cynap-push` then `/cynap-activate <sha>` with owner consent.
+`commit-only` = `/cynap-push`; a commit containing **only** commit-only kinds
+auto-activates. `preview` = push, obtain a passing handler preview for that
+exact commit, then activate. `human` = not operator-routable; ask a human to
+take the reviewed git/owner route. Generated and unknown paths are refused.
+
+¹ Only the additive schema set in `author-a-schema-change` is admitted. An
+existing live file without a provenance baseline may require
+`/cynap-activate <sha> --reconcile`; use it only on `baseline_required`.
+² Source deletion has no handler build effect, but still needs activation.
+³ Editing or deleting an existing check must be separate from runtime changes;
+a newly created suite can accompany them. See `/cynap-checks`.
+⁴ The surface build runs during push; owner approval still follows. See
+`author-a-surface`.
+⁵ `reconcile` means push then `/cynap-activate <sha> --reconcile` **only**
+when the next action reports `baseline_required` for unstamped live files.
+
 ## Links
 
 - Conversational bot → `author-a-flow`
@@ -88,6 +144,7 @@ action is `code_execution` (`entrypoint: 'opencode'`) or `flow`. See
   agent session → `author-a-code-execution`
 - Fixed-step scheduled sync/reconciler/ETL → `author-a-deterministic-automation`
 - Schema/entity changes (any mode) → `author-a-schema-change`
+- Surface UI and manifests → `author-a-surface`
 - Shared cross-mode constraints → `platform-invariants`
 - Any AI call or model selection → `configure-customer-ai`
 

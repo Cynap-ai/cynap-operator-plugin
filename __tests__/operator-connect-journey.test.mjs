@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runOperatorConnect, waitForOperatorHealth } from '../lib/operator-connect.mjs';
+import { DEFAULT_HEALTH_TIMEOUT_MS, runOperatorConnect, waitForOperatorHealth } from '../lib/operator-connect.mjs';
 import { formatConnectMessage, parseConnectArgs } from '../bin/cynap-connect.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -16,6 +17,10 @@ test('/cynap-connect delegates to the executable product seam, not agent-authore
     /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/cynap-connect\.mjs" \$ARGUMENTS/
   );
   assert.doesNotMatch(command, /generic Cynap app|app connector|mcp-token/i);
+});
+
+test('connect health deadline exceeds the PKCE sign-in window', () => {
+  assert.ok(DEFAULT_HEALTH_TIMEOUT_MS > 5 * 60 * 1000);
 });
 
 test('a lower-version same-org connector is launched only after its credential revocation is proven', async () => {
@@ -85,6 +90,62 @@ test('connect copy is cwd-realpath aware and never advises a new session', () =>
   assert.doesNotMatch(inside, /\/mcp/);
   assert.match(outside, /^Connected to cynap\. Open ~\/CynapOperator\/cynap\/ in Claude Code/);
   assert.doesNotMatch(`${inside}\n${outside}`, /new (Claude Code )?session/i);
+});
+
+test('connect reports org, version, reused/new consent, expiry, and warns below the server minimum', () => {
+  const message = formatConnectMessage({
+    slug: 'cynap', workingDir: '/real/CynapOperator/cynap', reused: false,
+    health: { credExpiresAt: '2026-10-03T10:00:00.000Z', minimumPluginVersion: '0.20.0' },
+  }, { cwd: '/elsewhere', realpath: (value) => value, pluginVersion: '0.19.9' });
+  assert.match(message, /Org: cynap/);
+  assert.match(message, /Plugin: 0\.19\.9/);
+  assert.match(message, /new browser consent approved/i);
+  assert.match(message, /Credential expires: 2026-10-03T10:00:00\.000Z/);
+  assert.match(message, /WARNING: plugin 0\.19\.9 is below the server minimum 0\.20\.0/);
+});
+
+test('failed browser handover reports the consent URL and browser approval instruction', async () => {
+  const workingDir = mkdtempSync(join(tmpdir(), 'operator-connect-'));
+  const consentUrl = 'https://portal.cynap.ai/operator-cli/authorize?client_id=cli&state=abc';
+  writeFileSync(join(workingDir, 'proxy.log'), `[operator-proxy] If your browser did not open, visit:\n  ${consentUrl}\n`);
+  try {
+    await assert.rejects(runOperatorConnect({
+      slug: 'cynap', proxyPath: '/plugin/bin/operator-proxy.mjs', pluginVersion: '0.20.0',
+      plan: async () => ({ slug: 'cynap', env: 'prod', authMode: 'interactive', action: 'launch',
+        port: 39123, workingDir, proxyArgv: ['/plugin/bin/operator-proxy.mjs'] }),
+      launch: async () => ({ pid: 4242 }),
+      waitForHealth: async () => { throw new Error('operator connect: browser sign-in timed out'); },
+    }), (error) => {
+      assert.match(error.message, /Consent is pending or failed/);
+      assert.match(error.message, /approve it in the browser/);
+      assert.ok(error.message.includes(consentUrl));
+      return true;
+    });
+  } finally {
+    rmSync(workingDir, { recursive: true, force: true });
+  }
+});
+
+test('failed handover ignores a consent URL left in the log by an earlier launch', async () => {
+  const workingDir = mkdtempSync(join(tmpdir(), 'operator-connect-'));
+  const stale = 'https://portal.cynap.ai/operator-cli/authorize?client_id=cli&state=stale';
+  const previous = `[operator-proxy] visit:\n  ${stale}\n`;
+  writeFileSync(join(workingDir, 'proxy.log'), previous);
+  try {
+    await assert.rejects(runOperatorConnect({
+      slug: 'cynap', proxyPath: '/plugin/bin/operator-proxy.mjs', pluginVersion: '0.20.0',
+      plan: async () => ({ slug: 'cynap', env: 'prod', authMode: 'interactive', action: 'launch',
+        port: 39123, workingDir, proxyArgv: ['/plugin/bin/operator-proxy.mjs'] }),
+      launch: async () => ({ pid: 4242, logOffset: Buffer.byteLength(previous) }),
+      waitForHealth: async () => { throw new Error('operator connect: browser sign-in timed out'); },
+    }), (error) => {
+      assert.match(error.message, /Consent may be pending or failed/);
+      assert.ok(!error.message.includes(stale));
+      return true;
+    });
+  } finally {
+    rmSync(workingDir, { recursive: true, force: true });
+  }
 });
 
 test('/cynap-connect cynap launches the operator PKCE connector and returns a healthy workspace', async () => {

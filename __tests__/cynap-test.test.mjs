@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { findOrgTests, nodeTestArgv, runOrgTests } from '../bin/cynap-test.mjs';
+import { findOrgTests, inspectOrgTest, nodeTestArgv, runOrgTests, UNSUPPORTED_EXIT_CODE } from '../bin/cynap-test.mjs';
 import { assertSupportedNode, FORBIDDEN_GRANTS } from '../lib/sandboxed-node.mjs';
 
 const inProcess = (() => {
@@ -89,7 +89,39 @@ test('only *.test.* files are selected, never node_modules or plugin-owned paths
   write('node_modules/pkg/b.test.js', '');
   write('.cynap/c.test.mjs', '');
   write('d.test.mjs', '');
-  assert.deepEqual(findOrgTests(dir), ['automations/__tests__/a.test.ts', 'd.test.mjs']);
+  write('e.test.cjs', '');
+  assert.deepEqual(findOrgTests(dir), ['automations/__tests__/a.test.ts', 'd.test.mjs', 'e.test.cjs']);
+});
+
+test('marks Vitest and unavailable packages unsupported with a concrete fix', () => {
+  write('vitest.test.ts', "import { test } from 'vitest';\n");
+  write('missing.test.mjs', "import helper from 'not-installed-anywhere';\n");
+  assert.match(inspectOrgTest(dir, 'vitest.test.ts').reason, /Vitest/);
+  assert.match(inspectOrgTest(dir, 'vitest.test.ts').fix, /node:test/);
+  assert.match(inspectOrgTest(dir, 'missing.test.mjs').reason, /not-installed-anywhere/);
+});
+
+test('refuses require() in ESM .js with a rename-to-.cjs fix', async () => {
+  write('esm-require.test.js', "const { test } = require('node:test');\n");
+  const refused = await runOrgTests({ cwd, argv: ['esm-require.test.js'], stdio: 'pipe' });
+  assert.equal(refused.exitCode, UNSUPPORTED_EXIT_CODE);
+  assert.match(refused.unsupported[0].fix, /rename it to \.cjs/);
+});
+
+test('runs .cjs tests when the sandbox permits', needsInProcess, async () => {
+  write('commonjs.test.cjs', "const { test } = require('node:test'); const assert = require('node:assert/strict'); test('CJS runs', () => assert.equal(1, 1));\n");
+  const runnable = await runOrgTests({ cwd, argv: ['commonjs.test.cjs'], stdio: 'pipe' });
+  assert.equal(runnable.ok, true, runnable.output);
+  assert.equal(runnable.passed, 1);
+  assert.equal(runnable.failed, 0);
+});
+
+test('returns the unsupported exit code when every selected test is unsupported', async () => {
+  write('only-vitest.test.ts', "import { test } from 'vitest';\n");
+  const result = await runOrgTests({ cwd, stdio: 'pipe' });
+  assert.equal(result.exitCode, UNSUPPORTED_EXIT_CODE);
+  assert.equal(result.files.length, 0);
+  assert.equal(result.unsupported.length, 1);
 });
 
 test('refuses a file that is not an org test', async () => {

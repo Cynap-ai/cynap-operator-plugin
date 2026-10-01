@@ -222,12 +222,15 @@ test('pull: a remote path under the reserved .cynap/ directory refuses the WHOLE
   }
 });
 
-test('pull: a directory that already holds state.json for a DIFFERENT org refuses', async () => {
+test('pull: connected org A with --dir at B workspace refuses; --dir at A workspace (any path) is allowed', async () => {
   const dir = scratchDir();
   try {
-    writeStateAtomic(dir, { org: 'some-other-org', base: 'b'.repeat(64), files: {} });
     const fetchImpl = fakeFetch({ workspace_tree: () => ({ ok: true, commit_sha: TIP_SHA, entries: [] }) });
+    writeStateAtomic(dir, { org: 'some-other-org', base: 'b'.repeat(64), files: {} });
     await assert.rejects(pull({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir], fetchImpl }), WorkspaceSyncError);
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+    const result = await pull({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir], fetchImpl });
+    assert.equal(result.ok, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

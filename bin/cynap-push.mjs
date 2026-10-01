@@ -5,7 +5,7 @@
 // activates"). Zero external dependencies — Node built-ins + sibling lib modules only.
 
 import { readFileSync } from 'node:fs';
-import { join, resolve as resolvePath } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { stablePortForSlug } from '../lib/connect.mjs';
@@ -14,12 +14,14 @@ import { classifyPath, collectFingerprintPaths, effectForKind, evaluateChecks } 
 import { buildPushPlan } from '../lib/workspace-diff.mjs';
 import { checkPushEffects, classifyForPush } from '../lib/workspace-kinds.mjs';
 import { runChecksPreflight } from '../lib/workspace-checks-preflight.mjs';
+import { formatRefusal, refusalErrors, refusalRunId, SURFACE_REFUSAL_MESSAGES, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
 import {
   assertConnectedOrg,
   listLocalFiles,
   mcpCall,
   readState,
   resolveOrgSlug,
+  resolveWorkspaceDir,
   sha256Hex,
   writeStateAtomic,
 } from '../lib/workspace-sync.mjs';
@@ -27,32 +29,13 @@ import {
 const VALID_INTENTS = new Set(['edit', 'repair', 'revert', 'provision', 'migration', 'drift_repair']);
 const SURFACE_ID_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
 
-/**
- * The surface build gate's refusal codes, one operator-facing line each. The server sends the
- * findings (the log excerpt) and a fix hint; this names what went wrong. Keys are pinned to the
- * server's refusal-code list by a private parity test, so a code the server can send never
- * reaches an operator as an unexplained failure.
- */
-export const SURFACE_REFUSAL_MESSAGES = Object.freeze({
-  surface_build_failed: 'the surface build failed',
-  surface_lint_failed: 'the surface source uses a construct surfaces may not use',
-  surface_import_rejected: 'the surface imports a module outside the allowed set',
-  surface_manifest_invalid: 'the surface directory, routes.json or tools.json is invalid',
-  surface_tool_not_callable: 'the surface calls a tool it may not call',
-  surface_csp_not_empty: 'a _meta.ui.csp domain list is not empty',
-  surface_too_large: 'the built surface bundle is over its size cap',
-  surface_too_many: 'this push touches more than one surface',
-  surface_receipt_invalid: 'the platform could not verify the build',
-  surface_build_busy: 'another surface build for this org is running',
-  surface_build_timeout: 'the surface build did not fit in this request',
-});
-
 export function parsePushArgs(argv) {
-  const args = { dir: null, dryRun: false, message: null, intent: 'edit', proxyUrl: null, rebuild: null };
+  const args = { dir: null, dryRun: false, json: false, message: null, intent: 'edit', proxyUrl: null, rebuild: null };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === '--dir') args.dir = argv[++i];
     else if (flag === '--dry-run') args.dryRun = true;
+    else if (flag === '--json') args.json = true;
     else if (flag === '-m' || flag === '--message') args.message = argv[++i];
     else if (flag === '--intent') args.intent = argv[++i];
     else if (flag === '--proxy-url') args.proxyUrl = argv[++i];
@@ -75,15 +58,16 @@ function readLocalFileMap(dir) {
   return map;
 }
 
-export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch } = {}) {
+export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, onPhase = () => {} } = {}) {
   const args = parsePushArgs(argv);
+  onPhase('reading local workspace…');
   const org = resolveOrgSlug({ cwd });
   const proxyUrl = args.proxyUrl ?? `http://127.0.0.1:${stablePortForSlug(org)}/mcp`;
-  const dir = args.dir ? resolvePath(cwd, args.dir) : resolvePath(cwd, `cynap-${org}`);
+  const dir = resolveWorkspaceDir({ cwd, dir: args.dir, org });
 
   const state = readState(dir);
   if (!state) return { ok: false, reason: 'no_state', message: `${dir}: no .cynap/state.json — run /cynap-pull first.` };
-  assertConnectedOrg(state, org);
+  assertConnectedOrg(state, org, dir);
 
   const base = new Map(Object.entries(state.files));
   const local = readLocalFileMap(dir); // throws WorkspaceSyncError on a symlink (spec §7.1)
@@ -100,6 +84,7 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   const effects = checkPushEffects(touched, classifyPath, effectForKind, plan.deletes);
   if (effects) {
     return { ok: false, reason: 'commit_spans_irreversible_effects', effects,
+      paths: touched.map((path) => ({ path, class: effectForKind(classifyPath(path)) })),
       message: 'Commit each irreversible effect separately, with only permitted riders. Deleted handler sources may be committed only with inert files.' };
   }
   const refusals = touched.map((path) => classifyForPush(path, classifyPath)).filter(Boolean);
@@ -119,9 +104,11 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   const call = (name, callArgs) => mcpCall(proxyUrl, name, callArgs, { fetchImpl });
 
   // Step 2: checks preflight — no skip flag, because a commit that can't activate blocks the chain.
+  onPhase('running live checks…');
   const preflight = await runChecksPreflight({
     call,
     resolvePlanned: (path) => (plannedBytes.has(path) ? plannedBytes.get(path) : undefined),
+    plannedPaths: [...plannedBytes.keys()],
     evaluateChecks,
     collectFingerprintPaths,
     // The pull already holds most of what the preflight reads: reuse a local file whose sha256
@@ -139,7 +126,7 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
       ok: false,
       reason: 'checks_failed',
       run: preflight.run,
-      message: `checks failed: ${f ? `${f.op} ${f.file}: ${f.detail}` : 'unknown assertion failed'}`,
+      message: `checks failed: ${f ? `${f.op} ${f.file}: ${f.detail}` : 'unknown assertion failed'}${f?.guidance ? ` — ${f.guidance}` : ''}`,
     };
   }
 
@@ -151,6 +138,7 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   const changes = { operations };
 
   // Step 3: validate against the tip; refuse on findings.
+  onPhase('validating…');
   const validated = await call('workspace_validate', { changes });
   if (validated?.ok === false) {
     return {
@@ -177,10 +165,14 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   }
 
   if (args.dryRun) {
-    return { ok: true, dryRun: true, plan, checksRan: preflight.ran, validated };
+    const liveTree = await call('workspace_tree', { commit: 'live', prefix: 'checks/', include_hashes: true });
+    if (liveTree?.ok === false) return { ok: false, reason: liveTree.code, result: liveTree, message: liveTree.message };
+    return { ok: true, dryRun: true, plan, checksRan: preflight.ran, checks: preflight.run,
+      checkBase: liveTree.commit_sha ?? null, validated };
   }
 
   // Step 4: commit.
+  onPhase('committing…');
   const committed = await call('workspace_commit', {
     changes,
     message: args.message,
@@ -248,75 +240,8 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
     state: readBack?.ok === false ? null : readBack?.state ?? null,
     position: readBack?.ok === false ? null : readBack?.position ?? null,
     activation: committed.activation ?? null,
+    nextAction: committed.activation?.next_action ?? committed.next_action ?? readBack?.next_action ?? null,
   };
-}
-
-function formatFinding(finding) {
-  const where = finding.file ? `${finding.file}${finding.line ? `:${finding.line}${finding.column ? `:${finding.column}` : ''}` : ''}: ` : '';
-  return `  ${where}${finding.message} [${finding.rule}]`;
-}
-
-/** The surface refusal block: the log excerpt, then the fix hint. */
-export function formatSurfaceRefusal(result) {
-  const lines = (result.findings ?? []).slice(0, 20).map(formatFinding);
-  if ((result.findings ?? []).length > 20) lines.push(`  … ${result.findings.length - 20} more`);
-  if (result.hint) lines.push(`Fix: ${result.hint}`);
-  if (result.retryable) lines.push('This is retryable — re-run /cynap-push.');
-  return lines.join('\n');
-}
-
-/** The findings of a refused validation run: a commit refusal nests the run, a dry run IS the run. */
-function refusalErrors(refusal) {
-  const errors = refusal?.run?.errors ?? refusal?.errors;
-  return Array.isArray(errors) ? errors : [];
-}
-
-function refusalRunId(refusal) {
-  const id = refusal?.run?.id ?? refusal?.id;
-  return typeof id === 'string' ? id : null;
-}
-
-/** The structured fields a non-run refusal carries besides its message (paths, forbidden, gate paths). */
-export function formatRefusalDetails(refusal) {
-  if (!refusal || typeof refusal !== 'object') return '';
-  const lines = [];
-  for (const entry of [...(refusal.paths ?? []), ...(refusal.forbidden ?? [])]) {
-    if (entry?.path) lines.push(`  ${entry.path}${entry.kind ? ` (${entry.kind})` : ''}${entry.entrance ? ` — entrance: ${entry.entrance}` : ''}`);
-  }
-  for (const key of ['gate_change_paths', 'other_paths']) {
-    if (Array.isArray(refusal[key])) lines.push(`  ${key}: ${refusal[key].join(', ')}`);
-  }
-  if (Array.isArray(refusal.effects)) lines.push(`  effects: ${refusal.effects.join(', ')}`);
-  if (Array.isArray(refusal.schema_deltas)) lines.push(...refusal.schema_deltas.map((delta) => `  ${delta}`));
-  return lines.join('\n');
-}
-
-/** The validation findings block: one line per error — code, path, line, message — capped. */
-export function formatValidationErrors(errors) {
-  const lines = errors.slice(0, 50).map((finding) => {
-    const at = finding.path ? `${finding.path}${finding.line ? `:${finding.line}` : ''}: ` : '';
-    return `  ${finding.code ? `[${finding.code}] ` : ''}${at}${finding.message}`;
-  });
-  if (errors.length > 50) lines.push(`  … ${errors.length - 50} more`);
-  return lines.join('\n');
-}
-
-/** The full stderr text of a refusal: message, every finding (code, path, line, message), the run id, next step. */
-export function formatRefusal(result) {
-  const out = [`cynap-push: ${result.message}`];
-  if (result.validationErrors?.length) out.push(formatValidationErrors(result.validationErrors));
-  else {
-    const details = formatRefusalDetails(result.result);
-    if (details) out.push(details);
-  }
-  if (result.validationRunId) out.push(`validation run: ${result.validationRunId}`);
-  if (Object.hasOwn(SURFACE_REFUSAL_MESSAGES, result.reason)) {
-    const block = formatSurfaceRefusal(result);
-    if (block) out.push(block);
-  }
-  if (result.reason === 'parent_mismatch') out.push('Run /cynap-pull, then re-run /cynap-push.');
-  if (result.reason === 'checks_failed') out.push('Fix the config and re-run — there is no skip flag.');
-  return `${out.join('\n')}\n`;
 }
 
 function printRefusal(result) {
@@ -325,18 +250,20 @@ function printRefusal(result) {
 
 export async function main(argv = process.argv.slice(2)) {
   let result;
+  const started = Date.now();
+  const onPhase = (phase) => process.stderr.write(`[${Math.floor((Date.now() - started) / 1000)}s] ${phase}\n`);
   try {
-    result = await push({ argv });
+    result = await push({ argv, onPhase });
   } catch (error) {
     // A local-safety violation (a symlink in the tree, a malformed state.json) THROWS rather
     // than returning a structured {ok:false} — same stderr+exit1 shape either way.
     process.stderr.write(`cynap-push: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
+    process.exitCode = error?.reason === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
     return { ok: false, reason: 'error', message: error instanceof Error ? error.message : String(error) };
   }
   if (!result.ok) {
     printRefusal(result);
-    process.exitCode = 1;
+    process.exitCode = (result.reason === 'plugin_outdated' || result.result?.code === 'plugin_outdated') ? PLUGIN_OUTDATED_EXIT_CODE : 1;
     return result;
   }
   if (result.noop) {
@@ -344,10 +271,24 @@ export async function main(argv = process.argv.slice(2)) {
     return result;
   }
   if (result.dryRun) {
-    process.stdout.write(`${JSON.stringify({ dryRun: true, plan: result.plan, checksRan: result.checksRan }, null, 2)}\n`);
+    if (argv.includes('--json')) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    else {
+      for (const op of ['creates', 'updates', 'deletes']) {
+        process.stdout.write(`${op}: ${result.plan[op].length}\n`);
+        for (const path of result.plan[op]) {
+          const kind = classifyPath(path);
+          const effect = effectForKind(kind);
+          process.stdout.write(`  ${path} (${kind}${effect ? `, ${effect}` : ''})\n`);
+        }
+      }
+      const checks = result.checks?.suites?.flatMap((suite) => suite.assertions.map((assertion) => ({ suite, assertion }))) ?? [];
+      process.stdout.write(`checks (live suite + this push's check files @${result.checkBase ?? 'empty'}): ${checks.filter(({ assertion }) => assertion.passed).length} passed\n`);
+      for (const { suite, assertion } of checks) process.stdout.write(`  ${suite.id ?? suite.file ?? 'suite'}: ${assertion.op ?? assertion.name ?? 'check'}\n`);
+      process.stdout.write(`validation: ${result.validated?.status ?? 'passed'}${result.validated?.id ? ` (run ${result.validated.id})` : ''}\n`);
+    }
     return result;
   }
-  process.stdout.write(
+  if (argv.includes('--json')) process.stdout.write(
     `${JSON.stringify(
       {
         commit_sha: result.commitSha,
@@ -360,8 +301,11 @@ export async function main(argv = process.argv.slice(2)) {
       2
     )}\n`
   );
-  if (!result.activation) {
-    process.stdout.write('(no activation guidance in this response — Spec A’s next_action block is not yet returned by workspace_commit)\n');
+  else {
+    process.stdout.write(`committed ${result.commitSha}${result.state ? ` (${result.state})` : ''}\n`);
+    if (result.nextAction?.command) process.stdout.write(`next: ${result.nextAction.command}${result.nextAction.reason ? ` — ${result.nextAction.reason}` : ''}\n`);
+    if (result.nextAction?.kind === 'baseline_required') process.stdout.write('This commit needs --reconcile before activation.\n');
+    if (result.nextAction?.kind === 'handler_preview_required') process.stdout.write(`Preview the handler before activation: /cynap-preview <automation-id> ${result.commitSha}\n`);
   }
   return result;
 }

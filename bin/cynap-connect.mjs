@@ -29,6 +29,7 @@ export function parseConnectArgs(argv, { cwd = process.cwd(), operatorRoot } = {
 export function formatConnectMessage(result, {
   cwd = process.cwd(),
   realpath = realpathSync.native,
+  pluginVersion = result.health?.pluginVersion,
 } = {}) {
   const workspace = realpath(result.workingDir);
   const current = realpath(cwd);
@@ -40,7 +41,39 @@ export function formatConnectMessage(result, {
   const replacement = result.replaced
     ? `Replaced connector running plugin ${result.replaced.from} with ${result.replaced.to}; previous credential revoked.`
     : null;
-  return [replacement, firstLine, `Workspace: ${result.workingDir}`].filter(Boolean).join('\n');
+  const minimum = result.health?.minimumPluginVersion ?? result.health?.minimum ?? null;
+  const warning = minimum && compareVersions(pluginVersion, minimum) < 0
+    ? `WARNING: plugin ${pluginVersion ?? 'unknown'} is below the server minimum ${minimum}; update the plugin before using this connector.`
+    : null;
+  const connection = result.reused
+    ? 'Credential: reused existing connector'
+    : result.env === 'staging' && result.health?.authMode === 'e2e'
+      ? 'Credential: new staging test credential'
+      : 'Credential: new browser consent approved';
+  const expiry = result.health?.credExpiresAt
+    ? `Credential expires: ${result.health.credExpiresAt}`
+    : 'Credential expiry: unknown';
+  return [
+    replacement,
+    firstLine,
+    `Org: ${result.slug}`,
+    `Plugin: ${pluginVersion ?? 'unknown'}`,
+    connection,
+    expiry,
+    warning,
+    `Workspace: ${result.workingDir}`,
+  ].filter(Boolean).join('\n');
+}
+
+function compareVersions(left, right) {
+  const parse = (value) => String(value ?? '').match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -58,7 +91,7 @@ export async function main(argv = process.argv.slice(2)) {
     pluginVersion,
   });
 
-  process.stdout.write(`${formatConnectMessage(result)}\n`);
+  process.stdout.write(`${formatConnectMessage(result, { pluginVersion })}\n`);
   return result;
 }
 

@@ -12,6 +12,13 @@ skill is the shared digest every other authoring skill (`author-a-flow`,
 and authoritative enough to act on — treat the rules below as the rules, and
 when in doubt, ask rather than guessing.
 
+Customer-read files must contain no internal ticket or document identifiers,
+invariant codes, vendor datastore/runtime names, raw internal table names,
+platform-only package names, or placeholder text describing internal safety
+rules. This applies to Markdown, SQL comments, and display text in JSON
+(names, descriptions, roles, labels, titles, and summaries). Use customer
+language; keep internal references in private engineering records.
+
 ## Platform-owned vs operator-declared settings
 
 > "Files you author in the workspace declare business intent. They do not own

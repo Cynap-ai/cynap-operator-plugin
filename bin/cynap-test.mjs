@@ -17,15 +17,57 @@
 // Zero dependencies — Node built-ins + sibling modules only.
 
 import { spawn } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { assertConnectedOrg, listLocalFiles, readState, resolveOrgSlug } from '../lib/workspace-sync.mjs';
+import { assertConnectedOrg, listLocalFiles, readState, resolveOrgSlug, resolveWorkspaceDir } from '../lib/workspace-sync.mjs';
 import { assertSupportedNode, SANDBOX_ENV, sandboxExecArgv } from '../lib/sandboxed-node.mjs';
 import { installTestingContext, testingContextIsCurrent } from '../lib/testing-context.mjs';
 
-export const ORG_TEST_FILE_RE = /\.test\.(?:ts|mts|js|mjs)$/;
+export const ORG_TEST_FILE_RE = /\.test\.(?:ts|mts|js|mjs|cjs)$/;
+export const UNSUPPORTED_EXIT_CODE = 2;
+
+const BUILTIN_SPECIFIERS = new Set([ 'node:test', 'node:assert', 'node:assert/strict' ]);
+
+/** Detect runner/import shapes that this dependency-free sandbox cannot execute. */
+export function inspectOrgTest(dir, file) {
+  const source = readFileSync(resolvePath(dir, file), 'utf8');
+  if (/\b(?:from\s*|import\s*\(|require\s*\()\s*['"]vitest(?:\/[^'"]*)?['"]/.test(source)) {
+    return {
+      file,
+      reason: 'uses Vitest, which /cynap-test does not provide',
+      fix: 'rewrite with node:test and node:assert/strict',
+    };
+  }
+  if (file.endsWith('.js') && /\brequire\s*\(/.test(source)) {
+    return { file, reason: 'uses require() in an ESM .js file', fix: 'rename it to .cjs or convert it to ESM imports' };
+  }
+
+  const requireFromTest = createRequire(resolvePath(dir, file));
+  const specifiers = [...source.matchAll(/(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*['"]([^'"]+)['"]/g)]
+    .map((match) => match[1]);
+  for (const specifier of specifiers) {
+    if (
+      specifier.startsWith('.') ||
+      specifier.startsWith('/') ||
+      specifier.startsWith('#') ||
+      specifier.startsWith('node:') ||
+      BUILTIN_SPECIFIERS.has(specifier)
+    ) continue;
+    try {
+      requireFromTest.resolve(specifier);
+    } catch {
+      return {
+        file,
+        reason: `imports unavailable package "${specifier}"`,
+        fix: 'remove the dependency or use a package available in the pulled workspace',
+      };
+    }
+  }
+  return null;
+}
 
 export function parseTestArgs(argv) {
   const out = { dir: null, files: [] };
@@ -54,6 +96,7 @@ export function nodeTestArgv(realDir, files, flags = process.allowedNodeEnvironm
   }
   return [
     '--test',
+    '--test-reporter=tap',
     ...(flags.has('--experimental-strip-types') ? ['--experimental-strip-types'] : []),
     isolation,
     ...sandboxExecArgv([realDir]),
@@ -65,15 +108,20 @@ export async function runOrgTests({ cwd = process.cwd(), argv = [], stdio = 'inh
   assertSupportedNode();
   const args = parseTestArgs(argv);
   const org = resolveOrgSlug({ cwd });
-  const dir = args.dir ? resolvePath(cwd, args.dir) : resolvePath(cwd, `cynap-${org}`);
+  const dir = resolveWorkspaceDir({ cwd, dir: args.dir, org });
   const state = readState(dir);
   if (!state) throw new Error(`cynap-test: ${dir} is not a pulled working directory — run /cynap-pull first.`);
-  assertConnectedOrg(state, org);
+  assertConnectedOrg(state, org, dir);
 
   const all = findOrgTests(dir);
-  const files = args.files.length > 0 ? args.files : all;
-  const unknown = files.filter((file) => !all.includes(file));
+  const requested = args.files.length > 0 ? args.files : all;
+  const unknown = requested.filter((file) => !all.includes(file));
   if (unknown.length > 0) throw new Error(`cynap-test: not an org test file in ${dir}: ${unknown.join(', ')}`);
+  const unsupported = requested.map((file) => inspectOrgTest(dir, file)).filter(Boolean);
+  const files = requested.filter((file) => !unsupported.some((item) => item.file === file));
+  if (files.length === 0 && unsupported.length > 0) {
+    return { ok: false, exitCode: UNSUPPORTED_EXIT_CODE, files, unsupported, passed: 0, failed: 0, output: '' };
+  }
   if (files.length === 0) return { ok: true, exitCode: 0, files, output: '', note: 'no org test files — nothing to run' };
 
   if (!testingContextIsCurrent(dir)) installTestingContext(dir);
@@ -84,13 +132,19 @@ export async function runOrgTests({ cwd = process.cwd(), argv = [], stdio = 'inh
   const child = spawnImpl(process.execPath, nodeTestArgv(realDir, files), {
     cwd: realDir,
     env: SANDBOX_ENV,
-    stdio: stdio === 'pipe' ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
-  child.stdout?.on('data', (chunk) => (output += chunk));
-  child.stderr?.on('data', (chunk) => (output += chunk));
+  const capture = (chunk) => {
+    output += chunk;
+    if (stdio !== 'pipe') process.stdout.write(chunk);
+  };
+  child.stdout?.on('data', capture);
+  child.stderr?.on('data', capture);
   const exitCode = await new Promise((resolve) => child.on('close', (code) => resolve(code)));
-  return { ok: exitCode === 0, exitCode, files, output };
+  const passed = Number(output.match(/^# pass (\d+)$/m)?.[1] ?? 0);
+  const failed = Number(output.match(/^# fail (\d+)$/m)?.[1] ?? 0);
+  return { ok: exitCode === 0, exitCode, files, unsupported, passed, failed, output };
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -102,7 +156,11 @@ export async function main(argv = process.argv.slice(2)) {
     process.exitCode = 1;
     return { ok: false };
   }
-  const verdict = result.note ?? `${result.ok ? 'PASS' : 'FAIL'} — ${result.files.length} org test file(s)`;
+  for (const item of result.unsupported ?? []) {
+    process.stderr.write(`UNSUPPORTED ${item.file}: ${item.reason}; ${item.fix}.\n`);
+  }
+  const verdict = result.note ??
+    `passed ${result.passed} — failed ${result.failed} — unsupported ${(result.unsupported ?? []).length}`;
   process.stdout.write(`\ncynap-test: ${verdict}. Self-assurance only: nothing on the plane reads this result.\n`);
   process.exitCode = result.exitCode;
   return result;

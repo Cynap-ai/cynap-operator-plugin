@@ -44,5 +44,15 @@ the sync.
 /cynap-pull [--dir <path>] [--take-remote <path> ...]
 ```
 
-Run this before `/cynap-push` whenever `workspace_commit` answers `parent_mismatch` — the
-accepted tip moved since your last pull.
+Run this **before editing**, including after another session may have changed
+the accepted tip. Waiting for `parent_mismatch` can leave a stale local base
+and a silently divergent edit. Pulls may take minutes without interim output;
+run a long pull in the background with stdout/stderr sent to an output file,
+then read that file and the exit status before editing. Invoke the CLI through
+`${CLAUDE_PLUGIN_ROOT}`, not a copied versioned plugin-cache path.
+
+In the pulled tree, `checks/` holds org suites, `operator/skills/` holds org
+instructions, `operator/scripts/` holds read-only scripts, and test files or
+`__tests__/` run through `/cynap-test`. The plugin's own authoring skills live
+under `${CLAUDE_PLUGIN_ROOT}/skills/`. A `parent_mismatch` still means pull
+again before pushing.

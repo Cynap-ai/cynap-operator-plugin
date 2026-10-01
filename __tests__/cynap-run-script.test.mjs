@@ -184,7 +184,7 @@ test('runs with the workspace token alone when the seat has no ops grant', needs
 test('refuses a working directory pulled for another org', needsNode25, async () => {
   writeFileSync(join(dir, '.cynap', 'state.json'), JSON.stringify({ org: 'other', base: null, files: {} }));
   writeScript('operator/scripts/x.mjs', 'export default async () => 1;');
-  await assert.rejects(runScript({ cwd, argv: ['operator/scripts/x.mjs'], fetchImpl: fakeNetwork().fetchImpl }), /different org/);
+  await assert.rejects(runScript({ cwd, argv: ['operator/scripts/x.mjs'], fetchImpl: fakeNetwork().fetchImpl }), /workspace mismatch: .*state\.json says org "other".*connected org is "acme"/);
 });
 
 test('refuses a script outside operator/scripts/', () => {

@@ -396,6 +396,7 @@ export function refuseNonLocalCaller(req, res) {
 export const OPERATOR_PLUGIN_VERSION_HEADER = 'x-cynap-plugin-version';
 export const OPERATOR_PLUGIN_UPDATE_OUTCOME_HEADER = 'x-cynap-plugin-update-outcome';
 let lastPluginUpdateOutcome = null;
+let lastObservedMinimumPluginVersion = null;
 
 /** Adds the plugin-version header to an outbound headers object when a
  * version was supplied — never mutates the input. A standalone
@@ -1097,8 +1098,8 @@ export async function handlePluginOutdated({
 
     out.write(
       `[operator-proxy] self-update: plugin ${pluginVersion ?? '<none>'} -> ${installed}. Restarting this proxy ` +
-        'so the new build is what serves the next call; it hands its credential to the successor, so no ' +
-        'second browser consent is needed.\n'
+        'so the new build serves the next call. Plugin updated to ' + installed +
+        '; re-run the command. The successor receives this credential, so no second browser consent is needed.\n'
     );
     return 'ready_to_restart';
   } finally {
@@ -1166,6 +1167,7 @@ export function buildHealthPayload({
   authMode,
   credExpiresAt,
   credExpiresInHours,
+  minimumPluginVersion,
 }) {
   return {
     ok,
@@ -1174,6 +1176,7 @@ export function buildHealthPayload({
     orgId: orgId ?? null,
     env: env ?? null,
     pluginVersion: pluginVersion ?? null,
+    minimumPluginVersion: minimumPluginVersion ?? null,
     authMode: authMode ?? null,
     pid: process.pid,
     startedAt: PROCESS_STARTED_AT,
@@ -2956,6 +2959,7 @@ export function createProxyServer({
             orgId,
             env: envLabelFromMcpHost(mcpHost),
             pluginVersion,
+            minimumPluginVersion: lastObservedMinimumPluginVersion,
             authMode,
             // The credential's absolute expiry — a timestamp, never a
             // secret, so this stays within the "no token/cookie on /health"
@@ -3900,6 +3904,7 @@ export async function main(argv = process.argv.slice(2)) {
         orgId: lifecycleStatus === 'ready' ? opts.targetOrgId : null,
         env: opts.env,
         pluginVersion: opts.pluginVersion,
+        minimumPluginVersion: lastObservedMinimumPluginVersion,
         authMode: opts.authMode,
         credExpiresAt: credentialExpiresAt,
         credExpiresInHours: hoursUntil(credentialExpiresAt, Date.now()),
@@ -4179,6 +4184,7 @@ export async function main(argv = process.argv.slice(2)) {
   // Fire-and-forget from the response path: the update runs off the event
   // loop's critical path, and a throw is narrated rather than lost.
   const onPluginOutdated = (outdated) => {
+    lastObservedMinimumPluginVersion = outdated.minimum;
     handleOutdated(outdated).catch((error) => {
       process.stderr.write(
         `[operator-proxy] self-update: failed: ${error instanceof Error ? error.message : String(error)}\n`

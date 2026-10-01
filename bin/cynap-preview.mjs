@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { resolveWorkingDir, stablePortForSlug } from '../lib/connect.mjs';
 import { CONTROL_FILE, CONTROL_HEADER, PREVIEW_PATH } from './operator-proxy.mjs';
+import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
+import { resolveOrgSlug } from '../lib/workspace-sync.mjs';
 
 const SHA = /^[a-f0-9]{40,64}$/;
 const AUTOMATION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -32,8 +34,8 @@ export function previewSummary(body) {
   };
 }
 
-export async function runPreview({ slug, automationId, commitSha, fetchImpl = fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPolls = MAX_STATUS_POLLS, onStart = () => {} }) {
-  const nonce = readFileSync(join(resolveWorkingDir(slug), CONTROL_FILE), 'utf8').trim();
+export async function runPreview({ slug, automationId, commitSha, fetchImpl = fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPolls = MAX_STATUS_POLLS, onStart = () => {}, nonceOverride = null }) {
+  const nonce = nonceOverride ?? readFileSync(join(resolveWorkingDir(slug), CONTROL_FILE), 'utf8').trim();
   if (!nonce) throw new Error('operator preview: local control nonce is missing; run /cynap-connect again.');
   const base = `http://127.0.0.1:${stablePortForSlug(slug)}${PREVIEW_PATH}`;
   const headers = { 'Content-Type': 'application/json', [CONTROL_HEADER]: nonce };
@@ -42,7 +44,8 @@ export async function runPreview({ slug, automationId, commitSha, fetchImpl = fe
   });
   const started = await start.json();
   if (!start.ok) {
-    throw new Error(`operator preview refused: ${started?.error ?? start.status}`);
+    const refusal = { ...started, code: started?.code ?? started?.error ?? `HTTP ${start.status}` };
+    throw Object.assign(new Error(formatRefusal(refusal, { command: 'cynap-preview', commitSha }).trim()), { code: refusal.code });
   }
   const previewId = started?.previewId;
   if (typeof previewId !== 'string') throw new Error('operator preview returned no attempt id');
@@ -62,7 +65,7 @@ export async function runPreview({ slug, automationId, commitSha, fetchImpl = fe
 export async function main(argv = process.argv.slice(2)) {
   const args = parsePreviewArgs(argv);
   const result = await runPreview({
-    slug: basename(process.cwd()), ...args,
+    slug: resolveOrgSlug(), ...args,
     onStart: (started) => process.stdout.write(`${JSON.stringify(started)}\n`),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -72,6 +75,6 @@ export async function main(argv = process.argv.slice(2)) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
+    process.exitCode = error?.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
   });
 }

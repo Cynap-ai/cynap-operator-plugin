@@ -20,6 +20,8 @@ import {
   assertConnectedOrg,
   sha256Hex,
   resolveOrgSlug,
+  resolveWorkspace,
+  resolveWorkspaceDir,
   mcpCall,
   isProxyUnreachableError,
   TOOL_NOT_AVAILABLE_CODE,
@@ -227,6 +229,25 @@ test('resolveOrgSlug infers the org from the basename of cwd', () => {
   assert.equal(resolveOrgSlug({ cwd: '/Users/op/CynapOperator/cynap-e2e' }), 'cynap-e2e');
 });
 
+test('resolveOrgSlug takes the nearest CynapOperator/<slug> ancestor, never a state file', () => {
+  assert.equal(resolveOrgSlug({ cwd: '/Users/op/CynapOperator/acme/cynap-acme/sub' }), 'acme');
+  const dir = scratchDir();
+  try {
+    writeStateAtomic(dir, { org: 'other-org', base: null, files: {} });
+    assert.equal(resolveOrgSlug({ cwd: dir }), dir.split('/').pop());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('workspace dir follows a nested state file and explicit --dir', () => {
+  const dir = scratchDir();
+  try {
+    writeStateAtomic(dir, { org: 'chosen-org', base: null, files: {} });
+    assert.equal(resolveWorkspace({ cwd: '/unrelated', dir }).statePath, join(dir, '.cynap', 'state.json'));
+    assert.equal(resolveWorkspaceDir({ cwd: dir, org: 'chosen-org' }), dir);
+    assert.equal(resolveWorkspaceDir({ cwd: '/tmp/op/cynap-e2e', org: 'cynap-e2e' }), '/tmp/op/cynap-e2e/cynap-cynap-e2e');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('hasSymlinkOnPath detects a DANGLING symlinked ancestor (lstat, not existsSync)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cyn1998-c2p-dangling-'));
   try {
@@ -333,7 +354,16 @@ test('a non-JSON error body never crashes the describe path', async () => {
       mcpCall('http://127.0.0.1:8790/mcp', 'workspace_tree', {}, {
         fetchImpl: async () => ({ ok: false, status: 502, text: async () => '<html>gateway</html>' }),
       }),
-    /MCP workspace_tree HTTP 502/
+    /gateway timed out \(HTTP 502\); the server may still have completed the call/
+  );
+});
+
+test('a bare 403 names the edge firewall and records a timestamp', async () => {
+  await assert.rejects(
+    () => mcpCall('http://127.0.0.1:8790/mcp', 'workspace_validate', {}, {
+      fetchImpl: async () => errorResponse(403, { message: 'Forbidden' }),
+    }),
+    (error) => error.reason === 'edge_firewall' && /platform's edge firewall.*HTTP 403.*platform fault.*\d{4}-\d\d-\d\dT/.test(error.message)
   );
 });
 

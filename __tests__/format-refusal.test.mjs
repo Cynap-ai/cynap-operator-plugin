@@ -1,0 +1,39 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE, unwrapToolEnvelope } from '../lib/format-refusal.mjs';
+
+test('plugin version refusal includes installed, minimum, update commands and optional message', () => {
+  const text = formatRefusal({ ok: false, code: 'plugin_outdated', installed: '0.19.1', minimum: '0.19.2',
+    message: 'A newer build is required.', update: ['claude plugin update x', '/reload-plugins'] }, { command: 'cynap-pull' });
+  assert.match(text, /cynap-pull: plugin outdated: installed 0\.19\.1, server requires ≥ 0\.19\.2/);
+  assert.match(text, /A newer build is required\. Update: claude plugin update x \/reload-plugins\. Then re-run this command/);
+  assert.equal(PLUGIN_OUTDATED_EXIT_CODE, 2);
+});
+
+test('top-level effect paths, validation run and next action survive formatting', () => {
+  const text = formatRefusal({ reason: 'commit_spans_irreversible_effects', message: 'Split the commit',
+    effects: ['schema', 'handler:a'], paths: [{ path: 'context/schema.json', class: 'schema' }],
+    validationRunId: 'run-1', next_action: { command: '/cynap-pull', reason: 'tip moved' } });
+  assert.match(text, /context\/schema\.json \(schema\)/);
+  assert.match(text, /effects: schema, handler:a/);
+  assert.match(text, /validation run: run-1/);
+  assert.match(text, /next: \/cynap-pull\n  tip moved/);
+});
+
+test('preview admission and proof refusals give the operator a concrete route', () => {
+  assert.match(formatRefusal({ code: 'preview_unavailable' }), /chain stays blocked.*check \/cynap-status/);
+  assert.match(formatRefusal({ code: 'handler_unproven' }, { commitSha: 'a'.repeat(64) }), /\/cynap-preview <automation-id> a{64}/);
+});
+
+test('tool decoder unwraps JSON-RPC and SSE text from the activation proxy', () => {
+  const envelope = { result: { content: [{ type: 'text', text: JSON.stringify({ ok: false, code: 'checks_uncovered_path', message: 'Missing a check' }) }] } };
+  assert.deepEqual(unwrapToolEnvelope(JSON.stringify(envelope)), { ok: false, code: 'checks_uncovered_path', message: 'Missing a check' });
+  assert.deepEqual(unwrapToolEnvelope(`event: message\ndata: ${JSON.stringify(envelope)}\n\n`),
+    { ok: false, code: 'checks_uncovered_path', message: 'Missing a check' });
+});
+
+test('formatRefusal tolerates non-array paths/forbidden/refusals and prints uncovered_paths', () => {
+  const text = formatRefusal({ ok: false, code: 'x', message: 'm', paths: 'nope', forbidden: {}, refusals: null,
+    uncovered_paths: ['a.json', 'b.json'] });
+  assert.match(text, /uncovered_paths: a\.json, b\.json/);
+});

@@ -166,3 +166,68 @@ test('no live checks means the preflight does not run', async () => {
   assert.deepEqual(await runChecksPreflight({ call }), { ran: false });
   assert.equal(stats.gets.length, 0);
 });
+
+test('planned check creates and updates replace live suites, and planned deletes are omitted', async () => {
+  const livePaths = ['checks/update.json', 'checks/delete.json', 'checks/untouched.json'];
+  const { call } = fakeCall({ livePaths });
+  const plannedBytes = new Map([
+    ['checks/update.json', Buffer.from('{"id":"updated"}')],
+    ['checks/delete.json', null],
+    ['checks/create.json', Buffer.from('{"id":"created"}')],
+  ]);
+  let evaluatedIds;
+  const result = await runChecksPreflight({
+    call,
+    plannedPaths: [...plannedBytes.keys()],
+    resolvePlanned: (path) => plannedBytes.has(path) ? plannedBytes.get(path) : undefined,
+    collectFingerprintPaths: () => [],
+    evaluateChecks: (suites) => {
+      evaluatedIds = suites.map(({ id, path }) => id ?? path);
+      return { status: 'pass', suites: suites.map(({ id }) => ({ id, assertions: [{ passed: true }] })) };
+    },
+  });
+  assert.equal(result.ran, true);
+  assert.deepEqual(evaluatedIds, ['checks/untouched.json', 'updated', 'created']);
+});
+
+test('a failure identifies the check and whether its bytes are live or planned', async () => {
+  const livePath = 'checks/live.json';
+  const plannedPath = 'checks/planned.json';
+  const { call } = fakeCall({ livePaths: [livePath] });
+  const result = await runChecksPreflight({
+    call,
+    plannedPaths: [plannedPath],
+    resolvePlanned: (path) => path === plannedPath ? Buffer.from('{"id":"planned-check"}') : undefined,
+    collectFingerprintPaths: () => [],
+    evaluateChecks: (suites) => ({
+      status: 'fail',
+      suites: suites.map(({ id, path }) => ({
+        id: id ?? path,
+        assertions: [{ op: 'file_exists', file: 'automations/a.json', passed: false, detail: 'file not found' }],
+      })),
+    }),
+  });
+  assert.equal(result.firstFailure.check, 'checks/live.json');
+  assert.equal(result.firstFailure.source, 'live');
+  assert.equal(result.firstFailure.guidance, 'this check is already accepted; change it in its own push first');
+});
+
+test('planned bytes for a changed check file win over live bytes in the fingerprint snapshot', async () => {
+  const { call } = fakeCall({ livePaths: ['checks/update.json', 'checks/gone.json'] });
+  const plannedBytes = new Map([
+    ['checks/update.json', Buffer.from('{"id":"updated"}')],
+    ['checks/gone.json', null],
+  ]);
+  let seen;
+  await runChecksPreflight({
+    call,
+    plannedPaths: [...plannedBytes.keys()],
+    resolvePlanned: (path) => plannedBytes.has(path) ? plannedBytes.get(path) : undefined,
+    collectFingerprintPaths: () => ['checks/update.json', 'checks/gone.json'],
+    evaluateChecks: (suites, resolve) => {
+      seen = { update: Buffer.from(resolve('checks/update.json')).toString('utf8'), gone: resolve('checks/gone.json') };
+      return { status: 'pass', suites: suites.map(({ id }) => ({ id, assertions: [{ passed: true }] })) };
+    },
+  });
+  assert.deepEqual(seen, { update: '{"id":"updated"}', gone: null });
+});

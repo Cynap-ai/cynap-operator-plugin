@@ -1,14 +1,15 @@
 // /cynap-activate --reconcile arg parsing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseActivateArgs, readActivationAction, runActivationFlow } from '../bin/cynap-activate.mjs';
+import { parseActivateArgs, readActivationAction, reconcileActivation, runActivationFlow } from '../bin/cynap-activate.mjs';
 
 const SHA = 'c'.repeat(64);
 
 test('parseActivateArgs: --reconcile sets reconcile, its absence leaves it false', () => {
-  assert.deepEqual(parseActivateArgs([SHA]), { commitSha: SHA, reconcile: false });
-  assert.deepEqual(parseActivateArgs([SHA, '--reconcile']), { commitSha: SHA, reconcile: true });
-  assert.deepEqual(parseActivateArgs(['--reconcile', SHA]), { commitSha: SHA, reconcile: true });
+  assert.deepEqual(parseActivateArgs([SHA]), { commitSha: SHA, reconcile: false, json: false });
+  assert.deepEqual(parseActivateArgs([SHA, '--reconcile']), { commitSha: SHA, reconcile: true, json: false });
+  assert.deepEqual(parseActivateArgs(['--reconcile', SHA]), { commitSha: SHA, reconcile: true, json: false });
+  assert.deepEqual(parseActivateArgs([SHA, '--json']), { commitSha: SHA, reconcile: false, json: true });
 });
 
 test('parseActivateArgs: refuses unknown flags, duplicates and a missing sha', () => {
@@ -25,10 +26,66 @@ test('readActivationAction selects the committed SHA from workspace_status', asy
   const fetchImpl = async (_url, request) => {
     const call = JSON.parse(request.body);
     assert.equal(call.params.name, 'workspace_status');
-    return { ok: true, text: async () => JSON.stringify({ result: { content: [{ text: JSON.stringify(status) }] } }) };
+    return { ok: true, json: async () => ({ result: { content: [{ type: 'text', text: JSON.stringify(status) }] } }) };
   };
   assert.deepEqual(await readActivationAction({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl }),
     { orgSlug: 'cynap-e2e', nextAction: { kind: 'step_up_and_activate' } });
+});
+
+test('a timed-out activation is reconciled against the live digest before any retry', async () => {
+  const calls = [];
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (_url, init) => {
+    const name = JSON.parse(init.body).params.name;
+    calls.push(name);
+    return { ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: SHA, pending: [] } } }) };
+  } });
+  assert.deepEqual(calls, ['workspace_status']);
+  assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA });
+});
+
+test('reconciliation reads the commit log when status has no pending or live match', async () => {
+  const calls = [];
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (_url, init) => {
+    const name = JSON.parse(init.body).params.name;
+    calls.push(name);
+    const value = name === 'workspace_status' ? { ok: true, live_digest: null, pending: [] } :
+      { ok: true, commits: [{ commit_sha: SHA, outcome: 'orphaned' }] };
+    return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
+  } });
+  assert.deepEqual(calls, ['workspace_status', 'workspace_log']);
+  assert.equal(result.state, 'orphaned');
+  assert.equal(result.ok, false);
+  assert.match(result.message, /activation not confirmed: orphaned/);
+});
+
+test('reconciliation confirms only an activated or ancestor log outcome', async () => {
+  for (const outcome of ['activated', 'ancestor']) {
+    const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (_url, init) => {
+      const value = JSON.parse(init.body).params.name === 'workspace_status' ? { ok: true, live_digest: null, pending: [] } :
+        { ok: true, commits: [{ commit_sha: SHA, outcome }] };
+      return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
+    } });
+    assert.deepEqual(result, { ok: true, state: outcome, commit_sha: SHA });
+  }
+});
+
+test('reconciliation of a still-pending commit is not a confirmed activation', async () => {
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => ({
+    ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
+      pending: [{ commit_sha: SHA, state: 'awaiting_owner' }] } } }),
+  }) });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /activation not confirmed: awaiting_owner/);
+});
+
+test('reconciliation with no recorded outcome is not confirmed', async () => {
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (_url, init) => {
+    const value = JSON.parse(init.body).params.name === 'workspace_status' ? { ok: true, live_digest: null, pending: [] } :
+      { ok: true, commits: [] };
+    return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
+  } });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /activation not confirmed: unknown/);
 });
 
 test('handler_preview_required previews the commit, then rechecks status before owner step-up', async () => {

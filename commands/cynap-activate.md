@@ -25,6 +25,20 @@ id, and polls status with bounded backoff. After a pass it re-reads `workspace_s
 only `step_up_and_activate` opens the owner approval. On fail it stops with only the verdict
 code, fixed operator text, and effect kinds with counts. Never show preview row data.
 
+`handler_unproven` means this exact handler bundle lacks a passing proof: run
+`/cynap-preview <automation-id> <commit-sha>`, then re-read status. A
+`preview_unavailable` refusal means preview admission is not open. The commit
+can be valid, but the strictly ordered chain cannot advance behind it until
+preview is available or an authorized chain remedy is applied. Stop and report
+the commit SHA; do not repeatedly activate it. A frozen chain
+(`workspace_writes_frozen`) needs a platform admin today; the operator has no
+unfreeze command.
+
+`gate_change_not_alone` means an existing check was edited or deleted in the
+same commit as a runtime change. Ship the check change separately.
+`checks_uncovered_path` means a changed managed path has no exact-path check
+assertion in the pending suite; add coverage and make a new commit.
+
 ## `--reconcile` (rare, opt-in)
 
 Add `--reconcile` only when `next_action.kind` is `baseline_required` because the live files

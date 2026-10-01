@@ -11,11 +11,15 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-push.mjs" $ARGUMENTS
 
 Plans creates/updates/deletes against `.cynap/state.json`, then:
 
-1. **Refuses locally** if the plan touches a `generated`/`unknown` path or a kind with its own
-   entrance (`checks/**`, handler source, and the rest of §4.3's list) — naming each path's
-   entrance. Nothing further runs.
-2. **Runs the org's `checks/` suite**, if it has one, with the same engine as `/cynap-checks`,
-   against this push's planned bytes. Refuses on failure. **There is no skip flag** — a commit
+1. **Refuses locally** if the plan touches a `generated`/`unknown` path or a
+   git-only kind (such as `reclaims.json`) — naming each path's entrance.
+   Checks, handler source, and surfaces are operator-routable. Nothing further
+   runs on a refused path.
+2. **Runs the accepted live `checks/` suite**, if it has one, with the same engine as
+   `/cynap-checks`, against the resultant planned content. A check file replaced by this
+   push is evaluated from its planned bytes; unchanged check files come from live.
+   Refuses on failure. If a content change would break an unchanged live check, ship
+   the check update first, then pull and ship the content change. **There is no skip flag** — a commit
    that can't activate blocks the chain for everyone behind it.
 3. **Validates** with `workspace_validate` and refuses on findings. Every refusal, dry run or
    real, prints each error (`[code] path:line: message`), the server's message, and the
@@ -44,13 +48,14 @@ rule that fired) and a one-line fix. Nothing is committed on a refusal.
 | `surface_build_failed` | The build failed, or the builder was unavailable. |
 | `surface_receipt_invalid` | The platform could not verify the build. Report the request id. |
 | `surface_build_busy` | Another build for this org is running. **Retryable.** |
-| `surface_build_timeout` | The build did not fit in the request. **Retryable.** |
+| `surface_build_timeout` | The build did not fit in the request. Retry once; if it repeats, stop and report the request and findings. |
 
 **`--rebuild <surfaceId>`** commits no file changes and rebuilds that surface against the current
 platform builder — how a new Surface SDK minor reaches an approved surface (there are no silent
 platform rebuilds). The rebuild goes through the normal Owner approval like any commit.
 
-**`/cynap-push` never activates.** Use `/cynap-activate <commit_sha>` separately.
+**Runtime changes need `/cynap-activate <commit_sha>` separately.** A commit
+containing only commit-only files auto-activates.
 
 `--dry-run` stops after step 3 (validate) — nothing is committed.
 
@@ -62,3 +67,18 @@ platform rebuilds). The rebuild goes through the normal Owner approval like any 
 
 Requires a prior `/cynap-pull` into the same directory — there is no `.cynap/state.json`
 without one.
+
+Pull immediately before editing: an old local base can silently diverge from the
+accepted tip. Pull and push may take minutes without interim output. Run a
+long command in the background with stdout/stderr redirected to an output
+file, then read that file and its exit status when it finishes. Keep the
+shell invocation rooted at `${CLAUDE_PLUGIN_ROOT}`, never a copied versioned
+plugin-cache path. In a pulled tree, `checks/` holds suites, `operator/skills/`
+holds org authoring instructions, `operator/scripts/` holds read-only scripts,
+and test files/`__tests__/` run through `/cynap-test`.
+
+An existing check edit or deletion cannot ride with a runtime change
+(`gate_change_not_alone`). A new check may accompany a change. A changed
+managed path with no assertion naming it is refused up front, during push
+validation, with `checks_uncovered_path`, and again at activation; add coverage
+in a check before pushing.

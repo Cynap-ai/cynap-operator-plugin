@@ -54,6 +54,12 @@ function isDeny(stdout) {
   return parsed?.hookSpecificOutput?.permissionDecision === 'deny';
 }
 
+test('a non-string Bash command is not a guard crash', () => {
+  const { home, workspace } = makeFakeHome();
+  const stdout = runHook({ cwd: workspace, tool_name: 'Bash', tool_input: { command: { not: 'a string' } } }, { home });
+  assert.equal(isDeny(stdout), false);
+});
+
 test('a Write inside the workspace is allowed', () => {
   const { home, workspace } = makeFakeHome();
   const stdout = runHook(
@@ -71,6 +77,9 @@ test('a Write outside the workspace is denied, naming the operator route', () =>
   const reason = JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason;
   assert.match(reason, /cynap-operator:cynap-push/);
   assert.match(reason, /cynap-activate/);
+  assert.match(reason, /write target outside workspace/);
+  assert.match(reason, /elsewhere\.md/);
+  assert.match(reason, /Allowed:/);
   assert.doesNotMatch(reason.toLowerCase(), /checkout|clone|monorepo/);
 });
 
@@ -97,6 +106,7 @@ test('a Bash command that runs git is denied', () => {
   const { home, workspace } = makeFakeHome();
   const stdout = runHook({ cwd: workspace, tool_name: 'Bash', tool_input: { command: 'git status' } }, { home });
   assert.ok(isDeny(stdout), `expected a deny, got: ${stdout}`);
+  assert.match(JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason, /git\/gh command: "git"/);
 });
 
 test('a Bash command that runs gh is denied', () => {
@@ -112,6 +122,39 @@ test('git hidden behind a cd chain is still denied', () => {
     { home }
   );
   assert.ok(isDeny(stdout));
+});
+
+test('a command word after an allowed cd is denied with the matched rule', () => {
+  const { home, workspace } = makeFakeHome();
+  const stdout = runHook(
+    { cwd: workspace, tool_name: 'Bash', tool_input: { command: 'cd . && git push' } },
+    { home }
+  );
+  assert.ok(isDeny(stdout));
+  assert.match(JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason, /git\/gh command: "git"/);
+});
+
+test('every way of spelling a git/gh invocation is denied', () => {
+  const { home, workspace } = makeFakeHome();
+  const denied = [
+    'echo `git push`',
+    'env git push',
+    'command git push',
+    'FOO=1 git push',
+    '/usr/bin/git push',
+    'bash -c "git push"',
+    '{ git push; }',
+    'if true; then git push; fi',
+    'sudo gh pr create',
+    'time git push',
+    'xargs git',
+    'echo "git changed"',
+  ];
+  for (const command of denied) {
+    const stdout = runHook({ cwd: workspace, tool_name: 'Bash', tool_input: { command } }, { home });
+    assert.ok(isDeny(stdout), `expected a deny for: ${command}`);
+    assert.match(JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason, /git\/gh command: "(git|gh)"/);
+  }
 });
 
 test('a benign Bash command inside the workspace is allowed', () => {

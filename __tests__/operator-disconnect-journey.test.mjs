@@ -1,12 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 import { requestProxyDisconnect, runOperatorDisconnect } from '../lib/operator-disconnect.mjs';
+import { parseDisconnectArgs, resolveDisconnectSlug } from '../bin/cynap-disconnect.mjs';
+import { writeStateAtomic } from '../lib/workspace-sync.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
+
+test('bare disconnect resolves the current workspace state', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cyn-disconnect-'));
+  try {
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: null, files: {} });
+    assert.deepEqual(parseDisconnectArgs([]), { slug: null });
+    assert.equal(await resolveDisconnectSlug({ cwd: dir }), 'cynap-e2e');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('/cynap-disconnect delegates to the managed lifecycle seam', () => {
   const command = readFileSync(join(TEST_DIR, '..', 'commands', 'cynap-disconnect.md'), 'utf8');

@@ -4,10 +4,11 @@
 // this runs from a clean HOME with no monorepo (spec §9.3 bake).
 
 import { mkdirSync, readFileSync } from 'node:fs';
-import { join, resolve as resolvePath } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { stablePortForSlug } from '../lib/connect.mjs';
+import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
 import {
   assertConnectedOrg,
   assertSafeRemotePath,
@@ -21,6 +22,7 @@ import {
   readState,
   resolveContainedPath,
   resolveOrgSlug,
+  resolveWorkspaceDir,
   sha256Hex,
   writeFileAtomic,
   writeStateAtomic,
@@ -48,21 +50,22 @@ function readLocalFileMap(dir) {
   return map;
 }
 
-export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch } = {}) {
+export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch, onPhase = () => {} } = {}) {
   const args = parsePullArgs(argv);
   const org = resolveOrgSlug({ cwd });
   const proxyUrl = args.proxyUrl ?? `http://127.0.0.1:${stablePortForSlug(org)}/mcp`;
-  const dir = args.dir ? resolvePath(cwd, args.dir) : resolvePath(cwd, `cynap-${org}`);
+  const dir = resolveWorkspaceDir({ cwd, dir: args.dir, org });
   mkdirSync(dir, { recursive: true });
 
   const existing = readState(dir);
   const state = existing ?? { org, base: null, files: {} };
-  assertConnectedOrg(state, org);
+  assertConnectedOrg(state, org, dir);
 
   const call = (name, callArgs) => mcpCall(proxyUrl, name, callArgs, { fetchImpl });
 
+  onPhase('reading accepted tip…');
   const tree = await call('workspace_tree', { commit: 'tip', include_hashes: true });
-  if (tree?.ok === false) throw new Error(`workspace_tree refused: ${tree.code} — ${tree.message ?? ''}`);
+  if (tree?.ok === false) return { ok: false, reason: tree.code, result: tree, message: tree.message ?? `${tree.code}: workspace_tree refused` };
   const commitSha = tree.commit_sha;
   const entries = Array.isArray(tree.entries) ? tree.entries : [];
   // A legacy org may still carry its own root package.json; the plugin owns that path locally,
@@ -109,9 +112,10 @@ export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
 
   // Fetch and verify EVERY file before writing any, so a refused fetch, a hash mismatch or a
   // symlink leaves the tree exactly as it was (all-or-nothing, spec §7.2 step 3).
+  onPhase(`reading ${toFetch.length} remote files…`);
   const fetched = await mapWithConcurrency(toFetch, 8, async (path) => {
     const file = await call('workspace_get_file', { path, commit: commitSha });
-    if (file?.ok === false) throw new Error(`workspace_get_file(${path}) refused: ${file.code}`);
+    if (file?.ok === false) throw Object.assign(new Error(formatRefusal(file, { command: 'cynap-pull' }).trim()), { reason: file.code });
     if (typeof file?.content !== 'string' || (file.encoding !== 'utf8' && file.encoding !== 'base64')) {
       throw new Error(`workspace_get_file(${path}): reply has no {encoding, content}`);
     }
@@ -136,6 +140,7 @@ export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
   }
 
   const nextFiles = Object.fromEntries(remote);
+  onPhase('writing workspace…');
   writeStateAtomic(dir, { org, base: commitSha, files: nextFiles });
   const pluginOwned = installTestingContext(dir);
 
@@ -153,22 +158,23 @@ export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch }
 
 export async function main(argv = process.argv.slice(2)) {
   let result;
+  const started = Date.now();
   try {
-    result = await pull({ argv });
+    result = await pull({ argv, onPhase: (phase) => process.stderr.write(`[${Math.floor((Date.now() - started) / 1000)}s] ${phase}\n`) });
   } catch (error) {
     // A path-safety violation (assertSafeRemotePath, a symlink) THROWS rather than returning a
     // structured {ok:false} — there is nothing list-shaped to report, unlike conflicts or a
     // case collision. Same stderr+exit1 shape either way.
     process.stderr.write(`cynap-pull: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
+    process.exitCode = error?.reason === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
     return { ok: false, reason: 'error', message: error instanceof Error ? error.message : String(error) };
   }
   if (!result.ok) {
-    process.stderr.write(`cynap-pull: ${result.message}\n`);
+    process.stderr.write(formatRefusal(result, { command: 'cynap-pull' }));
     if (result.reason === 'conflicts') {
       process.stderr.write('Resolve with --take-remote <path> (repeatable), or edit locally and re-run.\n');
     }
-    process.exitCode = 1;
+    process.exitCode = result.reason === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
     return result;
   }
   process.stdout.write(

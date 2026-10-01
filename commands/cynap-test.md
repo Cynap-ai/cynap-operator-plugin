@@ -11,7 +11,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-test.mjs" $ARGUMENTS
 
 Runs the org's tests from the pulled working directory (`./cynap-<org>/` by default, or
 `--dir <path>`) with Node's built-in test runner. With no files named, every `*.test.ts`,
-`*.test.mts`, `*.test.js` and `*.test.mjs` in the tree runs; name files to run a subset.
+`*.test.mts`, `*.test.js`, `*.test.mjs` and `*.test.cjs` in the tree is checked; name files to check a subset. The runner pre-scans imports and skips unsupported files with a reason and suggested fix. It reports passed, failed and unsupported counts separately. Exit code `2` means every selected file was unsupported; ordinary test failures retain Node's nonzero exit code.
 
 ## Writing an org test
 
@@ -27,9 +27,10 @@ test('builds an invoice', async () => {
 });
 ```
 
-- Use `node:test` and `node:assert/strict`. Snapshots use `t.assert.snapshot`.
+- Use `node:test` and `node:assert/strict`. Snapshots use `t.assert.snapshot`. Vitest is unsupported; rewrite these tests using Node's built-in runner.
 - Relative imports carry their `.ts` extension. Import types with `import type`. No enums,
   runtime namespaces or parameter properties — Node strips types, it does not compile them.
+- `.js` and `.mjs` are ESM. Use `.cjs` for CommonJS tests that use `require()`.
 - `#cynap/testing` is the Cynap test context. `/cynap-pull` installs it and owns the root
   `package.json` that maps it; neither is ever pushed.
 
@@ -43,4 +44,4 @@ Node ≥ 22.18 is required; an older Node is refused with the version it found.
 
 ## The verdict
 
-PASS or FAIL is for you. Nothing on the plane or in platform CI reads it, and it gates nothing.
+The passed, failed and unsupported counts are for you. Nothing on the plane or in platform CI reads it, and it gates nothing.
