@@ -53,6 +53,12 @@ placeholder `replace-with-landing-path`: replace it with a lowercase slug of
 your own (the `analytics` template also uses it in `MOUNT_PATH`). Every
 template builds clean, under the size warning line, on the current builder.
 
+Style every element you use. The frame ships Tailwind preflight, which zeroes
+all browser defaults (a bare `<h2>` has no size or weight, `<ul>` no bullets,
+`<button>` no chip, `p`/`table`/`hr` no margins or borders): prefer the kit
+`Section` (its `title` is the heading) and `Select`, or style the element in
+your own CSS, which always beats preflight.
+
 Read shapes the templates rely on:
 
 - A grouped `useMetric` row is `{label, value}`. The group's value is `label`,
