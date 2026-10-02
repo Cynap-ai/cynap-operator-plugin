@@ -36,12 +36,16 @@ The admitted operator set is: new entity types with a new `typed_` dedicated
 table and eligible fields; nullable non-enum, non-searchable, non-unique fields
 on existing dedicated tables; required boolean fields whose existing rows
 read false; entity descriptions and field description/semantic annotations;
-and new relationships joining two existing entities. New entities/fields
+new relationships joining two existing entities; and **adding**
+`pipeline.dropout_stages` to an existing entity's pipeline that does not yet
+declare it (a non-empty, duplicate-free list whose values are all in
+`pipeline.stages`; registry annotation only, no DDL). New entities/fields
 cannot use enum, searchable, unique, or reserved fields. Existing field type,
 requiredness, name, enum values, searchability, uniqueness, dedicated table
-placement, and removals are outside that set. Changes to existing entity
-shape, including `pipeline.stages`, `pipeline.dropout_stages`, and
-`pipeline.terminal_stages`, are **not** admitted. A newly created entity may
+placement, and removals are outside that set. Every other change to existing
+entity shape, including `pipeline.stages`, `pipeline.terminal_stages`,
+`pipeline.forward_only`, and removing or changing an already-declared
+`pipeline.dropout_stages`, is **not** admitted. A newly created entity may
 declare its initial pipeline, but later pipeline changes need the reviewed
 git and owner migration route.
 Treat a `schema_change_not_admitted` result as a git PR plus owner migration
@@ -189,7 +193,8 @@ stored.
 6. If this entity needs a `dedicated_table`, inspect each planned physical
    change, including later additive fields.
 7. Only for a **new** entity, declare its initial pipeline together. Never
-   change an existing entity's pipeline through the operator route.
+   change an existing entity's pipeline through the operator route, except to
+   add a missing `pipeline.dropout_stages` (values ⊆ `pipeline.stages`).
 8. After a passing dry run, commit, run `/cynap-checks <commit-sha>`, then have the owner
    review the consent page through `/cynap-activate <commit-sha>`. Confirm the
    terminal activation and registry state.
