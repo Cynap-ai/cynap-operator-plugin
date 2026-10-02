@@ -68,7 +68,8 @@ export async function activate({ slug, commitSha, witness = false, reconcile = f
   if ([502, 503, 504].includes(response.status)) return reconcileActivation({ slug, commitSha, fetchImpl });
   const body = await response.json().catch(() => null);
   if (!response.ok || body?.ok !== true) return { ok: false, code: body?.error ?? `HTTP ${response.status}`, message: body?.message };
-  const result = unwrapToolEnvelope(body.result);
+  const unwrapped = unwrapToolEnvelope(body.result);
+  const result = body.step_up && unwrapped && typeof unwrapped === 'object' ? { ...unwrapped, step_up: body.step_up } : unwrapped;
   return witness ? { result, witness: body.witness ?? null } : result;
 }
 
@@ -123,6 +124,7 @@ export async function main(argv = process.argv.slice(2)) {
   else if (result?.ok === false || result?.code) process.stdout.write(formatRefusal(result, { command: 'cynap-activate', commitSha }));
   else {
     process.stdout.write(`${result?.state ?? result?.status ?? result?.nextAction ?? 'activation submitted'}${result?.message ? `: ${result.message}` : ''}\n`);
+    if (result?.step_up === 'automatic') process.stdout.write('activated automatically on the test org (no browser step-up)\n');
     const action = result?.next_action;
     if (action?.command) process.stdout.write(`next: ${action.command}${action.reason ? ` — ${action.reason}` : ''}\n`);
     const url = result?.approval_url ?? result?.step_up_url ?? action?.approval_url;

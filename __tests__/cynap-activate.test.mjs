@@ -149,3 +149,9 @@ test('activation output uses the same closed disclosure for progress and JSON', 
     assert.ok(!formatRefusal(hostile, { command }).includes('private-recipient'));
   }
 });
+
+test('operatorEffectOutput keeps the step_up mode so --json shows how consent was given', async () => {
+  const { operatorEffectOutput } = await import('../lib/effect-disclosure.mjs');
+  assert.equal(operatorEffectOutput({ ok: true, state: 'activated', step_up: 'automatic' }).step_up, 'automatic');
+  assert.equal(operatorEffectOutput({ ok: true, step_up: 'something-else' }).step_up, undefined);
+});

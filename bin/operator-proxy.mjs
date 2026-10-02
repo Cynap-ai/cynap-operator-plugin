@@ -2350,6 +2350,45 @@ export async function pkceLoopbackLogin({
   return { credential: data.credential, orgId: data.org_id, expiresAt: data.expires_at };
 }
 
+const AUTOMATIC_STEP_UP_HINT_SLUG = 'cynap-e2e';
+
+/**
+ * Ask the portal for an automatic activation step-up (the platform test org only). The server
+ * decides: `200` carries the purpose credential, and ONLY an explicit
+ * `403 browser_step_up_required` means "use the browser consent" (returns null). Anything else
+ * (401, 429, 5xx, network error) throws, so a broken automatic path is loud and never degrades
+ * into a silent browser click.
+ */
+export async function requestAutomaticStepUp({ mintHost, commitSha, getAuthHeaders, pluginVersion, fetchImpl = fetch }) {
+  const authHeaders = getAuthHeaders();
+  if (!authHeaders || Object.keys(authHeaders).length === 0) {
+    throw new Error('No operator credential available — run /cynap-connect first.');
+  }
+  const res = await fetchImpl(`${mintHost}/api/auth/operator-cli/activation-step-up`, {
+    method: 'POST',
+    headers: upstreamHeaders(pluginVersion, {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+      ...stagingProtectionBypassHeaders(),
+    }),
+    body: JSON.stringify({ commit_sha: commitSha }),
+  });
+  if (res.status === 403) {
+    const body = await res.json().catch(() => null);
+    if (body?.error === 'browser_step_up_required') return null;
+    throw new Error(`automatic activation step-up refused: 403 ${body?.error ?? ''}`.trim());
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`automatic activation step-up failed: ${res.status} ${body.slice(0, 300)}`.trim());
+  }
+  const data = await res.json();
+  if (typeof data?.credential !== 'string' || data.credential.length === 0) {
+    throw new Error('automatic activation step-up returned no credential');
+  }
+  return { credential: data.credential };
+}
+
 /**
  * Complete the owner step-up without ever placing the five-minute purpose
  * credential in a file or the long-lived token cache. The portal owns the
@@ -2366,20 +2405,33 @@ export async function activateCommitWithStepUp({
   witness = false,
   reconcile = false,
   login = pkceLoopbackLogin,
+  getAuthHeaders,
+  automaticStepUp = requestAutomaticStepUp,
   fetchImpl = fetch,
   out = process.stderr,
 }) {
   if (!/^[a-f0-9]{64}$/i.test(commitSha ?? '')) {
     throw new Error('activation requires a 64-character commit sha');
   }
-  const { credential } = await login({
-    mintHost,
-    orgSlug,
-    pluginVersion,
-    requestKind: 'activation',
-    commitSha,
-    out,
-  });
+  // The server decides whether this org's step-up is automatic; callers without a credential
+  // seam (unit-level) go straight to the browser consent.
+  // `orgSlug === 'cynap-e2e'` is a local hint only (it saves every other org a pointless round
+  // trip); the server's allowlist is the authority.
+  const automatic =
+    typeof getAuthHeaders === 'function' && orgSlug === AUTOMATIC_STEP_UP_HINT_SLUG
+      ? await automaticStepUp({ mintHost, commitSha, getAuthHeaders, pluginVersion, fetchImpl })
+      : null;
+  const stepUp = automatic ? 'automatic' : 'browser';
+  const { credential } = automatic
+    ? automatic
+    : await login({
+        mintHost,
+        orgSlug,
+        pluginVersion,
+        requestKind: 'activation',
+        commitSha,
+        out,
+      });
   if (!credential) throw new Error('activation PKCE exchange returned no credential');
   const callWithPurposeCredential = async (name, args) => {
     const response = await fetchImpl(`${mcpHost}${mcpPath}`, {
@@ -2405,7 +2457,7 @@ export async function activateCommitWithStepUp({
     reconcile ? { commit_sha: commitSha, reconcile_operator_edits: true } : { commit_sha: commitSha }
   );
   if (!activation.ok) throw new Error(`workspace activation failed: ${activation.status}`);
-  if (!witness) return { body: activation.text, witness: null };
+  if (!witness) return { body: activation.text, witness: null, stepUp };
   // Release-journey witness (Spec A §9 → Spec D §8.2 leg 5). The purpose credential
   // lives only in this function, so only this function can prove its limits: a
   // second use must be refused, and so must any tool other than
@@ -2414,6 +2466,7 @@ export async function activateCommitWithStepUp({
   const foreignTool = await callWithPurposeCredential('workspace_status', {});
   return {
     body: activation.text,
+    stepUp,
     witness: {
       replay: summarizeToolAnswer(replay.status, replay.text),
       foreignTool: summarizeToolAnswer(foreignTool.status, foreignTool.text),
@@ -3144,12 +3197,12 @@ export function createProxyServer({
         if (payload?.reconcile_operator_edits !== undefined && typeof payload.reconcile_operator_edits !== 'boolean') {
           throw new Error('reconcile_operator_edits must be a boolean');
         }
-        const { body, witness } = await requestActivation(payload?.commit_sha, {
+        const { body, witness, stepUp } = await requestActivation(payload?.commit_sha, {
           witness: payload?.witness === true,
           reconcile: payload?.reconcile_operator_edits === true,
         });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify(witness ? { ok: true, result: body, witness } : { ok: true, result: body }));
+        res.end(JSON.stringify({ ok: true, result: body, step_up: stepUp, ...(witness ? { witness } : {}) }));
       } catch (error) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'activation_failed' }));
@@ -4362,6 +4415,7 @@ export async function main(argv = process.argv.slice(2)) {
         pluginVersion: opts.pluginVersion,
         witness,
         reconcile,
+        getAuthHeaders,
       });
       // An activation is the one local event that changes what the brief says
       // about this org, so re-fetch it opportunistically. Fire-and-forget —
