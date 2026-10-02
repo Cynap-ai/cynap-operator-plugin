@@ -155,3 +155,21 @@ test('operatorEffectOutput keeps the step_up mode so --json shows how consent wa
   assert.equal(operatorEffectOutput({ ok: true, state: 'activated', step_up: 'automatic' }).step_up, 'automatic');
   assert.equal(operatorEffectOutput({ ok: true, step_up: 'something-else' }).step_up, undefined);
 });
+
+test('a free-text activation error reaches the user instead of request_refused', async () => {
+  const { operatorEffectOutput } = await import('../lib/effect-disclosure.mjs');
+  const { formatRefusal } = await import('../lib/format-refusal.mjs');
+  const failed = { ok: false, code: 'HTTP 403', message: 'private-recipient' };
+  const safe = operatorEffectOutput(failed);
+  assert.equal(safe.detail, 'HTTP 403');
+  assert.ok(!JSON.stringify(safe).includes('private-recipient'));
+  const text = formatRefusal(failed, { command: 'cynap-activate' });
+  assert.match(text, /cynap-activate: HTTP 403/);
+  assert.ok(!text.includes('request_refused'));
+  assert.ok(!text.includes('private-recipient'));
+  // identifier codes keep their existing path; control characters and length are bounded
+  assert.equal(operatorEffectOutput({ ok: false, code: 'plugin_outdated' }).detail, undefined);
+  const long = operatorEffectOutput({ ok: false, code: `bad\u0007\nthing ${'x'.repeat(500)}` });
+  assert.equal(long.detail.length <= 200, true);
+  assert.ok(!/[\u0000-\u001f]/.test(long.detail));
+});
