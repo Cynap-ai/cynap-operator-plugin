@@ -37,3 +37,18 @@ test('formatRefusal tolerates non-array paths/forbidden/refusals and prints unco
     uncovered_paths: ['a.json', 'b.json'] });
   assert.match(text, /uncovered_paths: a\.json, b\.json/);
 });
+
+// An activation refusal names its code and upstream cause, and never prints prose.
+test('cynap-activate refusal names the code and failureCode instead of request_refused', () => {
+  const text = formatRefusal({ ok: false, code: 'automatic_step_up_failed', failureCode: 'schema_plan_unavailable',
+    message: 'private upstream body' }, { command: 'cynap-activate' });
+  assert.match(text, /^cynap-activate: automatic_step_up_failed \(schema_plan_unavailable\): the automatic test-org step-up failed, nothing was activated\./);
+  assert.doesNotMatch(text, /request_refused|private upstream body/);
+  assert.match(formatRefusal({ ok: false, code: 'http_400' }, { command: 'cynap-activate' }), /^cynap-activate: http_400: request refused/);
+});
+
+test('activation_pending reads as accepted, never as refused', () => {
+  const text = formatRefusal({ ok: false, code: 'activation_pending', commit_sha: 'a'.repeat(64) }, { command: 'cynap-activate' });
+  assert.match(text, /^cynap-activate: activation_pending: activation accepted; post-deploy is still awaiting/);
+  assert.doesNotMatch(text, /refused/);
+});

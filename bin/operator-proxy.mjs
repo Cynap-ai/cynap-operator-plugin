@@ -2359,10 +2359,27 @@ const AUTOMATIC_STEP_UP_HINT_SLUG = 'cynap-e2e';
  * (401, 429, 5xx, network error) throws, so a broken automatic path is loud and never degrades
  * into a silent browser click.
  */
+/**
+ * An activation failure the CLI can render. `code` (and `failureCode`, when known) are short
+ * identifiers that survive the CLI's output filter; `message` is prose for proxy.log only.
+ */
+export class ActivationError extends Error {
+  constructor(code, message, failureCode) {
+    super(message);
+    this.code = code;
+    if (failureCode) this.failureCode = failureCode;
+  }
+}
+
+/** The upstream `error` field when it is a plain identifier, else undefined. */
+function upstreamErrorCode(body) {
+  return typeof body?.error === 'string' && /^[a-z0-9_]{1,64}$/.test(body.error) ? body.error : undefined;
+}
+
 export async function requestAutomaticStepUp({ mintHost, commitSha, getAuthHeaders, pluginVersion, fetchImpl = fetch }) {
   const authHeaders = getAuthHeaders();
   if (!authHeaders || Object.keys(authHeaders).length === 0) {
-    throw new Error('No operator credential available — run /cynap-connect first.');
+    throw new ActivationError('not_connected', 'No operator credential available — run /cynap-connect first.');
   }
   const res = await fetchImpl(`${mintHost}/api/auth/operator-cli/activation-step-up`, {
     method: 'POST',
@@ -2376,15 +2393,25 @@ export async function requestAutomaticStepUp({ mintHost, commitSha, getAuthHeade
   if (res.status === 403) {
     const body = await res.json().catch(() => null);
     if (body?.error === 'browser_step_up_required') return null;
-    throw new Error(`automatic activation step-up refused: 403 ${body?.error ?? ''}`.trim());
+    throw new ActivationError(
+      'automatic_step_up_refused',
+      `automatic activation step-up refused: 403 ${body?.error ?? ''}`.trim(),
+      upstreamErrorCode(body)
+    );
   }
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`automatic activation step-up failed: ${res.status} ${body.slice(0, 300)}`.trim());
+    const text = await res.text().catch(() => '');
+    let body = null;
+    try { body = JSON.parse(text); } catch { body = null; }
+    throw new ActivationError(
+      'automatic_step_up_failed',
+      `automatic activation step-up failed: ${res.status} ${text.slice(0, 300)}`.trim(),
+      upstreamErrorCode(body) ?? `http_${res.status}`
+    );
   }
   const data = await res.json();
   if (typeof data?.credential !== 'string' || data.credential.length === 0) {
-    throw new Error('automatic activation step-up returned no credential');
+    throw new ActivationError('automatic_step_up_failed', 'automatic activation step-up returned no credential', 'no_credential');
   }
   return { credential: data.credential };
 }
@@ -2411,7 +2438,7 @@ export async function activateCommitWithStepUp({
   out = process.stderr,
 }) {
   if (!/^[a-f0-9]{64}$/i.test(commitSha ?? '')) {
-    throw new Error('activation requires a 64-character commit sha');
+    throw new ActivationError('invalid_commit_sha', 'activation requires a 64-character commit sha');
   }
   // The server decides whether this org's step-up is automatic; callers without a credential
   // seam (unit-level) go straight to the browser consent.
@@ -2456,7 +2483,9 @@ export async function activateCommitWithStepUp({
     'workspace_activate_commit',
     reconcile ? { commit_sha: commitSha, reconcile_operator_edits: true } : { commit_sha: commitSha }
   );
-  if (!activation.ok) throw new Error(`workspace activation failed: ${activation.status}`);
+  if (!activation.ok) {
+    throw new ActivationError('activation_failed', `workspace activation failed: ${activation.status}`, `http_${activation.status}`);
+  }
   if (!witness) return { body: activation.text, witness: null, stepUp };
   // Release-journey witness (Spec A §9 → Spec D §8.2 leg 5). The purpose credential
   // lives only in this function, so only this function can prove its limits: a
@@ -3195,7 +3224,7 @@ export function createProxyServer({
       try {
         const payload = JSON.parse((await readBody(req)).toString('utf8'));
         if (payload?.reconcile_operator_edits !== undefined && typeof payload.reconcile_operator_edits !== 'boolean') {
-          throw new Error('reconcile_operator_edits must be a boolean');
+          throw new ActivationError('invalid_request', 'reconcile_operator_edits must be a boolean');
         }
         const { body, witness, stepUp } = await requestActivation(payload?.commit_sha, {
           witness: payload?.witness === true,
@@ -3204,8 +3233,13 @@ export function createProxyServer({
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ ok: true, result: body, step_up: stepUp, ...(witness ? { witness } : {}) }));
       } catch (error) {
+        // `error` is always an identifier so the CLI can name the cause; the prose goes to proxy.log.
+        const code = error instanceof ActivationError ? error.code : 'activation_failed';
+        const failureCode = error instanceof ActivationError ? error.failureCode : undefined;
+        const message = error instanceof Error ? error.message : 'activation failed';
+        process.stderr.write(`[operator-proxy] activation refused: ${code}${failureCode ? ` (${failureCode})` : ''}: ${message}\n`);
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'activation_failed' }));
+        res.end(JSON.stringify({ error: code, ...(failureCode ? { failureCode } : {}), message }));
       }
       return;
     }

@@ -173,3 +173,21 @@ test('a free-text activation error reaches the user instead of request_refused',
   assert.equal(long.detail.length <= 200, true);
   assert.ok(!/[\u0000-\u001f]/.test(long.detail));
 });
+
+test('an error thrown before any refusal names its cause instead of a bare activation_failed', async () => {
+  const { describeActivateCrash } = await import('../bin/cynap-activate.mjs');
+  const refused = new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } });
+  assert.match(describeActivateCrash(refused), /^cynap-activate: failed \(proxy_unreachable\): .*Run \/cynap-status/);
+  assert.equal(describeActivateCrash(new Error('preview request does not match the commit')),
+    'cynap-activate: failed (activation_failed): preview request does not match the commit\n');
+  const long = describeActivateCrash(new Error(`bad\u0007\nthing ${'x'.repeat(500)}`));
+  assert.ok(!/[\u0000-\u0009\u000b-\u001f]/.test(long) && long.length < 260);
+  assert.equal(describeActivateCrash(new Error('')), 'cynap-activate: failed (activation_failed)\n');
+});
+
+test('a next action instead of an activation says nothing was activated', async () => {
+  const { describeNotActivated } = await import('../bin/cynap-activate.mjs');
+  assert.equal(describeNotActivated('baseline_required', 'a'.repeat(64)),
+    `not activated (baseline_required): the live files this commit changes carry no provenance stamp. Re-run /cynap-activate ${'a'.repeat(64)} --reconcile to adopt them.\n`);
+  assert.match(describeNotActivated('blocked_by_chain', 'x'), /^not activated \(blocked_by_chain\): an earlier pending commit/);
+});

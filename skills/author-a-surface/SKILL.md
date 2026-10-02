@@ -64,10 +64,8 @@ Read shapes the templates rely on:
   schema `pipeline` declaration.
 - `knowledge_query` by id returns `{entities: [entity], relations}`; read
   `entities[0]`, whose fields may sit under `properties`.
-- Keep to one chart family. `ChartBar`/`ChartLine`/`ChartArea` share one
-  engine and `ChartFunnel`/`ChartHeatmap`/`ChartGauge` another; mixing them
-  inlines both and pushes the bundle past its 2 MiB cap. Draw a funnel as a
-  horizontal `ChartBar`.
+- Every `Chart*` primitive renders with recharts (`ChartGauge` and `ChartHeatmap` are engine-free), so mixing
+  chart types adds no second engine to the 2 MiB bundle cap.
 
 | Template | Use it for |
 |---|---|

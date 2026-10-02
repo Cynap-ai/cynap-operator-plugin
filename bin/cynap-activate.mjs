@@ -9,7 +9,7 @@ import { resolveWorkingDir, stablePortForSlug } from '../lib/connect.mjs';
 import { ACTIVATE_PATH, CONTROL_FILE, CONTROL_HEADER } from './operator-proxy.mjs';
 import { runPreview } from './cynap-preview.mjs';
 import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE, unwrapToolEnvelope } from '../lib/format-refusal.mjs';
-import { mcpCall, resolveOrgSlug } from '../lib/workspace-sync.mjs';
+import { isProxyUnreachableError, mcpCall, resolveOrgSlug } from '../lib/workspace-sync.mjs';
 
 const USAGE = 'Usage: cynap-activate.mjs <64-character-commit-sha> [--reconcile] [--json]';
 
@@ -67,7 +67,7 @@ export async function activate({ slug, commitSha, witness = false, reconcile = f
   }
   if ([502, 503, 504].includes(response.status)) return reconcileActivation({ slug, commitSha, fetchImpl });
   const body = await response.json().catch(() => null);
-  if (!response.ok || body?.ok !== true) return { ok: false, code: body?.error ?? `HTTP ${response.status}`, message: body?.message };
+  if (!response.ok || body?.ok !== true) return { ok: false, code: body?.error ?? `http_${response.status}`, ...(body?.failureCode ? { failureCode: body.failureCode } : {}), message: body?.message };
   const unwrapped = unwrapToolEnvelope(body.result);
   const result = body.step_up && unwrapped && typeof unwrapped === 'object' ? { ...unwrapped, step_up: body.step_up } : unwrapped;
   return witness ? { result, witness: body.witness ?? null } : result;
@@ -115,13 +115,41 @@ export async function runActivationFlow({ slug, commitSha, reconcile = false, st
   throw new Error('preview gate did not advance after ten status reads');
 }
 
+/** The line for an error thrown before any refusal came back: name the cause, never just a bare code. */
+export function describeActivateCrash(error) {
+  if (isProxyUnreachableError(error)) {
+    return 'cynap-activate: failed (proxy_unreachable): the operator proxy is not reachable (it restarts after a plugin update). Run /cynap-status, then re-run /cynap-activate.\n';
+  }
+  const code = operatorEffectOutput(error).code ?? 'activation_failed';
+  const reason = String(error?.message ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200);
+  return `cynap-activate: failed (${code})${reason ? `: ${reason}` : ''}\n`;
+}
+
+/** The server answered with a next action instead of activating: nothing changed live. */
+function notActivated(result) {
+  return typeof result?.next_action?.kind === 'string' && result.ok === undefined &&
+    result.state === undefined && result.status === undefined;
+}
+
+export function describeNotActivated(kind, commitSha) {
+  const hint = kind === 'baseline_required'
+    ? `the live files this commit changes carry no provenance stamp. Re-run /cynap-activate ${commitSha} --reconcile to adopt them.`
+    : kind === 'blocked_by_chain' ? 'an earlier pending commit must activate first; see /cynap-status.'
+    : 'see /cynap-status for the next step.';
+  return `not activated (${kind}): ${hint}\n`;
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const { commitSha, reconcile, json } = parseActivateArgs(argv);
   const slug = resolveOrgSlug();
   const result = operatorEffectOutput(await runActivationFlow({ slug, commitSha, reconcile,
     onProgress: (status) => { const safe = operatorEffectOutput(status); process.stdout.write(`${json ? JSON.stringify(safe) : `preview: ${safe.status ?? 'unknown'}`}\n`); } }));
   if (json) process.stdout.write(`${JSON.stringify(result)}\n`);
-  else if (result?.ok === false || result?.code) process.stdout.write(formatRefusal(result, { command: 'cynap-activate', commitSha }));
+  else if (result?.ok === false || result?.code) {
+    process.stdout.write(formatRefusal(result, { command: 'cynap-activate', commitSha }));
+    if (result.code === 'activation_pending' && result.step_up === 'automatic') process.stdout.write('activated automatically on the test org (no browser step-up)\n');
+  }
+  else if (notActivated(result)) process.stdout.write(describeNotActivated(result.next_action.kind, commitSha));
   else {
     process.stdout.write(`${result?.state ?? result?.status ?? result?.nextAction ?? 'activation submitted'}${result?.message ? `: ${result.message}` : ''}\n`);
     if (result?.step_up === 'automatic') process.stdout.write('activated automatically on the test org (no browser step-up)\n');
@@ -130,13 +158,15 @@ export async function main(argv = process.argv.slice(2)) {
     const url = result?.approval_url ?? result?.step_up_url ?? action?.approval_url;
     if (url) process.stdout.write(`approval: ${url}${result?.expires_in ? ` (valid for ${result.expires_in} seconds)` : result?.expires_at ? ` (valid until ${result.expires_at})` : ''}\n`);
   }
+  if (!json && notActivated(result)) process.exitCode = 1;
+  if (result?.code === 'activation_pending') return result;
   if (result?.ok === false || result?.code) process.exitCode = result.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
   return result;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    process.stderr.write(`cynap-activate: failed (${operatorEffectOutput(error).code ?? 'activation_failed'})\n`);
+    process.stderr.write(describeActivateCrash(error));
     process.exitCode = error?.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
   });
 }
