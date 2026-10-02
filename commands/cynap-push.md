@@ -39,19 +39,33 @@ A push that touches a surface is built by the platform before it is committed: a
 surface directory per push. A refusal prints the code, the builder's findings (file:line and the
 rule that fired) and a one-line fix. Nothing is committed on a refusal.
 
-| Code | Meaning |
-|---|---|
-| `surface_lint_failed` | The source uses a construct surfaces may not use (raw `postMessage`, `parent`/`top`/`opener`, `eval`, an ext-apps import), or does not compile. |
-| `surface_import_rejected` | An import outside the Surface SDK, `react`, `react-dom` and the surface's own files. |
-| `surface_manifest_invalid` | The directory, `routes.json` or `tools.json` is invalid. |
-| `surface_tool_not_callable` | A called tool is undeclared in `tools.json`, or is not app-visible. |
-| `surface_csp_not_empty` | A `_meta.ui.csp` domain list is not empty. |
-| `surface_too_large` | The built bundle is over its size cap. |
-| `surface_too_many` | The push touches more than one surface. Split it. |
-| `surface_build_failed` | The build failed, or the builder was unavailable. |
-| `surface_receipt_invalid` | The platform could not verify the build. Report the request id. |
-| `surface_build_busy` | Another build for this org is running. **Retryable.** |
-| `surface_build_timeout` | The build did not fit in the request. Retry once; if it repeats, stop and report the request and findings. |
+<!-- generated:surface-refusals — do not edit; run scripts/build-surface-contract.mjs -->
+| Code | Meaning | Retryable |
+|---|---|---|
+| `surface_build_failed` | the surface build failed | no |
+| `surface_lint_failed` | the surface source uses a construct surfaces may not use | no |
+| `surface_import_rejected` | the surface imports a module outside the allowed set | no |
+| `surface_manifest_invalid` | the surface directory, routes.json or tools.json is invalid | no |
+| `surface_tool_not_callable` | the surface calls a tool it may not call | no |
+| `surface_csp_not_empty` | a _meta.ui.csp domain list is not empty | no |
+| `surface_too_large` | the built surface bundle is over its size cap | no |
+| `surface_too_many` | this push touches more than one surface | no |
+| `surface_receipt_invalid` | the platform could not verify the build | no |
+| `surface_build_busy` | another surface build for this org is running | once |
+| `surface_build_timeout` | the surface build did not fit in this request | once |
+
+Retryable: `surface_build_busy`, `surface_build_timeout`. On one of these, retry `/cynap-push` once; if it repeats, stop and report the request id and the findings. Every other code needs a change to the source or the manifests: repeating an identical push is not a fix.
+<!-- /generated:surface-refusals -->
+
+<!-- generated:surface-imports — do not edit; run scripts/build-surface-contract.mjs -->
+A surface may import only `@cynap/surface-sdk`, `react`, `react/jsx-runtime`, `react-dom`, `react-dom/client`, and relative files inside its own directory.
+<!-- /generated:surface-imports -->
+
+After a commit that built a surface, `/cynap-push` prints one line per built surface,
+`candidate: <portal>/<org>/_surface-candidate/<commit_sha>/<surfaceId>/` (and `candidate_urls`
+in `--json`): the Owner or an Admin opens it to see the unapproved view, read tools only. The
+builder's warnings (a colour literal outside the theme file, a write through `useTool`, a bundle
+over 85% of its cap) print under it; they do not block the commit.
 
 **`--rebuild <surfaceId>`** commits no file changes and rebuilds that surface against the current
 platform builder — how a new Surface SDK minor reaches an approved surface (there are no silent

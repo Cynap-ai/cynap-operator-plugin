@@ -18,6 +18,12 @@ test('health carries an observed minimum without exposing a credential', () => {
   assert.equal(payload.credential, undefined);
 });
 
+test('health names the env portal origin for the /cynap-push candidate URL', () => {
+  assert.equal(buildHealthPayload({ ok: true, status: 'ready', env: 'prod' }).mintHost, 'https://cynap.ai');
+  assert.equal(buildHealthPayload({ ok: true, status: 'ready', env: 'staging' }).mintHost, 'https://staging.cynap.ai');
+  assert.equal(buildHealthPayload({ ok: true, status: 'ready' }).mintHost, null);
+});
+
 test('successful self-update names the installed version and tells the operator to retry', async () => {
   const output = [];
   const outcome = await handlePluginOutdated({

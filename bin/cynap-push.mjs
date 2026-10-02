@@ -58,6 +58,37 @@ function readLocalFileMap(dir) {
   return map;
 }
 
+/**
+ * The surfaces a successful commit built: every surface the push touched (or
+ * `--rebuild` named) that still has a file after it. A surface the push deleted outright built
+ * nothing, so it gets no candidate line.
+ */
+export function builtSurfaceIds(plan, nextFiles, rebuild) {
+  const ids = new Set(rebuild ? [rebuild] : []);
+  for (const path of [...plan.creates, ...plan.updates, ...plan.deletes]) {
+    const match = /^surfaces\/([^/]+)\//.exec(path);
+    if (match) ids.add(match[1]);
+  }
+  const paths = Object.keys(nextFiles);
+  return [...ids].filter((id) => paths.some((path) => path.startsWith(`surfaces/${id}/`))).sort();
+}
+
+/** The portal origin the connected proxy logs in against (its `/health` `mintHost`), or null. */
+async function readMintHost(proxyUrl, fetchImpl) {
+  try {
+    const res = await fetchImpl(new URL('/health', proxyUrl).href, { method: 'GET', signal: AbortSignal.timeout(1_500) });
+    const health = res?.ok ? await res.json() : null;
+    return typeof health?.mintHost === 'string' && /^https:\/\/[a-z0-9.-]+$/.test(health.mintHost) ? health.mintHost : null;
+  } catch {
+    return null; // No origin: the candidate line prints the portal path alone.
+  }
+}
+
+/** `<mintHost>/<org>/_surface-candidate/<commit_sha>/<surfaceId>/` (Owner/Admin, read tools only). */
+export function candidateUrl(mintHost, org, commitSha, surfaceId) {
+  return `${mintHost ?? ''}/${org}/_surface-candidate/${commitSha}/${surfaceId}/`;
+}
+
 export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, onPhase = () => {} } = {}) {
   const args = parsePushArgs(argv);
   onPhase('reading local workspace…');
@@ -231,6 +262,8 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
 
   // Step 6: print the chain position + Spec A's activation block (verbatim, when present).
   const readBack = await call('workspace_get_commit', { sha: commitSha });
+  const surfaces = builtSurfaceIds(plan, nextFiles, args.rebuild);
+  const mintHost = surfaces.length > 0 ? await readMintHost(proxyUrl, fetchImpl) : null;
 
   return {
     ok: true,
@@ -241,19 +274,26 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
     position: readBack?.ok === false ? null : readBack?.position ?? null,
     activation: committed.activation ?? null,
     nextAction: committed.activation?.next_action ?? committed.next_action ?? readBack?.next_action ?? null,
+    candidateUrls: surfaces.map((id) => candidateUrl(mintHost, org, commitSha, id)),
+    surfaceWarnings: Array.isArray(committed.surface_warnings) ? committed.surface_warnings : [],
   };
+}
+
+function formatSurfaceWarning(warning) {
+  const at = warning.file ? `${warning.file}${warning.line ? `:${warning.line}` : ''}: ` : '';
+  return `warning: [${warning.rule}] ${at}${warning.message}`;
 }
 
 function printRefusal(result) {
   process.stderr.write(formatRefusal(result));
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), { cwd, fetchImpl } = {}) {
   let result;
   const started = Date.now();
   const onPhase = (phase) => process.stderr.write(`[${Math.floor((Date.now() - started) / 1000)}s] ${phase}\n`);
   try {
-    result = await push({ argv, onPhase });
+    result = await push({ argv, onPhase, cwd, fetchImpl });
   } catch (error) {
     // A local-safety violation (a symlink in the tree, a malformed state.json) THROWS rather
     // than returning a structured {ok:false} — same stderr+exit1 shape either way.
@@ -296,6 +336,8 @@ export async function main(argv = process.argv.slice(2)) {
         chain_state: result.state,
         chain_position: result.position,
         activation: result.activation,
+        ...(result.candidateUrls.length > 0 ? { candidate_urls: result.candidateUrls } : {}),
+        ...(result.surfaceWarnings.length > 0 ? { surface_warnings: result.surfaceWarnings } : {}),
       },
       null,
       2
@@ -303,6 +345,8 @@ export async function main(argv = process.argv.slice(2)) {
   );
   else {
     process.stdout.write(`committed ${result.commitSha}${result.state ? ` (${result.state})` : ''}\n`);
+    for (const url of result.candidateUrls) process.stdout.write(`candidate: ${url}\n`);
+    for (const warning of result.surfaceWarnings) process.stdout.write(`${formatSurfaceWarning(warning)}\n`);
     if (result.nextAction?.command) process.stdout.write(`next: ${result.nextAction.command}${result.nextAction.reason ? ` — ${result.nextAction.reason}` : ''}\n`);
     if (result.nextAction?.kind === 'baseline_required') process.stdout.write('This commit needs --reconcile before activation.\n');
     if (result.nextAction?.kind === 'handler_preview_required') process.stdout.write(`Preview the handler before activation: /cynap-preview <automation-id> ${result.commitSha}\n`);

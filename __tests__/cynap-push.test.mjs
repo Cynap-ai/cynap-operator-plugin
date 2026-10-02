@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { push } from '../bin/cynap-push.mjs';
+import { builtSurfaceIds, main, push } from '../bin/cynap-push.mjs';
 import { formatRefusal, formatSurfaceRefusal, formatValidationErrors } from '../lib/format-refusal.mjs';
 import { readState, sha256Hex, writeStateAtomic, WorkspaceSyncError } from '../lib/workspace-sync.mjs';
 
@@ -357,7 +357,7 @@ test('push: a surface gate refusal returns its code, findings, hint and retryabi
     const findings = [{ rule: 'raw_post_message', file: 'index.tsx', line: 1, column: 1, message: 'postMessage is not allowed.' }];
     const fetchImpl = fakeFetch({
       ...noChecksOnLive(),
-      workspace_validate: () => ({ status: 'passed' }),
+      workspace_validate: () => ({ ok: true, status: 'passed' }),
       workspace_commit: () => ({ ok: false, code: 'surface_lint_failed', message: 'workspace_commit refused: surface_lint_failed', hint: 'Use the SDK hooks.', findings, retryable: false }),
     });
     const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'surface'], fetchImpl });
@@ -387,12 +387,12 @@ test('push: --rebuild commits with no file changes and names the surface', async
     let committedArgs = null;
     const fetchImpl = fakeFetch({
       ...noChecksOnLive(),
-      workspace_validate: () => ({ status: 'passed' }),
+      workspace_validate: () => ({ ok: true, status: 'passed' }),
       workspace_commit: (args) => {
         committedArgs = args;
         return { ok: true, commit: { commit_sha: NEW_SHA, parent_commit_sha: 'b'.repeat(64), created_at: 'now' } };
       },
-      workspace_get_commit: () => ({ ok: true, state: 'pending', position: 1 }),
+      workspace_get_commit: () => ({ ok: true, commit: {}, state: 'pending', position: 1, operations: [] }),
     });
     const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'rebuild', '--rebuild', 'ops-board'], fetchImpl });
     assert.equal(result.ok, true);
@@ -491,6 +491,122 @@ test('push: a structured refusal without a run (gate_change_not_alone) prints it
       assert.match(text, /Commit a gate change alone/);
       assert.match(text, /gate_change_paths: checks\/x\.check\.json/);
     }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A surface push prints a candidate URL per built surface (and
+// `candidate_urls` in --json) plus the builder's warnings; a non-surface push prints neither.
+function withHealth(fetchImpl, mintHost) {
+  return async (url, init) =>
+    init?.method === 'GET' && String(url).endsWith('/health')
+      ? { ok: true, json: async () => ({ ok: true, status: 'ready', mintHost }) }
+      : fetchImpl(url, init);
+}
+
+function surfacePushFixture(dir, extraCommit = {}) {
+  mkdirSync(join(dir, 'surfaces', 'ops-board'), { recursive: true });
+  writeFileSync(join(dir, 'surfaces', 'ops-board', 'index.tsx'), 'export default () => null;');
+  mkdirSync(join(dir, 'automations'), { recursive: true });
+  writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+  writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+  return withHealth(
+    fakeFetch({
+      ...noChecksOnLive(),
+      workspace_validate: () => ({ ok: true, status: 'passed' }),
+      workspace_commit: () => ({
+        ok: true,
+        commit: { commit_sha: NEW_SHA, parent_commit_sha: 'b'.repeat(64), created_at: 'now' },
+        ...extraCommit,
+      }),
+      workspace_get_commit: () => ({ ok: true, commit: {}, state: 'pending', position: 1, operations: [] }),
+    }),
+    'https://staging.cynap.ai'
+  );
+}
+
+test('push: a surface commit returns one candidate URL per built surface and the builder warnings', async () => {
+  const dir = scratchDir();
+  try {
+    const warning = { rule: 'color_literal', file: 'surfaces/ops-board/index.tsx', line: 3, message: '2 colour literals outside the theme file.' };
+    const fetchImpl = surfacePushFixture(dir, { surface_warnings: [warning] });
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'surface'], fetchImpl });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(result.candidateUrls, [`https://staging.cynap.ai/cynap-e2e/_surface-candidate/${NEW_SHA}/ops-board/`]);
+    assert.deepEqual(result.surfaceWarnings, [warning]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push: prints the candidate line and warnings, and candidate_urls in --json', async () => {
+  const warning = { rule: 'write_via_use_tool', message: 'Prefer useMutation.' };
+  const run = async (extraArgv) => {
+    const dir = scratchDir();
+    const writes = [];
+    const original = { out: process.stdout.write, err: process.stderr.write };
+    process.stdout.write = (chunk) => (writes.push(String(chunk)), true);
+    process.stderr.write = () => true;
+    try {
+      const fetchImpl = surfacePushFixture(dir, { surface_warnings: [warning] });
+      await main(['--dir', dir, '-m', 'surface', ...extraArgv], { cwd: '/tmp/op/cynap-e2e', fetchImpl });
+    } finally {
+      process.stdout.write = original.out;
+      process.stderr.write = original.err;
+      rmSync(dir, { recursive: true, force: true });
+    }
+    return writes.join('');
+  };
+  const url = `https://staging.cynap.ai/cynap-e2e/_surface-candidate/${NEW_SHA}/ops-board/`;
+  const human = await run([]);
+  assert.match(human, new RegExp(`^committed ${NEW_SHA}`, 'm'));
+  assert.ok(human.includes(`candidate: ${url}\n`), human);
+  assert.ok(human.includes('warning: [write_via_use_tool] Prefer useMutation.'), human);
+  const json = JSON.parse(await run(['--json']));
+  assert.deepEqual(json.candidate_urls, [url]);
+  assert.deepEqual(json.surface_warnings, [warning]);
+  process.exitCode = 0;
+});
+
+test('push: a non-surface push builds nothing and carries no candidate URL', async () => {
+  const dir = scratchDir();
+  try {
+    mkdirSync(join(dir, 'automations'), { recursive: true });
+    writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+    let healthRead = false;
+    const fetchImpl = async (url, init) => {
+      if (init?.method === 'GET') healthRead = true;
+      return fakeFetch({
+        ...noChecksOnLive(),
+        workspace_validate: () => ({ ok: true, status: 'passed' }),
+        workspace_commit: () => ({ ok: true, commit: { commit_sha: NEW_SHA, parent_commit_sha: 'b'.repeat(64), created_at: 'now' } }),
+        workspace_get_commit: () => ({ ok: true, commit: {}, state: 'pending', position: 1, operations: [] }),
+      })(url, init);
+    };
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'notes'], fetchImpl });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(result.candidateUrls, []);
+    assert.equal(healthRead, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('builtSurfaceIds: a surface deleted outright builds nothing; a rebuild builds its surface', () => {
+  const plan = { creates: [], updates: ['surfaces/a/index.tsx'], deletes: ['surfaces/b/index.tsx', 'surfaces/b/routes.json'] };
+  assert.deepEqual(builtSurfaceIds(plan, { 'surfaces/a/index.tsx': 'x' }, null), ['a']);
+  assert.deepEqual(builtSurfaceIds({ creates: [], updates: [], deletes: [] }, { 'surfaces/c/index.tsx': 'x' }, 'c'), ['c']);
+});
+
+test('push: without a readable proxy /health the candidate line is the portal path alone', async () => {
+  const dir = scratchDir();
+  try {
+    const fetchImpl = surfacePushFixture(dir);
+    const noHealth = async (url, init) => (init?.method === 'GET' ? { ok: false } : fetchImpl(url, init));
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'surface'], fetchImpl: noHealth });
+    assert.deepEqual(result.candidateUrls, [`/cynap-e2e/_surface-candidate/${NEW_SHA}/ops-board/`]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

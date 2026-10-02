@@ -1326,6 +1326,8 @@ export function buildHealthPayload({
     credExpiresAt: credExpiresAt ?? null,
     credExpiresInHours: credExpiresInHours ?? null,
     contextUri: org ? operatorContextUri(org) : null,
+    // The portal origin of this env, so /cynap-push can print a candidate URL.
+    mintHost: env && Object.hasOwn(HOSTS, env) ? HOSTS[env].mintHost : null,
   };
 }
 
