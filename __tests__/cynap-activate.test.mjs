@@ -191,3 +191,61 @@ test('a next action instead of an activation says nothing was activated', async 
     `not activated (baseline_required): the live files this commit changes carry no provenance stamp. Re-run /cynap-activate ${'a'.repeat(64)} --reconcile to adopt them.\n`);
   assert.match(describeNotActivated('blocked_by_chain', 'x'), /^not activated \(blocked_by_chain\): an earlier pending commit/);
 });
+
+test('reconciliation waits, bounded, while the commit is still activating', async () => {
+  let reads = 0;
+  const waits = [];
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, intervalMs: 10, waitMs: 100,
+    wait: async (ms) => { waits.push(ms); },
+    fetchImpl: async () => {
+      reads += 1;
+      const value = reads < 3
+        ? { ok: true, live_digest: null, pending: [{ commit_sha: SHA, state: 'activating' }] }
+        : { ok: true, live_digest: SHA, pending: [] };
+      return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
+    } });
+  assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA });
+  assert.equal(reads, 3);
+  assert.deepEqual(waits, [10, 10]);
+});
+
+test('reconciliation stops waiting at its budget and reports the commit as still activating', async () => {
+  let reads = 0;
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, intervalMs: 10, waitMs: 30,
+    wait: async () => {},
+    fetchImpl: async () => {
+      reads += 1;
+      return { ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
+        pending: [{ commit_sha: SHA, state: 'activating' }] } } }) };
+    } });
+  assert.equal(reads, 4);
+  assert.equal(result.ok, false);
+  assert.match(result.message, /activation not confirmed: activating/);
+});
+
+test('an upstream gateway timeout from the proxy is reconciled, not reported as a failure', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { activate } = await import('../bin/cynap-activate.mjs');
+  const { resolveWorkingDir } = await import('../lib/connect.mjs');
+  const home = process.env.HOME;
+  process.env.HOME = mkdtempSync(join(tmpdir(), 'activate-504-'));
+  try {
+    const dir = resolveWorkingDir('cynap-e2e');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.operator-control'), 'nonce\n');
+    const urls = [];
+    const result = await activate({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (url) => {
+      urls.push(String(url));
+      if (String(url).endsWith('/activate')) {
+        return { ok: false, status: 400, json: async () => ({ error: 'activation_failed', failureCode: 'http_504' }) };
+      }
+      return { ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: SHA, pending: [] } } }) };
+    } });
+    assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA });
+    assert.ok(urls.some((url) => url.endsWith('/mcp')));
+  } finally {
+    process.env.HOME = home;
+  }
+});

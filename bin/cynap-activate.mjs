@@ -26,12 +26,27 @@ export function parseActivateArgs(argv) {
   return { commitSha: positional[0], reconcile, json };
 }
 
-export async function reconcileActivation({ slug, commitSha, fetchImpl = fetch }) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** An upstream gateway timeout says nothing about the activation itself: it may still be running. */
+const GATEWAY_TIMEOUT_CODES = new Set(['http_502', 'http_503', 'http_504']);
+
+export async function reconcileActivation({
+  slug, commitSha, fetchImpl = fetch, waitMs = 3 * 60 * 1000, intervalMs = 5000, wait = sleep,
+}) {
   const proxyUrl = `http://127.0.0.1:${stablePortForSlug(slug)}/mcp`;
   const call = (name, args) => mcpCall(proxyUrl, name, args, { fetchImpl });
-  const status = await call('workspace_status', {});
-  if (status?.ok === false) return status;
-  if (status.live_digest === commitSha) return { ok: true, state: 'activated', commit_sha: commitSha };
+  // Bounded: while the server reports the commit as `activating`, re-read until it lands or the
+  // budget runs out, so a slow activation is reported by its real outcome, not as a failure.
+  let status;
+  for (let waited = 0; ; waited += intervalMs) {
+    status = await call('workspace_status', {});
+    if (status?.ok === false) return status;
+    if (status.live_digest === commitSha) return { ok: true, state: 'activated', commit_sha: commitSha };
+    const activating = status.pending?.some((item) => item.commit_sha === commitSha && item.state === 'activating');
+    if (!activating || waited + intervalMs > waitMs) break;
+    await wait(intervalMs);
+  }
   const unconfirmed = (state, extra = {}) => ({
     ok: false, code: 'activation_not_confirmed', state, commit_sha: commitSha, ...extra,
     message: `activation not confirmed: ${state}. The activation request timed out; check /cynap-status before retrying.`,
@@ -67,6 +82,9 @@ export async function activate({ slug, commitSha, witness = false, reconcile = f
   }
   if ([502, 503, 504].includes(response.status)) return reconcileActivation({ slug, commitSha, fetchImpl });
   const body = await response.json().catch(() => null);
+  if (body?.error === 'activation_failed' && GATEWAY_TIMEOUT_CODES.has(body?.failureCode)) {
+    return reconcileActivation({ slug, commitSha, fetchImpl });
+  }
   if (!response.ok || body?.ok !== true) return { ok: false, code: body?.error ?? `http_${response.status}`, ...(body?.failureCode ? { failureCode: body.failureCode } : {}), message: body?.message };
   const unwrapped = unwrapToolEnvelope(body.result);
   const result = body.step_up && unwrapped && typeof unwrapped === 'object' ? { ...unwrapped, step_up: body.step_up } : unwrapped;
