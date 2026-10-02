@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parsePreviewArgs, previewSummary, runPreview } from '../bin/cynap-preview.mjs';
+import { failureReason, parsePreviewArgs, previewSummary, runPreview } from '../bin/cynap-preview.mjs';
 import { forwardPreviewRequest } from '../bin/operator-proxy.mjs';
 
 const SHA = 'a'.repeat(64);
@@ -61,4 +61,12 @@ test('capture tool failure survives the counts-and-kinds projection without erro
   assert.deepEqual(previewSummary({ previewId: 'id', status: 'fail', failureCode: 'capture_tool_failed',
     error: 'private', toolOutcomes: [{ targetRef: 'private' }], effectKinds: [{ kind: 'message', count: 0, body: 'private' }] }),
     { status: 'fail', attemptId: 'id', failureCode: 'capture_tool_failed', effectKinds: [{ kind: 'message', count: 0 }] });
+});
+
+test('a failure prints its underlying cause, including the socket error fetch hides', () => {
+  const refused = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:4100'), { code: 'ECONNREFUSED' }) });
+  assert.equal(failureReason(refused), ': fetch failed: ECONNREFUSED');
+  assert.equal(failureReason(new Error('operator preview status failed:\n HTTP 502')), ': operator preview status failed: HTTP 502');
+  assert.equal(failureReason({}), '');
+  assert.ok(failureReason(new Error('x'.repeat(1000))).length <= 302);
 });

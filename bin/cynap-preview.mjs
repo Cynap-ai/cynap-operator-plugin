@@ -66,9 +66,20 @@ export async function main(argv = process.argv.slice(2)) {
   return result;
 }
 
+/**
+ * The underlying cause, on one bounded line. Without it a local ECONNREFUSED (the proxy
+ * is down) printed exactly like a platform failure. `fetch` hides the socket error in `cause`.
+ */
+export function failureReason(error) {
+  const parts = [error?.message, error?.cause?.code ?? error?.cause?.message]
+    .filter((part) => typeof part === 'string' && part.length > 0);
+  if (parts.length === 0) return '';
+  return `: ${parts.join(': ').replace(/\s+/g, ' ').slice(0, 300)}`;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    process.stderr.write(`cynap-preview: failed (${operatorEffectOutput(error).code ?? 'preview_failed'})\n`);
+    process.stderr.write(`cynap-preview: failed (${operatorEffectOutput(error).code ?? 'preview_failed'})${failureReason(error)}\n`);
     process.exitCode = error?.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
   });
 }
