@@ -58,7 +58,7 @@ Retryable: `surface_build_busy`, `surface_build_timeout`. On one of these, retry
 <!-- /generated:surface-refusals -->
 
 <!-- generated:surface-assets — do not edit; run scripts/build-surface-contract.mjs -->
-A surface directory holds `routes.json`, `tools.json`, code (`.tsx`, `.ts`, `.css`) and assets (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.woff2`). Every other file is refused. Assets are inlined into the bundle: import them statically, or reference them from CSS with a relative `url(./file)`.
+A surface directory holds `routes.json`, `tools.json`, code (`.tsx`, `.ts`, `.css`) and assets (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.woff2`). Every other file is refused. Assets are inlined into the bundle: import them statically, or reference them from CSS with a relative `url(./file)`. The directory holds only the surface's own files (index.tsx, routes.json, tools.json, theme.ts, styles.css, relative modules, image/font assets): automation handlers live under `automations/handlers/<id>/` at the workdir root, never inside `surfaces/<id>/`.
 <!-- /generated:surface-assets -->
 
 <!-- generated:surface-imports — do not edit; run scripts/build-surface-contract.mjs -->

@@ -20,7 +20,7 @@ The id is a lowercase slug, 2–40 characters, starting with a letter. One
 push may touch only one surface directory. Do not bundle customer data files.
 
 <!-- generated:surface-assets — do not edit; run scripts/build-surface-contract.mjs -->
-A surface directory holds `routes.json`, `tools.json`, code (`.tsx`, `.ts`, `.css`) and assets (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.woff2`). Every other file is refused. Assets are inlined into the bundle: import them statically, or reference them from CSS with a relative `url(./file)`.
+A surface directory holds `routes.json`, `tools.json`, code (`.tsx`, `.ts`, `.css`) and assets (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.woff2`). Every other file is refused. Assets are inlined into the bundle: import them statically, or reference them from CSS with a relative `url(./file)`. The directory holds only the surface's own files (index.tsx, routes.json, tools.json, theme.ts, styles.css, relative modules, image/font assets): automation handlers live under `automations/handlers/<id>/` at the workdir root, never inside `surfaces/<id>/`.
 <!-- /generated:surface-assets -->
 
 The source cap is 256 KiB per file and
@@ -76,6 +76,8 @@ built before the rules still rebuilds onto a new SDK; the first edit then asks i
 Draw with kit components, never raw elements. The form, feedback, action and identity kit that `@cynap/surface-sdk` exports is: `Button`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Separator`, `Field`, `FieldLabel`, `FieldDescription`, `FieldError`, `Input`, `Textarea`, `Checkbox`, `Switch`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `Dialog`, `DialogTrigger`, `DialogClose`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter`, `Sheet`, `SheetTrigger`, `SheetClose`, `SheetContent`, `SheetHeader`, `SheetTitle`, `SheetDescription`, `SheetFooter`, `Popover`, `PopoverTrigger`, `PopoverContent`, `TabsRoot`, `TabsList`, `TabsTrigger`, `TabsContent`, `TooltipRoot`, `TooltipTrigger`, `TooltipContent`, `TooltipProvider`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `DateRangePicker`, `PeriodFilterBar`, `ProvenanceFooter`, `SurfaceForm`, `Toaster`, `toast`, `useConfirm`, `Badge`, `Avatar`, `Icon`, `Image`, `BrandMark`, `Hero`, `Reveal`. The layout, content and chart primitives come from the same import.
 
 `<Icon name="…" />` takes one literal `IconName`: `activity`, `arrow-down`, `arrow-left`, `arrow-right`, `arrow-up`, `arrow-up-right`, `bell`, `bookmark`, `briefcase`, `building-2`, `calendar`, `chart-column`, `chart-line`, `chart-pie`, `check`, `chevron-down`, `chevron-left`, `chevron-right`, `chevron-up`, `circle-alert`, `circle-check`, `circle-help`, `circle-x`, `clock`, `cloud`, `credit-card`, `download`, `external-link`, `eye`, `file`, `file-text`, `flag`, `folder`, `funnel`, `globe`, `heart`, `house`, `image`, `inbox`, `info`, `layers`, `layout-dashboard`, `link`, `lock`, `mail`, `map-pin`, `message-square`, `minus`, `package`, `pencil`, `phone`, `plus`, `refresh-cw`, `search`, `send`, `settings`, `share-2`, `shield-check`, `shopping-cart`, `sparkles`, `star`, `tag`, `target`, `trash-2`, `trending-down`, `trending-up`, `triangle-alert`, `truck`, `upload`, `user`, `users`, `wallet`, `x`, `zap`.
+
+`name` must be a string literal at the call site: never a variable, prop, map lookup or conditional (`name={busy ? "refresh-cw" : "truck"}` and `name={icon}` are refused). To vary the icon, branch the whole element: `{busy ? <Icon name="refresh-cw" /> : <Icon name="truck" />}`.
 <!-- /generated:surface-kit -->
 
 ## Theme and identity
@@ -114,10 +116,10 @@ A surface looks like the org's own app through its theme, not through CSS. Call
 | `--shadow-md` | up to 3 layers of `[inset] <len> <len> [<len> [<len>]] <colour>` (a length or `0`) | your theme only |
 | `--shadow-lg` | up to 3 layers of `[inset] <len> <len> [<len> [<len>]] <colour>` (a length or `0`) | your theme only |
 | `--shadow-xl` | up to 3 layers of `[inset] <len> <len> [<len> [<len>]] <colour>` (a length or `0`) | your theme only |
-| `--font-weight-normal` | `100`–`900` in hundreds | your theme only |
-| `--font-weight-medium` | `100`–`900` in hundreds | your theme only |
-| `--font-weight-semibold` | `100`–`900` in hundreds | your theme only |
-| `--font-weight-bold` | `100`–`900` in hundreds | your theme only |
+| `--font-weight-normal` | an integer `100`–`900` | your theme only |
+| `--font-weight-medium` | an integer `100`–`900` | your theme only |
+| `--font-weight-semibold` | an integer `100`–`900` | your theme only |
+| `--font-weight-bold` | an integer `100`–`900` | your theme only |
 | `--chart-1` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
 | `--chart-2` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
 | `--chart-3` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
@@ -196,8 +198,8 @@ the surface and the handler.
 | `csp_unprovable` | yes | Write `_meta.ui` as an explicit object literal, without spread or shorthand. |
 | `surface_page_heading` | yes | Remove the page-level `<h1>`; the host header owns the page title. Name a record or section with `<h2>` or below. |
 | `query_state_key_invalid` | yes | Name a `useQueryState` key with a literal matching `^[a-z][a-zA-Z0-9_]{0,39}$`. |
-| `theme_value_unbounded` | yes | Give every `defineSurfaceTheme` token a literal value of its key class (a colour, a px/rem length, a family name, a `100`–`900` weight or a shadow); bind `fonts` only to a static `import x from './font.woff2'`, and `density`/`motion` only to a listed literal. |
-| `icon_name_unknown` | yes | Give `<Icon>` a literal `name` from the IconName list; do not pass `Icon` around or spread its props. |
+| `theme_value_unbounded` | yes | Give every `defineSurfaceTheme` token a literal value of its key class (a colour, a px/rem length, a family name, an integer `100`–`900` weight or a shadow); bind `fonts` only to a static `import x from './font.woff2'`, and `density`/`motion` only to a listed literal. |
+| `icon_name_unknown` | yes | Give `<Icon>` a string-literal `name` from the IconName list, never a variable, prop, map lookup or conditional; to vary the icon branch the whole element (`{busy ? <Icon name="refresh-cw" /> : <Icon name="truck" />}`); do not pass `Icon` around or spread its props. |
 | `raw_element` | yes (warning on `--rebuild`) | Use the kit component instead of the raw element: `Button`, `Input`/`Checkbox`/`Switch`, `Select`, `Textarea`, `Table`, or `Section` for a heading. |
 | `color_literal` | yes (warning on `--rebuild`) | Remove hex, `rgb()`, `hsl()` and `oklch()` literals: use a kit component, or declare the colour once in the file that calls `defineSurfaceTheme` and read it as a theme variable. |
 | `undeclared_tool` | yes | Declare every tool the surface calls in `tools.json`, including `automation_run_status` for a `useMutation`. |
@@ -215,7 +217,7 @@ the surface and the handler.
 | `duplicate_view` | yes | Give every route a unique `view`. |
 | `duplicate_path` | yes | Remove the duplicated source path. |
 | `missing_file` | yes | Restore `index.tsx`, `routes.json` and `tools.json`. |
-| `disallowed_file` | yes | Keep only code, the two manifests and image/font assets; data belongs in the org database. |
+| `disallowed_file` | yes | Keep only code, the two manifests and image/font assets in the surface directory; data belongs in the org database and automation handlers belong under automations/handlers/<id>/ at the workdir root, never inside surfaces/<id>/. |
 | `file_too_large` | yes | Shrink the file under the per-file cap. |
 | `source_too_large` | yes | Shrink the surface source under the 768 KiB total. |
 | `not_utf8` | yes | Encode source text as UTF-8. |
