@@ -57,6 +57,10 @@ rule that fired) and a one-line fix. Nothing is committed on a refusal.
 Retryable: `surface_build_busy`, `surface_build_timeout`. On one of these, retry `/cynap-push` once; if it repeats, stop and report the request id and the findings. Every other code needs a change to the source or the manifests: repeating an identical push is not a fix.
 <!-- /generated:surface-refusals -->
 
+<!-- generated:surface-assets — do not edit; run scripts/build-surface-contract.mjs -->
+A surface directory holds `routes.json`, `tools.json`, code (`.tsx`, `.ts`, `.css`) and assets (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.woff2`). Every other file is refused. Assets are inlined into the bundle: import them statically, or reference them from CSS with a relative `url(./file)`.
+<!-- /generated:surface-assets -->
+
 <!-- generated:surface-imports — do not edit; run scripts/build-surface-contract.mjs -->
 A surface may import only `@cynap/surface-sdk`, `react`, `react/jsx-runtime`, `react-dom`, `react-dom/client`, and relative files inside its own directory.
 <!-- /generated:surface-imports -->

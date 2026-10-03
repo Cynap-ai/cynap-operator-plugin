@@ -17,9 +17,13 @@ surfaces/<id>/tools.json
 ```
 
 The id is a lowercase slug, 2–40 characters, starting with a letter. One
-push may touch only one surface directory. Alongside the three required files,
-the directory may hold `.ts`, `.tsx`, `.css`, and approved image/font assets;
-do not bundle customer data files. The source cap is 256 KiB per file and
+push may touch only one surface directory. Do not bundle customer data files.
+
+<!-- generated:surface-assets — do not edit; run scripts/build-surface-contract.mjs -->
+A surface directory holds `routes.json`, `tools.json`, code (`.tsx`, `.ts`, `.css`) and assets (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.woff2`). Every other file is refused. Assets are inlined into the bundle: import them statically, or reference them from CSS with a relative `url(./file)`.
+<!-- /generated:surface-assets -->
+
+The source cap is 256 KiB per file and
 768 KiB in total. The built HTML cap is 2 MiB.
 
 Both manifests require `version: 1` and reject unknown fields. `routes.json`
@@ -43,7 +47,7 @@ A surface may import only `@cynap/surface-sdk`, `react`, `react/jsx-runtime`, `r
 
 ## Start from a template
 
-Six templates under `templates/` each map file paths to file text
+The templates under `templates/` each map file paths to file text
 (`<name>.template.json`, under `files`). Pick the closest one, write each entry
 to its path, and replace every value its `placeholders` list names (the
 `REPLACE_WITH_…` constants at the top of each file) with the org's own type,
@@ -67,8 +71,71 @@ A change that edits the surface's source must pass these rules. A pure
 built before the rules still rebuilds onto a new SDK; the first edit then asks it to migrate.
 
 <!-- generated:surface-kit — do not edit; run scripts/build-surface-contract.mjs -->
-Draw with kit components, never raw elements. The form, feedback and action kit that `@cynap/surface-sdk` exports is: `Button`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Separator`, `Field`, `FieldLabel`, `FieldDescription`, `FieldError`, `Input`, `Textarea`, `Checkbox`, `Switch`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `Dialog`, `DialogTrigger`, `DialogClose`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter`, `Sheet`, `SheetTrigger`, `SheetClose`, `SheetContent`, `SheetHeader`, `SheetTitle`, `SheetDescription`, `SheetFooter`, `Popover`, `PopoverTrigger`, `PopoverContent`, `TabsRoot`, `TabsList`, `TabsTrigger`, `TabsContent`, `TooltipRoot`, `TooltipTrigger`, `TooltipContent`, `TooltipProvider`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `DateRangePicker`, `PeriodFilterBar`, `ProvenanceFooter`, `SurfaceForm`, `Toaster`, `toast`, `useConfirm`. The layout, content and chart primitives come from the same import.
+Draw with kit components, never raw elements. The form, feedback, action and identity kit that `@cynap/surface-sdk` exports is: `Button`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Separator`, `Field`, `FieldLabel`, `FieldDescription`, `FieldError`, `Input`, `Textarea`, `Checkbox`, `Switch`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `Dialog`, `DialogTrigger`, `DialogClose`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter`, `Sheet`, `SheetTrigger`, `SheetClose`, `SheetContent`, `SheetHeader`, `SheetTitle`, `SheetDescription`, `SheetFooter`, `Popover`, `PopoverTrigger`, `PopoverContent`, `TabsRoot`, `TabsList`, `TabsTrigger`, `TabsContent`, `TooltipRoot`, `TooltipTrigger`, `TooltipContent`, `TooltipProvider`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `DateRangePicker`, `PeriodFilterBar`, `ProvenanceFooter`, `SurfaceForm`, `Toaster`, `toast`, `useConfirm`, `Badge`, `Avatar`, `Icon`, `Image`, `BrandMark`, `Hero`, `Reveal`. The layout, content and chart primitives come from the same import.
+
+`<Icon name="…" />` takes one literal `IconName`: `activity`, `arrow-down`, `arrow-left`, `arrow-right`, `arrow-up`, `arrow-up-right`, `bell`, `bookmark`, `briefcase`, `building-2`, `calendar`, `chart-column`, `chart-line`, `chart-pie`, `check`, `chevron-down`, `chevron-left`, `chevron-right`, `chevron-up`, `circle-alert`, `circle-check`, `circle-help`, `circle-x`, `clock`, `cloud`, `credit-card`, `download`, `external-link`, `eye`, `file`, `file-text`, `flag`, `folder`, `funnel`, `globe`, `heart`, `house`, `image`, `inbox`, `info`, `layers`, `layout-dashboard`, `link`, `lock`, `mail`, `map-pin`, `message-square`, `minus`, `package`, `pencil`, `phone`, `plus`, `refresh-cw`, `search`, `send`, `settings`, `share-2`, `shield-check`, `shopping-cart`, `sparkles`, `star`, `tag`, `target`, `trash-2`, `trending-down`, `trending-up`, `triangle-alert`, `truck`, `upload`, `user`, `users`, `wallet`, `x`, `zap`.
 <!-- /generated:surface-kit -->
+
+## Theme and identity
+
+A surface looks like the org's own app through its theme, not through CSS. Call
+`defineSurfaceTheme` once, in one file (the only file allowed colour literals), with literal
+`light` and `dark` token objects and, optionally, the fields below. Pass the result to
+`<SurfaceApp theme={theme}>`. A key you leave out keeps the host's value or the SDK default.
+
+<!-- generated:surface-theme-keys — do not edit; run scripts/build-surface-contract.mjs -->
+| Key | Value | Set by |
+|---|---|---|
+| `--color-background-primary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-background-secondary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-background-tertiary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-text-primary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-text-secondary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-text-tertiary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-text-ghost` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-text-danger` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-text-success` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-text-warning` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-border-primary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-border-secondary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--color-ring-primary` | a hex, `rgb()`, `hsl()` or `oklch()` colour | host, or your theme |
+| `--border-radius-sm` | a `px` or `rem` length | host, or your theme |
+| `--border-radius-md` | a `px` or `rem` length | host, or your theme |
+| `--border-radius-lg` | a `px` or `rem` length | host, or your theme |
+| `--border-radius-xl` | a `px` or `rem` length | host, or your theme |
+| `--border-radius-full` | a `px` or `rem` length | host, or your theme |
+| `--font-sans` | a family name | host, or your theme |
+| `--font-mono` | a family name | host, or your theme |
+| `--font-display` | a family name | your theme only |
+| `--shadow-xs` | up to 3 layers of `[inset] <len> <len> [<len> [<len>]] <colour>` (a length or `0`) | your theme only |
+| `--shadow-sm` | up to 3 layers of `[inset] <len> <len> [<len> [<len>]] <colour>` (a length or `0`) | your theme only |
+| `--shadow-md` | up to 3 layers of `[inset] <len> <len> [<len> [<len>]] <colour>` (a length or `0`) | your theme only |
+| `--shadow-lg` | up to 3 layers of `[inset] <len> <len> [<len> [<len>]] <colour>` (a length or `0`) | your theme only |
+| `--shadow-xl` | up to 3 layers of `[inset] <len> <len> [<len> [<len>]] <colour>` (a length or `0`) | your theme only |
+| `--font-weight-normal` | `100`–`900` in hundreds | your theme only |
+| `--font-weight-medium` | `100`–`900` in hundreds | your theme only |
+| `--font-weight-semibold` | `100`–`900` in hundreds | your theme only |
+| `--font-weight-bold` | `100`–`900` in hundreds | your theme only |
+| `--chart-1` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
+| `--chart-2` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
+| `--chart-3` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
+| `--chart-4` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
+| `--chart-5` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
+| `--chart-6` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
+| `--chart-7` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
+| `--chart-8` | a hex, `rgb()`, `hsl()` or `oklch()` colour | your theme only |
+<!-- /generated:surface-theme-keys -->
+
+<!-- generated:surface-theme-fields — do not edit; run scripts/build-surface-contract.mjs -->
+- `fonts`: { `sans` → `--font-sans`, `mono` → `--font-mono`, `display` → `--font-display` }. Each value is the default binding of a static `import brand from './brand.woff2'` of a file in the surface; the SDK registers it with the FontFace API under its own family name and sets the key. Do not write `@font-face`.
+- `density`: `compact`, `comfortable`, `spacious`. Spacing for `Hero` and the metric primitives.
+- `motion`: `none`, `subtle`, `expressive`. Sets only the platform timing variables; under reduced motion every duration is `0s`.
+<!-- /generated:surface-theme-fields -->
+
+For a brand surface, combine `fonts.display` with `Hero` (a `PageFrame` variant with a display
+headline), `BrandMark` (an image import sized by the type scale, with an optional `darkSrc`),
+`Reveal` (an entrance that respects reduced motion) and `Icon`. `Image` and `BrandMark` take only
+a static image import.
 
 Read shapes the templates rely on:
 
@@ -84,14 +151,18 @@ Read shapes the templates rely on:
 - Every `Chart*` primitive renders with recharts (`ChartGauge` and `ChartHeatmap` are engine-free), so mixing
   chart types adds no second engine to the 2 MiB bundle cap.
 
-| Template | Use it for |
-|---|---|
-| `pipeline-writes` | A pipeline board whose cards move stage through a bounded mediated write (`useMutation`, `useConfirm`, `toast`). |
-| `record-table` | A large table with server paging and sort, its state in the URL (`useQuery` with `keepPrevious`, `useQueryState`). |
-| `analytics` | Metrics with a date range and a drill-down to the table (`useMetric`, `DateRangePicker`). |
-| `record-form` | A form built from the entity schema, with a dirty-form guard (`SurfaceForm`, `useConfirm`). |
-| `themed-ops` | A distinctly themed dense ops view (`defineSurfaceTheme`, an inlined `.woff2` font, heatmap, gauge). |
-| `ops-monitor` | A live view: polling, CSV export, cross-view refresh, row selection (`refreshInterval`, `useDownload`, `toCsv`, `Table` `selection`). |
+<!-- generated:surface-templates — do not edit; run scripts/build-surface-contract.mjs -->
+| Template | Archetype | Uses |
+|---|---|---|
+| `analytics` | metric with drill-down | useMetric over a DateRangePicker range, a drill-down to a records view through URL state, and the ProvenanceFooter. |
+| `brand-portal` | branded landing portal | defineSurfaceTheme with fonts.display, Hero, BrandMark, Reveal and Icon over one governed metric. |
+| `ops-monitor` | live monitor with export | refreshInterval and refetchOnVisible, Table row selection, and useDownload with toCsv. |
+| `pipeline-writes` | pipeline with a confirmed write | Stage counts with Pipeline; a confirmed, role-checked advance through one granted automation; toasts on the settled verdict. |
+| `record-form` | schema-driven record form | SurfaceForm built by useEntityForm from knowledge_entity_schema (requiredness included); a role-checked, field-scoped save; the record's history with its coverage line; confirm before leaving a dirty form. |
+| `record-table` | server-paged record table | The root Table with server paging and sort; page and sort in the URL; keepPrevious while the next page loads. |
+| `rtl-hebrew` | right-to-left Hebrew view | dir="rtl" layout, a pre-subset Latin+Hebrew .woff2 bound through fonts.sans, and metric cards. |
+| `themed-ops` | branded operations view | defineSurfaceTheme with fonts, density, motion and its own shadows; ChartHeatmap and ChartGauge. |
+<!-- /generated:surface-templates -->
 
 The two write templates also carry their handler under
 `automations/handlers/<id>/`. It reads the viewer's role from
@@ -123,7 +194,8 @@ the surface and the handler.
 | `csp_unprovable` | yes | Write `_meta.ui` as an explicit object literal, without spread or shorthand. |
 | `surface_page_heading` | yes | Remove the page-level `<h1>`; the host header owns the page title. Name a record or section with `<h2>` or below. |
 | `query_state_key_invalid` | yes | Name a `useQueryState` key with a literal matching `^[a-z][a-zA-Z0-9_]{0,39}$`. |
-| `theme_value_unbounded` | yes | Give every `defineSurfaceTheme` token a literal value of its key class: a hex or functional colour, a px/rem length, or a font family name. |
+| `theme_value_unbounded` | yes | Give every `defineSurfaceTheme` token a literal value of its key class (a colour, a px/rem length, a family name, a `100`–`900` weight or a shadow); bind `fonts` only to a static `import x from './font.woff2'`, and `density`/`motion` only to a listed literal. |
+| `icon_name_unknown` | yes | Give `<Icon>` a literal `name` from the IconName list; do not pass `Icon` around or spread its props. |
 | `raw_element` | yes (warning on `--rebuild`) | Use the kit component instead of the raw element: `Button`, `Input`/`Checkbox`/`Switch`, `Select`, `Textarea`, `Table`, or `Section` for a heading. |
 | `color_literal` | yes (warning on `--rebuild`) | Remove hex, `rgb()`, `hsl()` and `oklch()` literals: use a kit component, or declare the colour once in the file that calls `defineSurfaceTheme` and read it as a theme variable. |
 | `undeclared_tool` | yes | Declare every tool the surface calls in `tools.json`, including `automation_run_status` for a `useMutation`. |
