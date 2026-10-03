@@ -54,7 +54,9 @@ to its path, and replace every value its `placeholders` list names (the
 fields, stages or metric. A template's `supply` list names files you add
 yourself, such as the font file. Every template's landing route path is the
 placeholder `replace-with-landing-path`: replace it with a lowercase slug of
-your own (the `analytics` template also uses it in `MOUNT_PATH`). Every
+your own (the `analytics` template also uses it in `MOUNT_PATH`). Give the route a `label` that
+names the page, never "Home": the portal already has a Home, so a Surface labelled
+"Home" reads as "Data > Home". Every
 template builds clean, under the size warning line, on the current builder.
 
 Use kit components; the build refuses raw interactive and heading elements and colour
@@ -246,7 +248,7 @@ prints one `file:line:column: message [rule]` per finding, naming the kit compon
 |---|---|---|---|
 | `surface_build_failed` | the surface build failed | Read the findings: an esbuild finding is your source; otherwise the builder was unavailable, so re-run /cynap-push once and report the request id if it repeats. | no |
 | `surface_lint_failed` | the surface source uses a construct surfaces may not use | Talk to the host only through @cynap/surface-sdk hooks (no postMessage, parent/top/opener, eval or ext-apps), and draw with kit components: no raw button/input/select/textarea/table/h2–h6 and no colour literals. | no |
-| `surface_import_rejected` | the surface imports a module outside the allowed set | Import only @cynap/surface-sdk, react, react-dom, or relative files inside the surface. | no |
+| `surface_import_rejected` | the surface imports a module, or its CSS references a file, outside the allowed set | Import only @cynap/surface-sdk, react, react-dom, or relative files inside the surface; in CSS, reference a file inside the surface with a relative url(./file). | no |
 | `surface_manifest_invalid` | the surface directory, routes.json or tools.json is invalid | Keep index.tsx, routes.json and tools.json in the surface directory, and match both manifests to their schemas (unknown keys are refused). | no |
 | `surface_tool_not_callable` | the surface calls a tool it may not call | Declare every tool the surface calls in tools.json, only app-visible tools, and use useQuery for reads and useMutation for mediated writes. | no |
 | `surface_csp_not_empty` | a _meta.ui.csp domain list is not empty | Leave every _meta.ui.csp domain list empty; fetch data through SDK tools instead. | no |

@@ -44,7 +44,7 @@ rule that fired) and a one-line fix. Nothing is committed on a refusal.
 |---|---|---|
 | `surface_build_failed` | the surface build failed | no |
 | `surface_lint_failed` | the surface source uses a construct surfaces may not use | no |
-| `surface_import_rejected` | the surface imports a module outside the allowed set | no |
+| `surface_import_rejected` | the surface imports a module, or its CSS references a file, outside the allowed set | no |
 | `surface_manifest_invalid` | the surface directory, routes.json or tools.json is invalid | no |
 | `surface_tool_not_callable` | the surface calls a tool it may not call | no |
 | `surface_csp_not_empty` | a _meta.ui.csp domain list is not empty | no |
