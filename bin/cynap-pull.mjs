@@ -12,13 +12,13 @@ import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.
 import {
   assertConnectedOrg,
   assertSafeRemotePath,
-  deleteFileIfExists,
   findCaseCollisions,
   hasSymlinkOnPath,
   PLUGIN_OWNED_ROOT_FILES,
   listLocalFiles,
   mapWithConcurrency,
   mcpCall,
+  moveToDiscarded,
   readState,
   resolveContainedPath,
   resolveOrgSlug,
@@ -134,9 +134,17 @@ export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
     writeFileAtomic(abs, bytes);
     written.push(path);
   }
+  // Never destroy local bytes: a path the remote no longer holds may exist only here (its commit
+  // was discarded), so it moves to .cynap/discarded/<stamp>/ and the move is reported.
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const discarded = [];
   for (const { path, abs } of deletions) {
-    deleteFileIfExists(abs);
+    const backup = moveToDiscarded(dir, path, abs, stamp);
+    if (backup) discarded.push({ path, backup });
     deleted.push(path);
+  }
+  for (const item of discarded) {
+    onPhase(`moved ${item.path} (not on the remote tip) to ${item.backup}`);
   }
 
   const nextFiles = Object.fromEntries(remote);
@@ -150,6 +158,7 @@ export async function pull({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
     base: commitSha,
     written: written.sort(),
     deleted: deleted.sort(),
+    discarded,
     keptLocal: diff.keepLocal,
     pluginOwned,
     skippedPluginOwned,
@@ -178,7 +187,7 @@ export async function main(argv = process.argv.slice(2)) {
     return result;
   }
   process.stdout.write(
-    `${JSON.stringify({ dir: result.dir, base: result.base, written: result.written, deleted: result.deleted }, null, 2)}\n`
+    `${JSON.stringify({ dir: result.dir, base: result.base, written: result.written, deleted: result.deleted, discarded: result.discarded }, null, 2)}\n`
   );
   return result;
 }

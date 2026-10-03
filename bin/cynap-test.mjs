@@ -17,7 +17,8 @@
 // Zero dependencies — Node built-ins + sibling modules only.
 
 import { spawn } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -40,9 +41,6 @@ export function inspectOrgTest(dir, file) {
       reason: 'uses Vitest, which /cynap-test does not provide',
       fix: 'rewrite with node:test and node:assert/strict',
     };
-  }
-  if (file.endsWith('.js') && /\brequire\s*\(/.test(source)) {
-    return { file, reason: 'uses require() in an ESM .js file', fix: 'rename it to .cjs or convert it to ESM imports' };
   }
 
   const requireFromTest = createRequire(resolvePath(dir, file));
@@ -67,6 +65,41 @@ export function inspectOrgTest(dir, file) {
     }
   }
   return null;
+}
+
+/**
+ * The plugin-owned root package.json is `type: module`, so Node would load a `.js` test as ESM and
+ * `require` would be undefined. A `.js` file that calls require() and has no ESM import/export is
+ * CommonJS: it runs through a generated shim under `.cynap/` that compiles it as CJS in place
+ * (relative requires still resolve from the test's own directory). Returns the path to pass to
+ * `node --test`, relative to `realDir`.
+ */
+export function commonJsShimFor(realDir, file) {
+  const source = readFileSync(resolvePath(realDir, file), 'utf8');
+  const isCommonJs = file.endsWith('.js') && /\brequire\s*\(/.test(source) && !/^\s*(?:import|export)\b/m.test(source);
+  if (!isCommonJs) return file;
+  const shimRel = `.cynap/cjs-shims/${createHash('sha256').update(file).digest('hex').slice(0, 16)}.test.mjs`;
+  const shim = [
+    "import Module from 'node:module';",
+    "import { readFileSync } from 'node:fs';",
+    "import { dirname } from 'node:path';",
+    `const file = ${JSON.stringify(resolvePath(realDir, file))};`,
+    // Org `.js` files the test require()s are CommonJS too (node_modules keeps its own package type).
+    `const root = ${JSON.stringify(`${realDir}/`)};`,
+    "const loadJs = Module._extensions['.js'];",
+    "Module._extensions['.js'] = (m, filename) => {",
+    "  if (filename.startsWith(root) && !filename.includes('/node_modules/')) m._compile(readFileSync(filename, 'utf8'), filename);",
+    '  else loadJs(m, filename);',
+    '};',
+    'const mod = new Module(file);',
+    'mod.filename = file;',
+    'mod.paths = Module._nodeModulePaths(dirname(file));',
+    "mod._compile(readFileSync(file, 'utf8'), file);",
+    '',
+  ].join('\n');
+  mkdirSync(resolvePath(realDir, '.cynap/cjs-shims'), { recursive: true });
+  writeFileSync(resolvePath(realDir, shimRel), shim);
+  return shimRel;
 }
 
 export function parseTestArgs(argv) {
@@ -129,7 +162,7 @@ export async function runOrgTests({ cwd = process.cwd(), argv = [], stdio = 'inh
   // Files are passed RELATIVE to the working directory: `node --test` treats its arguments as
   // glob patterns, and an absolute pattern starts its walk at `/`, which the sandbox denies.
   const realDir = realpathSync(dir);
-  const child = spawnImpl(process.execPath, nodeTestArgv(realDir, files), {
+  const child = spawnImpl(process.execPath, nodeTestArgv(realDir, files.map((file) => commonJsShimFor(realDir, file))), {
     cwd: realDir,
     env: SANDBOX_ENV,
     stdio: ['ignore', 'pipe', 'pipe'],

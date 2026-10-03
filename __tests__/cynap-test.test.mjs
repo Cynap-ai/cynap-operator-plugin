@@ -101,11 +101,16 @@ test('marks Vitest and unavailable packages unsupported with a concrete fix', ()
   assert.match(inspectOrgTest(dir, 'missing.test.mjs').reason, /not-installed-anywhere/);
 });
 
-test('refuses require() in ESM .js with a rename-to-.cjs fix', async () => {
-  write('esm-require.test.js', "const { test } = require('node:test');\n");
-  const refused = await runOrgTests({ cwd, argv: ['esm-require.test.js'], stdio: 'pipe' });
-  assert.equal(refused.exitCode, UNSUPPORTED_EXIT_CODE);
-  assert.match(refused.unsupported[0].fix, /rename it to \.cjs/);
+test('runs a CommonJS .js test (require) although the plugin-owned package.json is type:module', needsInProcess, async () => {
+  write('helper.js', 'module.exports = { one: 1 };\n');
+  write(
+    'cjs.test.js',
+    "const { test } = require('node:test'); const assert = require('node:assert/strict'); const h = require('./helper.js'); test('CJS .js runs', () => assert.equal(h.one, 1));\n"
+  );
+  const ran = await runOrgTests({ cwd, argv: ['cjs.test.js'], stdio: 'pipe' });
+  assert.equal(ran.ok, true, ran.output);
+  assert.equal(ran.passed, 1);
+  assert.equal(ran.unsupported.length, 0);
 });
 
 test('runs .cjs tests when the sandbox permits', needsInProcess, async () => {
