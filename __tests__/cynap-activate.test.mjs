@@ -249,3 +249,27 @@ test('an upstream gateway timeout from the proxy is reconciled, not reported as 
     process.env.HOME = home;
   }
 });
+
+test('an unpreviewable browser handler opens the owner step-up with a notice, never a preview', async () => {
+  const calls = [];
+  const notices = [];
+  const nextAction = { kind: 'handler_unpreviewable_ack_required', command: `/cynap-activate ${SHA}`,
+    handlers: [{ automation_id: 'writeupp-invoice-write', handler_hash: 'b'.repeat(64), proof: 'owner_acknowledgement' }] };
+  const result = await runActivationFlow({ slug: 'cynap-e2e', commitSha: SHA,
+    statusReader: async () => { calls.push('status'); return { orgSlug: 'cynap-e2e', nextAction }; },
+    previewRunner: async () => { throw new Error('a browser handler must never be previewed'); },
+    activateFn: async () => { calls.push('activate'); return { activated: true }; },
+    onNotice: (line) => notices.push(line) });
+  assert.deepEqual(calls, ['status', 'activate']);
+  assert.deepEqual(result, { activated: true });
+  assert.match(notices[0], /writeupp-invoice-write declares the browser capability/);
+  assert.match(notices[0], /acknowledge activating it without a preview/);
+});
+
+test('an unpreviewable browser handler for another caller does not step up', async () => {
+  const nextAction = { kind: 'handler_unpreviewable_ack_required', portal_path: '/cynap-e2e/settings/operators', handlers: [] };
+  const result = await runActivationFlow({ slug: 'cynap-e2e', commitSha: SHA,
+    statusReader: async () => ({ orgSlug: 'cynap-e2e', nextAction }),
+    activateFn: async () => { throw new Error('only the author-owner steps up'); } });
+  assert.deepEqual(result, { next_action: nextAction, state: 'handler_unpreviewable_ack_required' });
+});

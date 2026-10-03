@@ -6,8 +6,8 @@ argument-hint: "<commit-sha> [--reconcile]"
 # /cynap-activate
 
 Use this when `workspace_commit` or `workspace_status` returns
-`next_action.kind: step_up_and_activate` or `handler_preview_required`. Run it once
-with that commit digest.
+`next_action.kind: step_up_and_activate`, `handler_preview_required` or
+`handler_unpreviewable_ack_required` with a `command`. Run it once with that commit digest.
 `next_action.kind: reconciling` means the platform is finishing a stalled activation: do not
 re-activate, discard or re-push that commit. Check `workspace_status` again later.
 
@@ -27,6 +27,15 @@ preview with `{orgSlug, automationId, commitSha}`, prints `preview_running` and 
 id, and polls status with bounded backoff. After a pass it re-reads `workspace_status`;
 only `step_up_and_activate` opens the owner approval. On fail it stops with only the verdict
 code, fixed operator text, and effect kinds with counts. Never show preview row data.
+
+`handler_unpreviewable_ack_required` means the changed handler declares
+`capabilities: ["browser"]`, which preview cannot run (`preview_browser_unsupported`). It needs no
+preview: the command opens the owner approval, where the owner must tick an explicit
+acknowledgement that the handler is activated without a preview proof. The acknowledgement is bound
+to the commit, the handler id and the source sha256, so a new source needs a new approval. Without a
+`command` (you are not the author-owner) the org owner approves it from the portal instead. Tell the
+human the approval page carries that acknowledgement. Only the browser refusal is exempt: an
+agent-entrypoint handler or any other preview refusal still blocks activation.
 
 `handler_unproven` means this exact handler bundle lacks a passing proof: run
 `/cynap-preview <automation-id> <commit-sha>`, then re-read status. A
