@@ -53,11 +53,22 @@ placeholder `replace-with-landing-path`: replace it with a lowercase slug of
 your own (the `analytics` template also uses it in `MOUNT_PATH`). Every
 template builds clean, under the size warning line, on the current builder.
 
-Style every element you use. The frame ships Tailwind preflight, which zeroes
-all browser defaults (a bare `<h2>` has no size or weight, `<ul>` no bullets,
-`<button>` no chip, `p`/`table`/`hr` no margins or borders): prefer the kit
-`Section` (its `title` is the heading) and `Select`, or style the element in
-your own CSS, which always beats preflight.
+Use kit components; the build refuses raw interactive and heading elements and colour
+literals. A bare `<button>`, `<input>`, `<select>`, `<textarea>`, `<table>` or `<h2>`–`<h6>` is
+stripped to unstyled text by the frame's preflight, so use `Button`, `Input`, `Select`,
+`Textarea`, `Table` and `Section` (its `title` is the heading). Lay out with `Stack`, `Row`,
+`Grid` and `Section`; show loading with `Skeleton`, an empty result with `EmptyState`, an error
+with `Callout`. A hex, `rgb()`, `hsl()` or `oklch()` literal is refused everywhere except the file
+that calls `defineSurfaceTheme`; read colours from the theme. Your own CSS is for layout only
+(display, gap, padding, alignment). A plain `<div>`, `<span>` or `<svg>` is fine.
+
+A change that edits the surface's source must pass these rules. A pure
+`/cynap-push --rebuild` of unchanged source reports the same findings as warnings, so a surface
+built before the rules still rebuilds onto a new SDK; the first edit then asks it to migrate.
+
+<!-- generated:surface-kit — do not edit; run scripts/build-surface-contract.mjs -->
+Draw with kit components, never raw elements. The form, feedback and action kit that `@cynap/surface-sdk` exports is: `Button`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Separator`, `Field`, `FieldLabel`, `FieldDescription`, `FieldError`, `Input`, `Textarea`, `Checkbox`, `Switch`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `Dialog`, `DialogTrigger`, `DialogClose`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter`, `Sheet`, `SheetTrigger`, `SheetClose`, `SheetContent`, `SheetHeader`, `SheetTitle`, `SheetDescription`, `SheetFooter`, `Popover`, `PopoverTrigger`, `PopoverContent`, `TabsRoot`, `TabsList`, `TabsTrigger`, `TabsContent`, `TooltipRoot`, `TooltipTrigger`, `TooltipContent`, `TooltipProvider`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `DateRangePicker`, `PeriodFilterBar`, `ProvenanceFooter`, `SurfaceForm`, `Toaster`, `toast`, `useConfirm`. The layout, content and chart primitives come from the same import.
+<!-- /generated:surface-kit -->
 
 Read shapes the templates rely on:
 
@@ -80,7 +91,7 @@ Read shapes the templates rely on:
 | `analytics` | Metrics with a date range and a drill-down to the table (`useMetric`, `DateRangePicker`). |
 | `record-form` | A form built from the entity schema, with a dirty-form guard (`SurfaceForm`, `useConfirm`). |
 | `themed-ops` | A distinctly themed dense ops view (`defineSurfaceTheme`, an inlined `.woff2` font, heatmap, gauge). |
-| `ops-monitor` | A live view: polling, CSV export, cross-view refresh, row selection (`refreshInterval`, `useDownload`, `toCsv`). |
+| `ops-monitor` | A live view: polling, CSV export, cross-view refresh, row selection (`refreshInterval`, `useDownload`, `toCsv`, `Table` `selection`). |
 
 The two write templates also carry their handler under
 `automations/handlers/<id>/`. It reads the viewer's role from
@@ -113,7 +124,8 @@ the surface and the handler.
 | `surface_page_heading` | yes | Remove the page-level `<h1>`; the host header owns the page title. Name a record or section with `<h2>` or below. |
 | `query_state_key_invalid` | yes | Name a `useQueryState` key with a literal matching `^[a-z][a-zA-Z0-9_]{0,39}$`. |
 | `theme_value_unbounded` | yes | Give every `defineSurfaceTheme` token a literal value of its key class: a hex or functional colour, a px/rem length, or a font family name. |
-| `color_literal` | no (warning) | Move colour literals into the file that calls `defineSurfaceTheme`, and read them as theme variables elsewhere. |
+| `raw_element` | yes (warning on `--rebuild`) | Use the kit component instead of the raw element: `Button`, `Input`/`Checkbox`/`Switch`, `Select`, `Textarea`, `Table`, or `Section` for a heading. |
+| `color_literal` | yes (warning on `--rebuild`) | Remove hex, `rgb()`, `hsl()` and `oklch()` literals: use a kit component, or declare the colour once in the file that calls `defineSurfaceTheme` and read it as a theme variable. |
 | `undeclared_tool` | yes | Declare every tool the surface calls in `tools.json`, including `automation_run_status` for a `useMutation`. |
 | `query_on_write_tool` | yes | Call a mediated write with `useMutation`, never `useQuery`. |
 | `mutation_on_read_tool` | yes | Read with `useQuery`; `useMutation` takes only a mediated write. |
@@ -151,8 +163,9 @@ the surface and the handler.
 | `deadline` | yes | Re-run `/cynap-push`; the request had too little time left to build. |
 <!-- /generated:surface-lint-rules -->
 
-A warning (`color_literal`, `write_via_use_tool`, `bundle_near_cap`) does not
-block the build; `/cynap-push` prints it under the commit line.
+A warning (`write_via_use_tool`, `bundle_near_cap`, and `raw_element` / `color_literal` on a
+`--rebuild`) does not block the build; `/cynap-push` prints it under the commit line. A refusal
+prints one `file:line:column: message [rule]` per finding, naming the kit component to use.
 
 ## Refusal codes
 
@@ -160,7 +173,7 @@ block the build; `/cynap-push` prints it under the commit line.
 | Code | Meaning | Fix | Retryable |
 |---|---|---|---|
 | `surface_build_failed` | the surface build failed | Read the findings: an esbuild finding is your source; otherwise the builder was unavailable, so re-run /cynap-push once and report the request id if it repeats. | no |
-| `surface_lint_failed` | the surface source uses a construct surfaces may not use | Talk to the host only through @cynap/surface-sdk hooks; no postMessage, parent/top/opener, eval or ext-apps. | no |
+| `surface_lint_failed` | the surface source uses a construct surfaces may not use | Talk to the host only through @cynap/surface-sdk hooks (no postMessage, parent/top/opener, eval or ext-apps), and draw with kit components: no raw button/input/select/textarea/table/h2–h6 and no colour literals. | no |
 | `surface_import_rejected` | the surface imports a module outside the allowed set | Import only @cynap/surface-sdk, react, react-dom, or relative files inside the surface. | no |
 | `surface_manifest_invalid` | the surface directory, routes.json or tools.json is invalid | Keep index.tsx, routes.json and tools.json in the surface directory, and match both manifests to their schemas (unknown keys are refused). | no |
 | `surface_tool_not_callable` | the surface calls a tool it may not call | Declare every tool the surface calls in tools.json, only app-visible tools, and use useQuery for reads and useMutation for mediated writes. | no |

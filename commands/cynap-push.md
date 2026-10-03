@@ -64,12 +64,14 @@ A surface may import only `@cynap/surface-sdk`, `react`, `react/jsx-runtime`, `r
 After a commit that built a surface, `/cynap-push` prints one line per built surface,
 `candidate: <portal>/<org>/_surface-candidate/<commit_sha>/<surfaceId>/` (and `candidate_urls`
 in `--json`): the Owner or an Admin opens it to see the unapproved view, read tools only. The
-builder's warnings (a colour literal outside the theme file, a write through `useTool`, a bundle
-over 85% of its cap) print under it; they do not block the commit.
+builder's warnings (a write through `useTool`, a bundle over 85% of its cap, and on a `--rebuild`
+a raw element or colour literal) print under it; they do not block the commit. A push that edits
+surface source is refused on a raw `<button>`/`<input>`/`<select>`/`<textarea>`/`<table>`/`<h2>`–`<h6>`
+or a colour literal, one `file:line:column: message [rule]` per finding naming the kit component.
 
 **`--rebuild <surfaceId>`** commits no file changes and rebuilds that surface against the current
 platform builder — how a new Surface SDK minor reaches an approved surface (there are no silent
-platform rebuilds). The rebuild is a draft like any push; the Owner approves it at activation.
+platform rebuilds). Design findings in unchanged source are warnings here, never a refusal. The rebuild is a draft like any push; the Owner approves it at activation.
 
 **Runtime changes need `/cynap-activate <commit_sha>` separately.** A commit
 containing only commit-only files auto-activates.
