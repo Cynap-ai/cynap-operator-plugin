@@ -41,9 +41,13 @@ test('classifyForPush refuses an unknown path', () => {
 });
 
 test('classifyForPush refuses a git-entrance-only kind, naming the entrance', () => {
-  const refusal = classifyForPush('solutions.json', classifyPath); // solution-manifest, DEFERRED
-  assert.equal(refusal.kind, 'solution-manifest');
+  const refusal = classifyForPush('manifest.json', classifyPath); // org-manifest, DEFERRED
+  assert.equal(refusal.kind, 'org-manifest');
   assert.equal(refusal.entrance, 'git');
+});
+
+test('classifyForPush admits solutions.json — solution-manifest is operator-routable', () => {
+  assert.equal(classifyForPush('solutions.json', classifyPath), null);
 });
 
 test('classifyForPush admits checks/** — checks are plane-activatable, so /cynap-checks reads pending', () => {

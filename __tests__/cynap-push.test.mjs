@@ -60,12 +60,12 @@ test('push: refuses locally on a git-entrance-only kind, naming the entrance —
   const dir = scratchDir();
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'solutions.json'), '[]'); // solution-manifest → DEFERRED_ACTIVATION_KINDS
+    writeFileSync(join(dir, 'reclaims.json'), '[]'); // reclaims → DEFERRED_ACTIVATION_KINDS
     writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
     const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'edit'], fetchImpl: fakeFetch({}) });
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'kind_not_activatable');
-    assert.deepEqual(result.refusals, [{ path: 'solutions.json', kind: 'solution-manifest', entrance: 'git' }]);
+    assert.deepEqual(result.refusals, [{ path: 'reclaims.json', kind: 'reclaims', entrance: 'git' }]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

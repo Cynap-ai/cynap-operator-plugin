@@ -1,6 +1,6 @@
 ---
 name: author-a-code-execution
-description: Author a mode:code_execution automation — a single-file TypeScript handler (entrypoint:worker) or a headless agent session (entrypoint:opencode), the cheapest way to add selective LLM calls plus deterministic logic and writes to the org database, a scripted browser job (worker + capabilities:["browser"] + session_providers), or an open-ended browser/filesystem agent task. Use after choose-the-right-mode routes here.
+description: Author a mode:code_execution automation — a single-file TypeScript handler (entrypoint:worker), the cheapest way to add selective LLM calls plus deterministic logic and writes to the org database, a scripted browser job (worker + capabilities:["browser"] + session_providers). Use after choose-the-right-mode routes here.
 ---
 
 # author-a-code-execution — Code-Execution-Mode Authoring
@@ -31,37 +31,28 @@ You are authoring a **`mode:code_execution` automation** for one customer
 org — it is the only code-bearing mode on this platform. It runs in
 a per-run isolated runtime. If you haven't confirmed this is the right mode,
 go read `choose-the-right-mode` first. Read `platform-invariants` before
-this skill if you haven't this session. If the handler uses `ctx.tools.llm`
-or the `opencode` entrypoint, also read `configure-customer-ai` and explain
+this skill if you haven't this session. If the handler uses `ctx.tools.llm`,
+also read `configure-customer-ai` and explain
 native versus BYOK billing before choosing a model.
 
-## Two entrypoints, one mode
+## One entrypoint
 
-`execution.entrypoint` picks the runtime shape (default `'worker'`):
+`execution.entrypoint` is `'worker'` (the default, and the only accepted
+value): it runs your single-file `handler.ts`, with selective
+`ctx.tools.llm.complete()` calls and no chat loop. Use it for
+classification/extraction plus deterministic TypeScript logic and writes to
+the org database. A headless agent chat session (`entrypoint:'opencode'`) no
+longer exists; a config that names it is rejected at validation.
 
-- **`worker`** (default) — runs your single-file `handler.ts`, selective
-  `ctx.tools.llm.complete()` calls, no chat loop. Use for classification/extraction plus
-  deterministic TypeScript logic and writes to the org database.
-- **`opencode`** — a headless agent chat session on the agent image,
-  for filesystem/multi-turn workloads. **Prefer `worker` for classification/extraction** —
-  only reach for `opencode` when the task genuinely needs an agent that
-  decides its own next step.
+## Browser work
 
-Both entrypoints share the same `allowed_tools`/`http_allowlist` contract
-below. This skill focuses on the `worker` entrypoint (the common case); for
-`opencode`, the config shape is the same minus `handler.ts` — the sandbox
-drives an LLM chat turn directly.
-
-## Browser work — two first-class routes
-
-`execution.capabilities: ["browser"]` is valid with EITHER entrypoint. It is
+`execution.capabilities: ["browser"]` is valid on a `worker`. It is
 intent: the platform picks the Chromium-capable image at the ≥4GB tier. The
 only capability value the platform accepts today is `"browser"`.
 
 | Route | `execution` | What drives the browser | Use when |
 |---|---|---|---|
 | **worker + browser** | `"entrypoint": "worker"`, `"capabilities": ["browser"]`, plus `handler.ts` | Your handler, deterministically: it runs the agent-browser CLI (`ab`, on PATH) itself. No LLM in the loop. | The pages and steps are known in advance — a nightly scrape, a sync that walks a list, a form an invoice writer fills. This is the production pattern for scripted browser jobs. |
-| **opencode + browser** | `"entrypoint": "opencode"`, `"capabilities": ["browser"]` | An agent chat turn. | The page flow is not known in advance and needs judgment at each step. |
 
 A logged-in browser job adds a **stored session**:
 
@@ -275,9 +266,8 @@ shipping).
 
 1. Confirm `code_execution` is right (`choose-the-right-mode`). A scripted
    browser job is `entrypoint: 'worker'` + `capabilities: ['browser']` (+
-   `session_providers` when it logs in); an open-ended agent task is
-   `entrypoint: 'opencode'` (add `capabilities: ['browser']` if it needs a
-   browser); everything else is `entrypoint: 'worker'` with a `.ts` handler.
+   `session_providers` when it logs in); everything else is
+   `entrypoint: 'worker'` with a `.ts` handler.
 2. Draft `handler.ts` as a single file — inline everything, no imports
    beyond type-only SDK imports.
 3. Do NOT declare a top-level `tools: []` — it's rejected for

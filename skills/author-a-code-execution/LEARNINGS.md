@@ -50,11 +50,6 @@ append at task end. No customer-specific strings.
   `mode:code_execution` — there's no longer a sync-vs-async choice to
   document a worked example for; `max_runtime_ms` (clamped `[1s, 2h]`) is
   the only runtime-budget knob now.
-- Should this skill include a worked `entrypoint: 'opencode'` +
-  `capabilities: ['browser']` example once a committed one exists with a
-  real browser-automation task? Current: `author-a-code-execution` focuses
-  on `entrypoint: 'worker'`; the headless-agent entrypoint is only
-  described at a high level as of 2026-08-11.
 
 ---
 
