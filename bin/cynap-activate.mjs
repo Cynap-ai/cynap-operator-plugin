@@ -32,7 +32,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const GATEWAY_TIMEOUT_CODES = new Set(['http_502', 'http_503', 'http_504']);
 
 export async function reconcileActivation({
-  slug, commitSha, fetchImpl = fetch, waitMs = 3 * 60 * 1000, intervalMs = 5000, wait = sleep,
+  slug, commitSha, fetchImpl = fetch, waitMs = 10 * 60 * 1000, intervalMs = 5000, wait = sleep,
 }) {
   const proxyUrl = `http://127.0.0.1:${stablePortForSlug(slug)}/mcp`;
   const call = (name, args) => mcpCall(proxyUrl, name, args, { fetchImpl });
@@ -52,7 +52,10 @@ export async function reconcileActivation({
     message: `activation not confirmed: ${state}. The activation request timed out; check /cynap-status before retrying.`,
   });
   const pending = status.pending?.find((item) => item.commit_sha === commitSha);
-  if (pending) return unconfirmed(pending.state ?? 'pending', pending.next_action ? { next_action: pending.next_action } : {});
+  if (pending) return unconfirmed(pending.state ?? 'pending', {
+    ...(pending.next_action ? { next_action: pending.next_action } : {}),
+    ...(pending.failure_code ? { failure_code: pending.failure_code } : {}),
+  });
   const log = await call('workspace_log', { limit: 20 });
   const commit = log?.commits?.find((item) => item.commit_sha === commitSha || item.sha === commitSha);
   if (!commit) return unconfirmed('unknown', { code: 'activation_outcome_unknown' });
@@ -87,7 +90,11 @@ export async function activate({ slug, commitSha, witness = false, reconcile = f
   }
   if (!response.ok || body?.ok !== true) return { ok: false, code: body?.error ?? `http_${response.status}`, ...(body?.failureCode ? { failureCode: body.failureCode } : {}), message: body?.message };
   const unwrapped = unwrapToolEnvelope(body.result);
-  const result = body.step_up && unwrapped && typeof unwrapped === 'object' ? { ...unwrapped, step_up: body.step_up } : unwrapped;
+  // The server accepts the activation and finishes it in the background: poll to its real outcome.
+  const settled = unwrapped?.code === 'activation_pending' && !witness
+    ? await reconcileActivation({ slug, commitSha, fetchImpl })
+    : unwrapped;
+  const result = body.step_up && settled && typeof settled === 'object' ? { ...settled, step_up: body.step_up } : settled;
   return witness ? { result, witness: body.witness ?? null } : result;
 }
 

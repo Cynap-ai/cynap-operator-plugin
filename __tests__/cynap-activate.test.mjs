@@ -273,3 +273,44 @@ test('an unpreviewable browser handler for another caller does not step up', asy
     activateFn: async () => { throw new Error('only the author-owner steps up'); } });
   assert.deepEqual(result, { next_action: nextAction, state: 'handler_unpreviewable_ack_required' });
 });
+
+test('an accepted (activation_pending) activation is polled to its real outcome, never reported as pending', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { activate } = await import('../bin/cynap-activate.mjs');
+  const { resolveWorkingDir } = await import('../lib/connect.mjs');
+  const home = process.env.HOME;
+  process.env.HOME = mkdtempSync(join(tmpdir(), 'activate-async-'));
+  try {
+    const dir = resolveWorkingDir('cynap-e2e');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.operator-control'), 'nonce\n');
+    let statusReads = 0;
+    const result = await activate({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (url) => {
+      if (String(url).endsWith('/activate')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, step_up: 'automatic',
+          result: { structuredContent: { ok: false, code: 'activation_pending', commit_sha: SHA } } }) };
+      }
+      statusReads += 1;
+      const value = statusReads < 2
+        ? { ok: true, live_digest: null, pending: [{ commit_sha: SHA, state: 'activating' }] }
+        : { ok: true, live_digest: SHA, pending: [] };
+      return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
+    } });
+    assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA, step_up: 'automatic' });
+    assert.equal(statusReads, 2);
+  } finally {
+    process.env.HOME = home;
+  }
+});
+
+test('reconciliation reports a failed background activation with its failure code', async () => {
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => ({
+    ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
+      pending: [{ commit_sha: SHA, state: 'failed', failure_code: 'post_deploy_failed' }] } } }),
+  }) });
+  assert.equal(result.ok, false);
+  assert.equal(result.state, 'failed');
+  assert.equal(result.failure_code, 'post_deploy_failed');
+});
