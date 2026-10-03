@@ -40,7 +40,8 @@ unfreeze command.
 `gate_change_not_alone` means an existing check was edited or deleted in the
 same commit as a runtime change. Ship the check change separately.
 `checks_uncovered_path` means a changed managed path has no exact-path check
-assertion in the pending suite; add coverage and make a new commit.
+assertion in the pending suite; add coverage and make a new commit. For a deleted
+path, the covering assertion needs `"allow_absent": true`.
 
 ## `--reconcile` (rare, opt-in)
 

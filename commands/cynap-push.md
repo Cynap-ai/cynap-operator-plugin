@@ -100,4 +100,7 @@ An existing check edit or deletion cannot ride with a runtime change
 (`gate_change_not_alone`). A new check may accompany a change. A changed
 managed path with no assertion naming it is refused up front, during push
 validation, with `checks_uncovered_path`, and again at activation; add coverage
-in a check before pushing.
+in a check before pushing. Deleting a managed path counts as changing it. To retire
+a file (for example a handler's `config.json`), keep or add a check assertion naming
+it with `"allow_absent": true` — the assertion passes once the file is gone — then
+delete the file in a later commit. Delete the check last, if at all.
