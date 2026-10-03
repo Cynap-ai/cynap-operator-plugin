@@ -1251,6 +1251,74 @@ export async function handlePluginOutdated({
   }
 }
 
+/**
+ * Counts the proxied MCP requests currently being served. A request is counted
+ * from the moment it arrives until its response closes — `close` fires on a
+ * normal finish AND on an aborted socket, so a dropped client never leaves the
+ * proxy looking busy forever.
+ */
+export function createInFlightTracker() {
+  let inFlight = 0;
+  return {
+    begin(res) {
+      inFlight += 1;
+      let counted = true;
+      res.once('close', () => {
+        if (!counted) return;
+        counted = false;
+        inFlight -= 1;
+      });
+    },
+    count: () => inFlight,
+  };
+}
+
+/** The requests the READY proxy server is serving right now; read by the idle
+ * self-update tick in main(). */
+const proxyRequestsInFlight = createInFlightTracker();
+
+/** How often an idle proxy looks for a newer installed build. The install
+ * itself stays throttled by `runProactivePluginUpdate` (6h). */
+export const IDLE_SELF_UPDATE_INTERVAL_MS = 15 * 60 * 1000;
+
+/**
+ * One idle self-update tick. A non-breaking release no longer raises
+ * the server's minimum, so a running proxy would otherwise keep its old build
+ * until the next `plugin_outdated`. This installs the latest build (reusing
+ * `runProactivePluginUpdate`) and, when the installed version is newer than the
+ * running one, restarts into it — but only while NO request is in flight, checked
+ * both before the work and again right before the restart. A busy proxy returns
+ * `'busy'` and tries again on the next tick; the restart itself reuses the same
+ * credential-handoff path `plugin_outdated` uses.
+ *
+ * Returns an outcome string; never throws.
+ */
+export async function runIdleSelfUpdate({
+  pluginVersion,
+  cwd,
+  inFlightCount,
+  restart,
+  update = runProactivePluginUpdate,
+  readInstalled = readInstalledPlugin,
+  out = process.stderr,
+}) {
+  try {
+    if (!pluginVersion) return 'no_plugin_version';
+    if (inFlightCount() > 0) return 'busy';
+    await update({ cwd, out });
+    const installed = await readInstalled();
+    if (!installed) return 'no_installed_record';
+    if (versionAtLeast(pluginVersion, installed.version)) return 'current';
+    if (inFlightCount() > 0) return 'busy';
+    out.write(`[operator-proxy] idle self-update: ${pluginVersion} -> ${installed.version}; restarting while idle.\n`);
+    await restart(installed);
+    return 'restarting';
+  } catch (error) {
+    out.write(`[operator-proxy] idle self-update failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 'error';
+  }
+}
+
 /** The MCP protocolVersion the locally-answered `initialize` falls
  * back to when the client's request omits `params.protocolVersion`. */
 export const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
@@ -3168,6 +3236,7 @@ export function createProxyServer({
   }
 
   return createServer(async (req, res) => {
+    proxyRequestsInFlight.begin(res);
     if (refuseNonLocalCaller(req, res)) return;
 
     // Liveness/identity probe. `/cynap-connect` uses it to decide reuse-vs-launch
@@ -4360,7 +4429,14 @@ export async function main(argv = process.argv.slice(2)) {
     lastPluginUpdateOutcome = outcome === 'ready_to_restart' ? 'updated' : outcome;
     process.stderr.write(`[operator-proxy] lifecycle outcome=${lastPluginUpdateOutcome} pid=${process.pid} plugin=${opts.pluginVersion ?? 'unknown'}\n`);
     if (outcome !== 'ready_to_restart') return;
+    await restartIntoInstalledBuild(launchRecord);
+  };
 
+  // The restart half shared by a `plugin_outdated` refusal and the idle
+  // self-update tick: one restart path, started at most once per process.
+  let restartStarted = false;
+  const restartIntoInstalledBuild = async (launchRecord) => {
+    if (restartStarted) return;
     // Resolve the SUCCESSOR before retiring anything. The recorded launch
     // command names the plugin root `/cynap-connect` ran from, which the update
     // has just made stale — replaying it verbatim relaunches the predecessor
@@ -4392,6 +4468,7 @@ export async function main(argv = process.argv.slice(2)) {
     // The successor inherits this process's credential over a private socket
     // (restartIntoSuccessor); only a failed handoff revokes it and makes the
     // successor reopen browser consent.
+    restartStarted = true;
     const held = credentialSession?.current();
     const releasePort = () =>
       new Promise((resolve) => {
@@ -4424,6 +4501,19 @@ export async function main(argv = process.argv.slice(2)) {
       );
     });
   };
+
+  // A non-breaking release no longer raises the server minimum, so an
+  // idle proxy picks up the newer build itself. The tick never restarts with a
+  // request in flight (runIdleSelfUpdate re-checks right before restarting).
+  const idleUpdateTimer = setInterval(() => {
+    void runIdleSelfUpdate({
+      pluginVersion: opts.pluginVersion,
+      cwd: process.cwd(),
+      inFlightCount: proxyRequestsInFlight.count,
+      restart: () => restartIntoInstalledBuild(readLaunchRecord()),
+    });
+  }, IDLE_SELF_UPDATE_INTERVAL_MS);
+  idleUpdateTimer.unref();
 
   readyProxyServer = createProxyServer({
     mcpHost,
