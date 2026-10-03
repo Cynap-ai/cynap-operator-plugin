@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { failureReason, parsePreviewArgs, previewSummary, runPreview } from '../bin/cynap-preview.mjs';
+import { failureCode, failureReason, parsePreviewArgs, previewSummary, runPreview } from '../bin/cynap-preview.mjs';
 import { forwardPreviewRequest } from '../bin/operator-proxy.mjs';
 
 const SHA = 'a'.repeat(64);
@@ -69,4 +69,24 @@ test('a failure prints its underlying cause, including the socket error fetch hi
   assert.equal(failureReason(new Error('operator preview status failed:\n HTTP 502')), ': operator preview status failed: HTTP 502');
   assert.equal(failureReason({}), '');
   assert.ok(failureReason(new Error('x'.repeat(1000))).length <= 302);
+});
+
+test('a local failure prints a named code instead of a bare preview_failed', () => {
+  let usage;
+  try { parsePreviewArgs(['only-one-arg']); } catch (error) { usage = error; }
+  assert.equal(failureCode(usage), 'usage');
+  const refused = new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) });
+  assert.equal(failureCode(refused), 'proxy_unreachable');
+  assert.equal(failureCode(Object.assign(new Error('x'), { code: 'status_http_502' })), 'status_http_502');
+  assert.equal(failureCode(new Error('unknown')), 'preview_failed');
+});
+
+test('a failed status read carries its HTTP status as the code', async () => {
+  const fetchImpl = async (url) => (String(url).includes('/status/')
+    ? { ok: false, status: 503, json: async () => ({}) }
+    : { ok: true, status: 200, json: async () => ({ previewId: 'p1' }) });
+  await assert.rejects(
+    runPreview({ slug: 's', automationId: 'a', commitSha: 'a'.repeat(64), fetchImpl, wait: async () => {}, nonceOverride: 'n' }),
+    (error) => error.code === 'status_http_503',
+  );
 });
