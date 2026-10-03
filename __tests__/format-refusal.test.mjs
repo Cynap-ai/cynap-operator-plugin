@@ -47,6 +47,15 @@ test('cynap-activate refusal names the code and failureCode instead of request_r
   assert.match(formatRefusal({ ok: false, code: 'http_400' }, { command: 'cynap-activate' }), /^cynap-activate: http_400: request refused/);
 });
 
+// After a gateway timeout the plugin reconciles; an activation it cannot yet confirm is still running, not refused.
+test('an unconfirmed activation says it may still be running instead of "request refused"', () => {
+  for (const code of ['activation_not_confirmed', 'activation_outcome_unknown']) {
+    const text = formatRefusal({ ok: false, code, commit_sha: 'a'.repeat(64) }, { command: 'cynap-activate' });
+    assert.match(text, new RegExp(`^cynap-activate: ${code}: the activation request timed out`));
+    assert.doesNotMatch(text, /request refused/);
+  }
+});
+
 test('activation_pending reads as accepted, never as refused', () => {
   const text = formatRefusal({ ok: false, code: 'activation_pending', commit_sha: 'a'.repeat(64) }, { command: 'cynap-activate' });
   assert.match(text, /^cynap-activate: activation_pending: activation accepted; post-deploy is still awaiting/);
