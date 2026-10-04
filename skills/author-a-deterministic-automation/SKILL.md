@@ -42,19 +42,44 @@ automations/{automation-id}.json
 
 ## The step vocabulary — CLOSED, interpreted by trusted platform code
 
-Exactly six step kinds:
+Exactly nine step kinds:
 
 - `{ tool, input?, output?, continue_on_error? }` — invoke a declared
   `tools[]` entry
-- `{ set, value }` — assign a variable
+- `{ integration_action: { integration_id: 'cynap_simulated', action_id } }`
+  — a platform-simulated integration action
 - `{ condition, then: Step[], else?: Step[] }` — branch
+- `{ set, value }` — assign a variable
 - `{ parallel: Step[], onFailure?: 'fail_fast'|'continue'|'collect_errors' }`
 - `{ sync: SyncSpec }` — integration → org database incremental upsert
 - `{ land: LandSpec }` — raw webhook events → `source_events` Bronze table
+- `{ set_stage: { entity_type, stage_field, entity_id, expected_from, to } }`
+  — move ONE declared stage field of ONE record (CAS + stage history)
+- `{ fail: { code } }` — end the run as a failure with a stable code
 
-No other step kind parses. `tool`/`set`/`condition`/`parallel` are generic
-control flow; `sync`/`land` are the ONLY sanctioned deterministic writes to
-the org database.
+No other step kind parses. `tool`/`integration_action`/`set`/`condition`/
+`parallel` are control flow and calls; `sync`/`land`/`set_stage` are the ONLY
+sanctioned deterministic writes to the org database; `fail` writes nothing.
+
+### `set_stage` and `fail`
+
+- `entity_type` and `stage_field` are **literals** (no `{{`, no `$`), and the
+  field must be the entity's pipeline `stage` or a declared
+  `tracked_stage_fields` entry in `context/schema.json`.
+- `entity_id`, `expected_from` and `to` may be `$`-rooted templates
+  (`"{{$trigger.record_id}}"`). A template without `$` resolves to null.
+- `expected_from` is **required**. If it resolves to an absent key, the step
+  fails `stage_move_input_missing`; an explicit JSON `null` means "the record
+  must currently have no stage".
+- Outcome: moved → `rowsAffected: 1`; a CAS conflict or an unchanged stage →
+  `rowsAffected: 0` and the step still succeeds. Any other rejection fails the
+  run with `stage_move_rejected:<CODE>` (`NOT_FOUND`, `OFF_LIST`,
+  `FORWARD_ONLY`, `UNDECLARED_FIELD`, …).
+- At most **one** `set_stage` may run on any path. It may sit inside
+  `condition` branches, never inside `parallel`.
+- `fail.code` matches `^[a-z][a-z0-9_]{2,63}$`. Use it as the `else` of a
+  refusal `condition` — without it, a false condition with no `else` ends
+  the run as a success that wrote nothing.
 
 ### `sync` step field-path rule — no templates, no expressions
 
@@ -85,8 +110,7 @@ expression on a field path, deterministic mode is the wrong tool — that's
 ## Gotchas (all verified against the live platform)
 
 1. **Retired tool-impl types `transform`/`code` are hard-rejected** at
-   config time — the deterministic runner explicitly refuses to execute
-   them:
+   config time — they are no longer part of the tool schema:
 
    > "tools[N] '{name}' uses retired impl type '{type}', which the
    > deterministic runtime no longer executes (use 'llm', 'http', or
@@ -95,7 +119,7 @@ expression on a field path, deterministic mode is the wrong tool — that's
 2. **Raw HTTP writes to the org database are retired.** An `http` tool
    whose `url` targets a database write endpoint is rejected;
    deterministic mode may write the org database only via the closed
-   `sync` and `land` steps.
+   `sync`, `land` and `set_stage` steps.
 
 3. **Every `step.tool` reference must resolve to a declared `tools[]`
    entry** — tool-reference integrity is checked at config time, not
@@ -162,10 +186,10 @@ its `execution.steps[0]` is `{ "land": { "source": "superchat.contacts",
 1. Confirm there is no agentic loop (`choose-the-right-mode`). A bounded
    classification/extraction `llm` tool may remain deterministic, but it must
    follow `configure-customer-ai`.
-2. Use only the six step kinds; never invent a step shape.
-3. If writing to the org database, use `sync` (incremental, watermarked) or
-   `land` (raw Bronze capture) — never an `http` tool at a database
-   endpoint.
+2. Use only the nine step kinds; never invent a step shape.
+3. If writing to the org database, use `sync` (incremental, watermarked),
+   `land` (raw Bronze capture) or `set_stage` (one stage move) — never an
+   `http` tool at a database endpoint.
 4. Every field path in a `sync`/`land` step is a bare name — no `{{`, no
    `$`.
 5. Verify `external_key.key_template` contains a real `{field}`
