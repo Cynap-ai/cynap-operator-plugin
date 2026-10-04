@@ -27,7 +27,7 @@ availability are independent of execution mode.
 
 2. **Is there no agentic LLM loop driving control flow** — a scheduled
    sync, reconciler, or ETL job driven by a small, closed step vocabulary
-   (`tool`/`integration_action`/`condition`/`set`/`parallel`/`sync`/`land`/`set_stage`/`fail`), where any LLM
+   (`tool` / `integration_action` / `condition` / `set` / `parallel` / `sync` / `land` / `set_stage` / `set_fields` / `create_record` / `fail`), where any LLM
    involvement is at most a single declared `llm` tool call inside a fixed
    step sequence (a bounded transform/classification call, never a chat
    loop that decides what to do next)? → **`deterministic`**. This is the

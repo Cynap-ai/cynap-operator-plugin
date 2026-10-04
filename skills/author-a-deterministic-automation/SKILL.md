@@ -55,11 +55,40 @@ Exactly nine step kinds:
 - `{ land: LandSpec }` — raw webhook events → `source_events` Bronze table
 - `{ set_stage: { entity_type, stage_field, entity_id, expected_from, to } }`
   — move ONE declared stage field of ONE record (CAS + stage history)
+- `{ set_fields: { entity_type, entity_id, require?, fields: { <field>: { to, read } } } }`
+  — update 1–32 declared fields of ONE record (per-changed-field CAS)
+- `{ create_record: { entity_type, entity_id, name, fields } }` — insert ONE record
+  under a caller-minted UUID id (idempotent)
 - `{ fail: { code } }` — end the run as a failure with a stable code
 
+The kinds are `tool` / `integration_action` / `condition` / `set` / `parallel` / `sync` / `land` / `set_stage` / `set_fields` / `create_record` / `fail`.
 No other step kind parses. `tool`/`integration_action`/`set`/`condition`/
-`parallel` are control flow and calls; `sync`/`land`/`set_stage` are the ONLY
+`parallel` are control flow and calls; `sync`/`land`/`set_stage`/`set_fields`/`create_record` are the ONLY
 sanctioned deterministic writes to the org database; `fail` writes nothing.
+
+### `set_fields` and `create_record`
+
+- `entity_type`, every `fields` key and every `require` key are **literals**
+  (no `{{`, no `$`). Values and `entity_id` are a JSON scalar or exactly one
+  `"{{$trigger.x}}"` template. `set_fields` has 1–32 fields, `create_record`
+  0–32; `require` has up to 8 keys (a scalar or 1–16 literals each).
+- `set_fields` refuses system columns, stage fields (use `set_stage`), `json`
+  fields, spend-authority and money-magnitude columns and undeclared fields. `read` is
+  REQUIRED per field (JSON `null` = "must currently be empty"); only fields
+  whose `to` differs from `read` are written and CAS-guarded.
+- `set_fields` outcomes: `updated` → `rowsAffected: 1`; `unchanged`,
+  `cas_miss`, `precondition_failed`, `not_found` → `rowsAffected: 0`, step
+  succeeds. A refusal fails `set_fields_rejected:<CODE>`; an absent trigger
+  key fails `set_fields_input_missing`.
+- `create_record` takes a Surface-minted UUID `entity_id` (keep it across
+  retries). It must list every required non-boolean field, may set a tracked
+  stage field only to a literal on its declared list, and never lists the
+  `stage` column. `created` → 1; a retry of the same create is
+  `already_created` → 0; a duplicate id/name or unique field fails
+  `create_record_rejected:<CODE>` (`ID_CONFLICT`, `NAME_EXISTS`, …).
+- Together with `set_stage`: at most **one** entity-write step on any path,
+  never inside `parallel`. The run result carries flat `rowsAffected` and
+  `entityWriteOutcome`.
 
 ### `set_stage` and `fail`
 
@@ -75,8 +104,9 @@ sanctioned deterministic writes to the org database; `fail` writes nothing.
   `rowsAffected: 0` and the step still succeeds. Any other rejection fails the
   run with `stage_move_rejected:<CODE>` (`NOT_FOUND`, `OFF_LIST`,
   `FORWARD_ONLY`, `UNDECLARED_FIELD`, …).
-- At most **one** `set_stage` may run on any path. It may sit inside
-  `condition` branches, never inside `parallel`.
+- At most **one** entity-write step (`set_stage`, `set_fields`, `create_record`)
+  may run on any path. It may sit inside `condition` branches, never inside
+  `parallel`.
 - `fail.code` matches `^[a-z][a-z0-9_]{2,63}$`. Use it as the `else` of a
   refusal `condition` — without it, a false condition with no `else` ends
   the run as a success that wrote nothing.
@@ -119,7 +149,7 @@ expression on a field path, deterministic mode is the wrong tool — that's
 2. **Raw HTTP writes to the org database are retired.** An `http` tool
    whose `url` targets a database write endpoint is rejected;
    deterministic mode may write the org database only via the closed
-   `sync`, `land` and `set_stage` steps.
+   `sync`, `land`, `set_stage`, `set_fields` and `create_record` steps.
 
 3. **Every `step.tool` reference must resolve to a declared `tools[]`
    entry** — tool-reference integrity is checked at config time, not
@@ -186,9 +216,10 @@ its `execution.steps[0]` is `{ "land": { "source": "superchat.contacts",
 1. Confirm there is no agentic loop (`choose-the-right-mode`). A bounded
    classification/extraction `llm` tool may remain deterministic, but it must
    follow `configure-customer-ai`.
-2. Use only the nine step kinds; never invent a step shape.
+2. Use only the eleven step kinds; never invent a step shape.
 3. If writing to the org database, use `sync` (incremental, watermarked),
-   `land` (raw Bronze capture) or `set_stage` (one stage move) — never an
+   `land` (raw Bronze capture), `set_stage` (one stage move), `set_fields` (edit fields)
+   or `create_record` (insert one record) — never an
    `http` tool at a database endpoint.
 4. Every field path in a `sync`/`land` step is a bare name — no `{{`, no
    `$`.
