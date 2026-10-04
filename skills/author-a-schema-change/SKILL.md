@@ -32,22 +32,12 @@ pending bytes, and `/cynap-activate <commit-sha>` opens the consent page with
 the exact delta and DDL before applying it. Wait for the activation's terminal
 status; a submitted command alone does not prove the DB effect or live publish.
 
-The admitted operator set is: new entity types with a new `typed_` dedicated
-table and eligible fields; nullable non-enum, non-searchable, non-unique fields
-on existing dedicated tables; required boolean fields whose existing rows
-read false; entity descriptions and field description/semantic annotations;
-new relationships joining two existing entities; and **adding**
-`pipeline.dropout_stages` to an existing entity's pipeline that does not yet
-declare it (a non-empty, duplicate-free list whose values are all in
-`pipeline.stages`; registry annotation only, no DDL). New entities/fields
-cannot use enum, searchable, unique, or reserved fields. Existing field type,
-requiredness, name, enum values, searchability, uniqueness, dedicated table
-placement, and removals are outside that set. Every other change to existing
-entity shape, including `pipeline.stages`, `pipeline.terminal_stages`,
-`pipeline.forward_only`, and removing or changing an already-declared
-`pipeline.dropout_stages`, is **not** admitted. A newly created entity may
-declare its initial pipeline, but later pipeline changes need the reviewed
-git and owner migration route.
+The admission rule is one invariant: **a change is admitted when it breaks no
+existing row.** A new entity may declare any field kind and relationships to
+other new entities; an existing entity only gains nullable fields, required
+booleans and annotations, and its enum values and pipeline stages are frozen.
+Do not reason from a shape list: the dry run (`workspace_validate`) is the
+authority, and its refusal names the exact delta.
 Treat a `schema_change_not_admitted` result as a git PR plus owner migration
 decision; do not reshape the change to evade the refusal.
 
