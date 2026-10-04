@@ -29,13 +29,13 @@ only `step_up_and_activate` opens the owner approval. On fail it stops with only
 code, fixed operator text, and effect kinds with counts. Never show preview row data.
 
 `handler_unpreviewable_ack_required` means the changed handler declares
-`capabilities: ["browser"]`, which preview cannot run (`preview_browser_unsupported`). It needs no
-preview: the command opens the owner approval, where the owner must tick an explicit
-acknowledgement that the handler is activated without a preview proof. The acknowledgement is bound
-to the commit, the handler id and the source sha256, so a new source needs a new approval. Without a
-`command` (you are not the author-owner) the org owner approves it from the portal instead. Tell the
-human the approval page carries that acknowledgement. Only the browser refusal is exempt: an
-agent-entrypoint handler or any other preview refusal still blocks activation.
+`capabilities: ["browser"]` and has no passing preview. Browser handlers can be previewed: prefer
+`/cynap-preview <automation-id> <commit-sha>` first. A pass captures every write, and any captured
+write is listed for the owner to approve. Without a pass, the command opens the owner approval, where
+the owner must tick an explicit acknowledgement that the handler is activated without a preview proof.
+Either approval is bound to the commit, the handler id and the source sha256, so a new source needs a
+new approval. Without a `command` (you are not the author-owner) the org owner approves it from the
+portal instead. Tell the human what the approval page will ask.
 
 `handler_unproven` means this exact handler bundle lacks a passing proof: run
 `/cynap-preview <automation-id> <commit-sha>`, then re-read status. A

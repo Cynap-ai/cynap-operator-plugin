@@ -17,9 +17,7 @@ status for a bounded time. On pass, re-read `workspace_status` and follow its ac
 `next_action`. A pass reports counts and effect kinds only. A failure reports the
 typed verdict code and fixed operator text. Never print row data from a preview copy.
 
-`preview_browser_unsupported` means the handler declares `capabilities: ["browser"]`; preview
-never runs it. Do not retry the preview. Run `/cynap-activate <commit-sha>`: the owner activates it by
-explicitly acknowledging on the approval page that it goes live without a preview.
+Browser handlers (`capabilities: ["browser"]`) can be previewed. The vendor session never enters the preview VM, page loads use it server-side, and every write is captured. After a pass, run `/cynap-activate <commit-sha>`; any captured write is listed on the owner approval page.
 
 `handler_unproven` on activation calls for `/cynap-preview <automation-id>
 <commit-sha>` on the exact committed handler bundle. `preview_unavailable`

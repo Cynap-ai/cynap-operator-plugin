@@ -162,3 +162,20 @@ tool, and `dispatch` defaults to `sync` so `async_ack_text` is unnecessary.
    discipline alone to promise row isolation.
 
 ---
+
+## Declare a freshness expectation
+
+A scheduled automation that can write should declare how much it must get done, so a schedule that
+runs green while applying nothing is caught. Add a block to the config, with a window you actually
+mean (a window shorter than the schedule interval draws a warning):
+
+```json
+"freshness": { "min_effects": 1, "window": "36h" }
+```
+
+`min_effects` is 1–10,000 and `window` is `<n>h` or `<n>d` (1 hour to 90 days). `kinds` is optional:
+a non-empty set drawn from `write`, `message`, `automation_trigger`, `artifact_write` and
+`outbound_request`; omitted, it counts every kind except `artifact_write`. Freshness measures
+activity, not truth: a no-op write still counts. To catch "the data went stale", author an
+Operations Condition (`operations/conditions/*.yaml` with `analytics_read` and `stale_after_seconds`)
+as well. A plan-only automation that never applies effects declares no `freshness`.

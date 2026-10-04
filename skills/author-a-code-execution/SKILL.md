@@ -14,9 +14,7 @@ names. Keep these details in private engineering records, not customer copy.
 ## Publish a handler change
 
 Only `code_execution` handlers have a preview. Flow and deterministic modes have no preview.
-A worker handler with `capabilities: ["browser"]` cannot be previewed (`preview_browser_unsupported`);
-it skips the preview, and the owner activates it by explicitly acknowledging on the approval page
-that it goes live without a preview proof. Probation still applies after activation.
+A worker handler with `capabilities: ["browser"]` can be previewed with `/cynap-preview`: it runs on data copies, the vendor session never enters the VM, and every write is captured and listed for owner approval at activation. Preview before activating. Without a pass, the owner must acknowledge activating it without a preview. Probation still applies after activation.
 A preview requires a committed fixture input file for the selected trigger;
 add that file before running `/cynap-preview <automation-id> <commit-sha>`.
 
@@ -283,3 +281,20 @@ shipping).
 7. Write a `MockCynapContext` unit test for the write path before
    finalizing.
 8. Set `max_runtime_ms` realistically — `dispatch_mode` is fixed `async`.
+
+## Declare a freshness expectation
+
+A scheduled automation that can write should declare how much it must get done, so a schedule that
+runs green while applying nothing is caught. Add a block to the config, with a window you actually
+mean (a window shorter than the schedule interval draws a warning):
+
+```json
+"freshness": { "min_effects": 1, "window": "36h" }
+```
+
+`min_effects` is 1–10,000 and `window` is `<n>h` or `<n>d` (1 hour to 90 days). `kinds` is optional:
+a non-empty set drawn from `write`, `message`, `automation_trigger`, `artifact_write` and
+`outbound_request`; omitted, it counts every kind except `artifact_write`. Freshness measures
+activity, not truth: a no-op write still counts. To catch "the data went stale", author an
+Operations Condition (`operations/conditions/*.yaml` with `analytics_read` and `stale_after_seconds`)
+as well. A plan-only automation that never applies effects declares no `freshness`.

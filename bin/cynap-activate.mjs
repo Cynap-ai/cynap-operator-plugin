@@ -161,8 +161,8 @@ export async function runActivationFlow({ slug, commitSha, reconcile = false, st
 export function describeUnpreviewable(nextAction) {
   const ids = (Array.isArray(nextAction?.handlers) ? nextAction.handlers : [])
     .map((handler) => handler?.automation_id).filter((id) => typeof id === 'string' && /^[a-z0-9][a-z0-9_-]*$/.test(id));
-  return `no preview: ${ids.length ? ids.join(', ') : 'this handler'} declares the browser capability, which preview cannot run. ` +
-    'The owner approval page asks the owner to acknowledge activating it without a preview.\n';
+  return `no passing preview: ${ids.length ? ids.join(', ') : 'this handler'} declares the browser capability and has no passing preview. ` +
+    'Prefer /cynap-preview first; without it, the owner approval page asks the owner to acknowledge activating it without a preview.\n';
 }
 
 /** The line for an error thrown before any refusal came back: name the cause, never just a bare code. */
@@ -185,7 +185,7 @@ export function describeNotActivated(kind, commitSha) {
   const hint = kind === 'baseline_required'
     ? `the live files this commit changes carry no provenance stamp. Re-run /cynap-activate ${commitSha} --reconcile to adopt them.`
     : kind === 'blocked_by_chain' ? 'an earlier pending commit must activate first; see /cynap-status.'
-    : kind === 'handler_unpreviewable_ack_required' ? 'a browser handler cannot be previewed; the org owner must approve it and acknowledge activating it without a preview.'
+    : kind === 'handler_unpreviewable_ack_required' ? 'this browser handler has no passing preview. Run /cynap-preview first, or the org owner must approve it and acknowledge activating it without a preview.'
     : 'see /cynap-status for the next step.';
   return `not activated (${kind}): ${hint}\n`;
 }
