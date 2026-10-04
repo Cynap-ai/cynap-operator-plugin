@@ -56,6 +56,13 @@ test('an unconfirmed activation says it may still be running instead of "request
   }
 });
 
+test('an unconfirmed activation with a recorded failure names the code and reason, not a timeout', () => {
+  const text = formatRefusal({ ok: false, code: 'activation_not_confirmed', commit_sha: 'a'.repeat(64),
+    failure_code: 'preview_ack_required', failure_message: 'acknowledge the\nno-preview notice' }, { command: 'cynap-activate' });
+  assert.match(text, /^cynap-activate: activation_not_confirmed: the activation ran and was refused: preview_ack_required \(acknowledge the no-preview notice\)/);
+  assert.doesNotMatch(text, /timed out/);
+});
+
 test('activation_pending reads as accepted, never as refused', () => {
   const text = formatRefusal({ ok: false, code: 'activation_pending', commit_sha: 'a'.repeat(64) }, { command: 'cynap-activate' });
   assert.match(text, /^cynap-activate: activation_pending: activation accepted; post-deploy is still awaiting/);

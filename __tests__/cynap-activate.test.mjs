@@ -314,3 +314,24 @@ test('reconciliation reports a failed background activation with its failure cod
   assert.equal(result.state, 'failed');
   assert.equal(result.failure_code, 'post_deploy_failed');
 });
+
+test('a released commit with a recorded failure reports the code and reason, not a timeout', async () => {
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => ({
+    ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
+      last_failure: { sha: SHA, code: 'preview_ack_required', message: 'acknowledge the no-preview notice' },
+      pending: [{ commit_sha: SHA, state: 'pending' }] } } }),
+  }) });
+  assert.equal(result.failure_code, 'preview_ack_required');
+  assert.match(result.message, /refused: preview_ack_required \(acknowledge the no-preview notice\)/);
+  assert.doesNotMatch(result.message, /timed out/);
+});
+
+test('a failure recorded for another commit keeps the timeout wording', async () => {
+  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => ({
+    ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
+      last_failure: { sha: 'f'.repeat(64), code: 'checks_failed', message: 'other' },
+      pending: [{ commit_sha: SHA, state: 'pending' }] } } }),
+  }) });
+  assert.equal(result.failure_code, undefined);
+  assert.match(result.message, /timed out/);
+});

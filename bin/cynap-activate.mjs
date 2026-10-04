@@ -47,10 +47,21 @@ export async function reconcileActivation({
     if (!activating || waited + intervalMs > waitMs) break;
     await wait(intervalMs);
   }
-  const unconfirmed = (state, extra = {}) => ({
-    ok: false, code: 'activation_not_confirmed', state, commit_sha: commitSha, ...extra,
-    message: `activation not confirmed: ${state}. The activation request timed out; check /cynap-status before retrying.`,
-  });
+  // a recorded refusal is not a timeout. Name the code and the reason the server stored.
+  const lastFailure = status.last_failure?.sha === commitSha ? status.last_failure : null;
+  const unconfirmed = (state, extra = {}) => {
+    const code = extra.failure_code ?? lastFailure?.code;
+    const reason = lastFailure?.message;
+    const outcome = code
+      ? `The activation ran and was refused: ${code}${reason ? ` (${reason})` : ''}.`
+      : 'The activation request timed out; check /cynap-status before retrying.';
+    return {
+      ok: false, code: 'activation_not_confirmed', state, commit_sha: commitSha, ...extra,
+      ...(code ? { failure_code: code } : {}),
+      ...(reason ? { failure_message: reason } : {}),
+      message: `activation not confirmed: ${state}. ${outcome}`,
+    };
+  };
   const pending = status.pending?.find((item) => item.commit_sha === commitSha);
   if (pending) return unconfirmed(pending.state ?? 'pending', {
     ...(pending.next_action ? { next_action: pending.next_action } : {}),
