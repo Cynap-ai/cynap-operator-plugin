@@ -1,14 +1,14 @@
 {
   "notice": "GENERATED MIRROR — do not edit directly. Produced by the mirror publisher.",
-  "sourceSha": "b47ae2c68370c67f6055a181e84ee8342db737a9",
+  "sourceSha": "8d9de5153a00bd1b318d294e99028f4a97da56dc",
   "transformVersion": 1,
   "generatedBy": "publish-public-mirror.mjs",
   "files": {
     ".claude-plugin/compat.json": "8bf60d9c53e1610f04c8c1ebdc857d81ad263b01919aee85b752a618c8e9c131",
-    ".claude-plugin/marketplace.json": "c10c59c143bba1823df63303fa46255623b875a4c7de3b26b5a3765f50693bc2",
-    ".claude-plugin/plugin.json": "8b93ba81cd4a3111691985a271f51120e71b08f9545fb89448af1cf289f4d728",
-    ".codex-plugin/plugin.json": "b806d3165f054f4d3a41d67689dde7c2deba8d24f106d180fc1f150259231d8d",
-    "README.md": "3e1f49bb529dbe9ee51d630e7f6704b9424466b45adadae2369e6df6fdc363f3",
+    ".claude-plugin/marketplace.json": "25784f2543ca5fc4a7f6f8eef0e4297a750b1239c9a9ade004128e070296d061",
+    ".claude-plugin/plugin.json": "d286ab1dc04d7bf369683d708eac3167b3c4cb59c081201801611073ed68014c",
+    ".codex-plugin/plugin.json": "e076c900a0f88b2f042d1b5aa122fc71181c652b5ae155f0f64932f1520a53e3",
+    "README.md": "aa232c5c380c8595e213d381f98a738c1d04a595d5066b953318079a10637071",
     "__tests__/autonomy-lifecycle.test.mjs": "16099053a0f57e87a9bdf3b06c7af394a47e661a5dc47f87ac99115293776e0b",
     "__tests__/connect-any-org.test.mjs": "66b056a803d43db1a3e8b4ef0cf2621f2034d6835042338a02f1c212a98cfe8a",
     "__tests__/connect-supervision.test.mjs": "d0ba49d5399d01c247694c5ea681d3599d20805b91f0d9e9d68e8fb333261ae7",
@@ -58,7 +58,7 @@
     "bin/cynap-status.mjs": "3c42068075802c40cbef43718a780adbca2bd76a54a738864c3b58819afc3670",
     "bin/cynap-test.mjs": "9a3b62f89312d5be25d8979de259b9d682147c31302d803df027ae523ccfd489",
     "bin/operator-proxy-launcher.mjs": "3c16d98e204eb3f1951e4e5e5a47b7e286f0859209a7a811d5cbcff4ebe37476",
-    "bin/operator-proxy.mjs": "5d6fea785796cce499eccd179c6a47f169f6478dbcaf34d9645256974952529f",
+    "bin/operator-proxy.mjs": "05446d94abecf9494f11ee919b8a69fa54f8604692be9491ac564e9a9213388b",
     "commands/cynap-activate.md": "5978b958c487ee84644a7bfa99ac095d7fbbbb5bf6ba0e6e44202806f406893b",
     "commands/cynap-checks.md": "adb90db0b1ddac20a69cef498bebd380622fced635f75b5ba0ac0521b47995dd",
     "commands/cynap-connect.md": "db38166d2161c071377ace120bedf1b78d70c154abbcbdbc038c50a5b5de6c92",
@@ -118,6 +118,6 @@
     "skills/platform-invariants/LEARNINGS.md": "a27ef31ad91d67048983b708be1977de367948432f2dd3539e556c7423e28cea",
     "skills/platform-invariants/SKILL.md": "0d2c4fa1f151e31c63d9d19be5db9b61d390b879d2c588cbe90d12d4d3340df1",
     "skills/summarize-your-change/LEARNINGS.md": "76cc6d2a058bc8c5ab8f7b36c700ca324b9b5c149a91debea886f163160ce8b5",
-    "skills/summarize-your-change/SKILL.md": "06e1f930c8676843fb8a7ba1dae262c2315b433e9182fac17af80f4000f6d3fd"
+    "skills/summarize-your-change/SKILL.md": "028e7345e85e2998a17a3a86e6e17ed0a6dfaed38636ab1168b38032ada7999d"
   }
 }

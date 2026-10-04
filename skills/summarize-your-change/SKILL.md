@@ -130,3 +130,38 @@ call.
 4. If you genuinely can't summarize honestly (e.g. an automated/scripted
    commit with no real authoring intent), it's fine to omit the field
    entirely rather than write a vague/generic placeholder.
+
+## Inspect and develop an existing Request
+
+Use the native Operator Request tools before authoring against a Request:
+`request_get({ id })`, `request_timeline_query({ request_id })`, and, when needed,
+`request_query`. The connector composes a separate Request-family token with
+`workspace:request-claim`; workspace or operations scope alone never grants these reads.
+An external Operator needs that exact active grant. If the tools are absent, report
+an unavailable Request catalog; do not file a duplicate or use Business credentials.
+The read-only script runner does not acquire this family.
+
+Development begins with `request_operator_transition` using `verb: claim` and the
+version returned by `request_get`. Read back the resulting state and timeline.
+The server binds the claim to verified CLI credential/consent provenance. An uncertain
+identical claim replays idempotently; a competing holder or incompatible stale version
+refuses. A claim is implementation authority, not Owner approval or paid-quote acceptance.
+
+For Request linkage, pass `request_id` on native `workspace_commit` as described above.
+The ordinary `/cynap-push` CLI does not supply that argument. Proposal proof, exact
+Owner approval and activation remain separate gates; inspect their callable contracts
+and do not infer them from an Owner-Operator persona or a successful claim.
+
+Same-org owner-operator, non-owner internal Operator and granted external Operator share
+this scoped read/claim entrance, not an identical fulfillment lane. The owner-operator
+can author Owner-class paths and request exact-commit activation step-up. A non-owner
+internal Operator has only Operator/shared authoring classes and needs the authorized
+Owner for commitment and runtime-effect activation. An external Operator remains bounded
+by its live grant, separate commit permission and external data/PHI fences; it cannot
+self-activate. The Request-bound simulated-lifecycle lane requires same-person customer-Operator
+lineage and refuses external authority. The separate requested-build command lane
+requires an external Operator with its exact live grant; an owner-operator cannot call
+it just because it appears in the Request catalog. External proof preparation freshly
+checks the live commit-and-claim grant and existing execution/data fences. Inspect each
+stage's contract before promising end-to-end delivery; claiming never bypasses quote,
+funding, proof, Owner approval or activation gates.

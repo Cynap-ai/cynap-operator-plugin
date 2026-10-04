@@ -3094,6 +3094,8 @@ export function createProxyServer({
   // never a union token. Optional: absent, the proxy serves the
   // workspace family alone, exactly as before.
   opsTokenManager = null,
+  // Separate Request-family mint; never adds authority to workspace or script tokens.
+  requestTokenManager = null,
   orgSlug,
   orgId,
   authMode,
@@ -3141,23 +3143,18 @@ export function createProxyServer({
   // share one warm, not pile up N redundant cold-start pokes.
   let warmInFlight = false;
 
-  // Tool names only the ops token lists — a tools/call naming one is sent
-  // with the ops token. Learned from the ops tools/list; `null` until the
-  // first successful load. The server's operatorScopeCeiling decides the
-  // membership, so the proxy never hardcodes it.
-  /** @type {Set<string> | null} */
-  let opsToolNames = null;
-  /** @type {Promise<Array<{ name: string }>> | null} */
-  let opsListInFlight = null;
+  // Membership comes from each server-resolved catalog, never a client tool allowlist.
+  // Each family keeps its own token and single-flight list load. A refused optional
+  // family hides only its tools; workspace forwarding remains available.
+  const families = [
+    { name: 'ops', manager: opsTokenManager, toolNames: null, listInFlight: null },
+    { name: 'request', manager: requestTokenManager, toolNames: null, listInFlight: null },
+  ].filter((family) => family.manager);
 
-  /** The ops token's tools/list, or [] when the ops family is unavailable
-   * (no ops grant, mint refused, upstream error). Consent-free: the workspace
-   * forward owns consent for the shared CLI credential. Never throws. */
-  function fetchOpsTools() {
-    if (!opsTokenManager) return Promise.resolve([]);
-    if (opsListInFlight) return opsListInFlight;
-    opsListInFlight = (async () => {
-      const token = await opsTokenManager.getToken({ allowConsent: false });
+  function fetchFamilyTools(family) {
+    if (family.listInFlight) return family.listInFlight;
+    family.listInFlight = (async () => {
+      const token = await family.manager.getToken({ allowConsent: false });
       const listRes = await fetchImpl(`${mcpHost}${mcpPath}`, {
         method: 'POST',
         headers: upstreamHeaders(pluginVersion, {
@@ -3165,33 +3162,32 @@ export function createProxyServer({
           Accept: 'application/json, text/event-stream',
           Authorization: `Bearer ${token}`,
         }),
-        body: JSON.stringify({ jsonrpc: '2.0', id: 'cynap-operator-ops-list', method: 'tools/list', params: {} }),
+        body: JSON.stringify({ jsonrpc: '2.0', id: `cynap-operator-${family.name}-list`, method: 'tools/list', params: {} }),
       });
-      if (!listRes.ok) throw new Error(`ops tools/list returned ${listRes.status}`);
+      if (!listRes.ok) throw new Error(`${family.name} tools/list returned ${listRes.status}`);
       const tools = (await listRes.json())?.result?.tools;
       return Array.isArray(tools) ? tools : [];
     })()
       .catch((err) => {
         process.stderr.write(
-          `[operator-proxy] ops tools unavailable (workspace tools still served): ${err instanceof Error ? err.message : err}\n`
+          `[operator-proxy] ${family.name} tools unavailable (workspace tools still served): ${err instanceof Error ? err.message : err}\n`
         );
         return [];
       })
-      .finally(() => {
-        opsListInFlight = null;
-      });
-    return opsListInFlight;
+      .finally(() => { family.listInFlight = null; });
+    return family.listInFlight;
   }
 
-  /** Which token manager a request goes out under. A tools/call for a tool
-   * the proxy has not classified yet (e.g. a client that kept its tool list
-   * across a proxy relaunch) loads the ops list first rather than guessing. */
+  /** Reclassify cached-client calls after relaunch using the server's actual catalogs. */
   async function managerFor(toolName) {
-    if (!opsTokenManager || toolName === null) return tokenManager;
-    if (opsToolNames === null) {
-      opsToolNames = new Set((await fetchOpsTools()).map((t) => t.name));
+    if (toolName === null) return tokenManager;
+    for (const family of families) {
+      if (family.toolNames === null) {
+        family.toolNames = new Set((await fetchFamilyTools(family)).map((t) => t.name));
+      }
+      if (family.toolNames.has(toolName)) return family.manager;
     }
-    return opsToolNames.has(toolName) ? opsTokenManager : tokenManager;
+    return tokenManager;
   }
 
   /** Fire-and-forget: nudge the upstream operator MCP with a minimal
@@ -3442,13 +3438,11 @@ export function createProxyServer({
         return;
       }
 
-      // Route by token family: an ops-only tool goes out under the ops token;
-      // everything else (and every non-tools/call method) under the workspace
-      // token. A tools/list additionally fetches the ops list in parallel and
-      // merges it below, so the session sees both families as one server.
+      // Route with the token whose server catalog admits the tool. List each
+      // optional family in parallel, then merge into the workspace response.
       const route = await managerFor(extractToolName(body));
-      const opsToolsPending =
-        opsTokenManager && extractMethod(body) === 'tools/list' ? fetchOpsTools() : null;
+      const familyToolsPending = extractMethod(body) === 'tools/list' && families.length
+        ? Promise.all(families.map(fetchFamilyTools)) : null;
 
       async function attemptOnce() {
         const token = await route.getToken();
@@ -3532,14 +3526,18 @@ export function createProxyServer({
         if (v) outHeaders[h] = v;
       }
       if (!outHeaders['content-type']) outHeaders['content-type'] = 'application/json';
-      if (opsToolsPending && upstreamRes.ok && outHeaders['content-type'].includes('application/json')) {
-        // tools/list is a small, non-streamed JSON answer — buffering it to
-        // merge in the ops family is safe where streaming a call is not.
-        const merged = mergeToolLists(await upstreamRes.text(), await opsToolsPending);
-        opsToolNames = merged.opsOnly;
+      if (familyToolsPending && upstreamRes.ok && outHeaders['content-type'].includes('application/json')) {
+        // Buffer only the bounded JSON catalog; tool call streams stay unchanged.
+        let mergedText = await upstreamRes.text();
+        const lists = await familyToolsPending;
+        for (const [index, family] of families.entries()) {
+          const merged = mergeToolLists(mergedText, lists[index]);
+          family.toolNames = merged.opsOnly;
+          mergedText = merged.text;
+        }
         res.writeHead(upstreamRes.status, outHeaders);
-        res.end(merged.text);
-        const outdated = onPluginOutdated && pluginVersion ? detectPluginOutdated(merged.text) : null;
+        res.end(mergedText);
+        const outdated = onPluginOutdated && pluginVersion ? detectPluginOutdated(mergedText) : null;
         if (outdated && outdated.minimum !== pluginVersion) onPluginOutdated(outdated);
         return;
       }
@@ -4374,6 +4372,18 @@ export async function main(argv = process.argv.slice(2)) {
     );
   }
 
+  // Request inspection/development already has a distinct mint family. A member
+  // may mint it; an external operator needs the exact live request-claim grant.
+  // No consent or permanent credential change is introduced here.
+  const requestTokenManager = createTokenManager({
+    mintHost,
+    targetOrgId: opts.targetOrgId,
+    allowedOrgId: opts.allowedOrgId,
+    getAuthHeaders,
+    family: 'request',
+    pluginVersion: opts.pluginVersion,
+  });
+
   // Prefetch the org brief NOW and keep it warm. The SessionStart banner's
   // whole budget is ~5s while the backend's brief render plus a cold handler
   // init is comfortably more than that, so a live fetch inside the hook can
@@ -4520,6 +4530,7 @@ export async function main(argv = process.argv.slice(2)) {
     mcpPath: UPSTREAM_MCP_PATH,
     tokenManager,
     opsTokenManager,
+    requestTokenManager,
     orgSlug: opts.orgSlug,
     orgId: opts.targetOrgId,
     authMode: opts.authMode,
