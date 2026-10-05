@@ -100,6 +100,7 @@ Read this before editing a pulled org tree. Each row names the SDK path kind;
 | `communication-flow` | `communication/flows/*/flow.json` | activate | activate | activate |
 | `communication-sender-bindings` | `communication/sender-bindings.json` | activate | activate | activate |
 | `portal-config` | `portal/config.json` | activate | activate | activate |
+| `integration-provider` | `integrations/providers/*.json` | activate | activate | activate |
 | `analytics-metric` | `analytics/metrics/**/*.yaml` | activate | activate | activate |
 | `analytics-page` | `analytics/pages/*.yaml` | activate | activate | activate |
 | `analytics-saved-query` | `analytics/saved-queries/*.sql` | activate | activate | activate |
