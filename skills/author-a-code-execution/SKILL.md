@@ -14,7 +14,7 @@ names. Keep these details in private engineering records, not customer copy.
 ## Publish a handler change
 
 Only `code_execution` handlers have a preview. Flow and deterministic modes have no preview.
-A worker handler with `capabilities: ["browser"]` can be previewed with `/cynap-preview`: it runs on data copies, the vendor session never enters the VM, and every write is captured and listed for owner approval at activation. Preview before activating. Without a pass, the owner must acknowledge activating it without a preview. Probation still applies after activation.
+A worker handler with `capabilities: ["browser"]` previews like any other: it runs on data copies, the vendor session never enters the VM, and every write is captured and listed for owner approval at activation. Activation needs a passing `/cynap-preview`. Probation still applies after activation.
 A preview requires a committed fixture input file for the selected trigger;
 add that file before running `/cynap-preview <automation-id> <commit-sha>`.
 

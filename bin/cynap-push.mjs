@@ -350,7 +350,6 @@ export async function main(argv = process.argv.slice(2), { cwd, fetchImpl } = {}
     if (result.nextAction?.command) process.stdout.write(`next: ${result.nextAction.command}${result.nextAction.reason ? ` — ${result.nextAction.reason}` : ''}\n`);
     if (result.nextAction?.kind === 'baseline_required') process.stdout.write('This commit needs --reconcile before activation.\n');
     if (result.nextAction?.kind === 'handler_preview_required') process.stdout.write(`Preview the handler before activation: /cynap-preview <automation-id> ${result.commitSha}\n`);
-    if (result.nextAction?.kind === 'handler_unpreviewable_ack_required') process.stdout.write('This browser handler can be previewed: run /cynap-preview before /cynap-activate. Without a passing preview, the owner acknowledges activating it without one at the approval step.\n');
   }
   return result;
 }
