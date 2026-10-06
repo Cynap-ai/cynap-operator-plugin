@@ -66,19 +66,58 @@ A logged-in browser job adds a **stored session**:
 }
 ```
 
-- `session_providers` injects the org's stored session for each named
-  provider as `ctx.input.secrets.<provider>_session` — a JSON string
-  `{cookies, userAgent}`. Your handler applies it (set the cookies and user
-  agent on agent-browser before the first navigation).
+- `session_providers` (built-in providers only) injects the org's stored
+  session for each named provider as `ctx.input.secrets.<provider>_session` —
+  a JSON string `{cookies, userAgent}`. Your handler applies it (set the
+  cookies and user agent on agent-browser before the first navigation).
 - Injection is non-fatal: a missing or invalid session leaves the secret
   unset. The handler must fail closed when it is absent — return a failure,
-  never scrape logged-out pages and report success.
+  never scrape logged-out pages and report success. An `org:<id>` provider
+  (next section) works differently: none of this cookie handling applies.
 - Egress is still gated by `http_allowlist`: list the provider's hosts.
 - `session_providers` also works WITHOUT the browser capability, for a worker
   that calls the provider over `ctx.tools.http` with the session's cookies.
 - Browser runs are switched on per environment by the platform. A config the
   platform accepts is not proof that browser runs are enabled where it runs —
   check the run's log before calling a new browser job done.
+
+### Browser job against the org's own login site (`org:<id>` provider)
+
+When the vendor site is not a built-in provider, author an
+`integration-provider` descriptor and reference it as `org:<id>`.
+
+1. Descriptor file `integrations/providers/<id>.json` (kind
+   `integration-provider`, activate-class). Start from
+   `templates/integration-provider.template.json`. `<id>` matches
+   `^[a-z][a-z0-9-]{0,63}$` and the file's `id` field equals it (no `org:`
+   prefix inside the file). Every object is strict (unknown keys rejected):
+   - `version: 1`, `id`, `displayName`
+   - `slots[]` (1-8): `key`, `purpose`, `authMethod: "browser-session"`
+   - `requestedOrigins[]` (1-16): bare `https://host` origins, no path
+   - `login`: `origin`, `usernameSelector`, `passwordSelector`,
+     `submitSelector` (**REQUIRED**), `totpSelector` (optional; set it only
+     when the site asks for a one-time code — the Owner then also enrolls the
+     TOTP secret), `authenticatedSelector` (visible only when logged in),
+     `waitMs` (integer 0-30000)
+   - `operations[]` (1-16): `id`, `effect` (`read` | `write`),
+     `requestedOrigin`, `path` (starts with `/`)
+   - `login.origin` and every operation's `requestedOrigin` must appear in
+     `requestedOrigins`.
+2. In the handler's `config.json`: `"capabilities": ["browser"]`,
+   `"session_providers": ["org:<id>"]`, and an `http_allowlist` covering the
+   `requestedOrigins` hosts. Validation refuses an `org:<id>` with no
+   matching descriptor in the same workspace.
+3. Order: push the descriptor and handler -> `/cynap-activate` -> the Owner
+   enrolls the site login in the portal (Integrations -> Custom browser
+   provider; Owner only) -> run. The operator context's capability index
+   shows per provider whether it is activated and enrolled (never the
+   credentials). If it is not enrolled, tell the Owner to enroll; never ask
+   for the password yourself.
+4. For `org:` providers the platform logs in inside the worker parent before
+   your handler starts. The handler never sees or handles the password, and
+   must NOT apply cookies from `ctx.input.secrets` (there is nothing to
+   apply). Drive the already-logged-in browser; fail closed if the expected
+   page is not authenticated.
 
 Before you tell anyone a browser job would be the org's first, read the
 org's existing configs' `execution.capabilities` and

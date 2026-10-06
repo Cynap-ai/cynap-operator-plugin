@@ -48,7 +48,10 @@ availability are independent of execution mode.
    classification/extraction/org-database-write case. **A scripted browser job — known pages, known
    steps — is `entrypoint: 'worker'` + `capabilities: ['browser']`**, with
    `session_providers` when it needs the org's stored login: the handler
-   drives the browser itself and no LLM is in the loop. **Prefer
+   drives the browser itself and no LLM is in the loop. A vendor site that is
+   not a built-in provider needs an `org:<id>` `integration-provider`
+   descriptor — see `author-a-code-execution` § "Browser job against the
+   org's own login site". **Prefer
    `ctx.tools.llm.complete(prompt, { model })`** with a cheap fast model
    (Gemini Flash class) wherever the task is really
    classification/extraction — it's cheaper, unit-testable via

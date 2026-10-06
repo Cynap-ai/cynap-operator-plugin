@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "id": "example-portal",
+  "displayName": "Example Portal",
+  "slots": [
+    { "key": "main", "purpose": "browser-login", "authMethod": "browser-session" }
+  ],
+  "requestedOrigins": ["https://app.example.com"],
+  "login": {
+    "origin": "https://app.example.com",
+    "usernameSelector": "input[name=email]",
+    "passwordSelector": "input[name=password]",
+    "submitSelector": "button[type=submit]",
+    "authenticatedSelector": "[data-testid=account-menu]",
+    "waitMs": 15000
+  },
+  "operations": [
+    { "id": "list-orders", "effect": "read", "requestedOrigin": "https://app.example.com", "path": "/orders" }
+  ]
+}

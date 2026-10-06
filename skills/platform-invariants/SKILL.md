@@ -32,6 +32,11 @@ Production is `/cynap-activate`. Run it when the work is ready; the owner's brow
 approval, so do not ask in chat before running it. Run it, then tell the human the step-up is waiting
 for them, and in the same message report what will go live (commit, files, irreversible effects).
 
+A handler that logs into a vendor site the platform has no built-in provider for declares
+`session_providers: ["org:<id>"]` plus an `integration-provider` descriptor. The Owner enrolls the
+login in the portal after activation; the handler never holds the password (see
+`author-a-code-execution` § "Browser job against the org's own login site").
+
 Stop and ask the human only for a genuine business decision the workspace cannot answer, a refusal
 with no `next:` route, or anything destructive outside the workspace.
 
