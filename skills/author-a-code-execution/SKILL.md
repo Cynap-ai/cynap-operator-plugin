@@ -66,10 +66,11 @@ A logged-in browser job adds a **stored session**:
 }
 ```
 
-- `session_providers` (built-in providers only) injects the org's stored
-  session for each named provider as `ctx.input.secrets.<provider>_session` —
-  a JSON string `{cookies, userAgent}`. Your handler applies it (set the
-  cookies and user agent on agent-browser before the first navigation).
+- `session_providers` takes a built-in provider or `org:<id>`. For a built-in
+  provider it injects the org's stored session as
+  `ctx.input.secrets.<provider>_session` — a JSON string
+  `{cookies, userAgent}`. Your handler applies it (set the cookies and user
+  agent on agent-browser before the first navigation).
 - Injection is non-fatal: a missing or invalid session leaves the secret
   unset. The handler must fail closed when it is absent — return a failure,
   never scrape logged-out pages and report success. An `org:<id>` provider

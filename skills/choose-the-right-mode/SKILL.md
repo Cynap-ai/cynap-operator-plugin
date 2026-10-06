@@ -77,6 +77,14 @@ still `deterministic`; an open-ended chat session that decides its own next
 action is a `flow`. See
 `author-a-deterministic-automation` for the exact vocabulary.
 
+## One config per automation id
+
+An automation config has two possible layouts: a flat
+`automations/<id>.json`, or a nested `automations/handlers/<id>/config.json`
+next to its `handler.ts`. An id has exactly **one** config. If a push or sync
+finds both layouts for the same id, it is rejected with
+`handler_config_conflict`. Delete the one you are not keeping before you push.
+
 ## Workspace path capability matrix
 
 Read this before editing a pulled org tree. Each row names the SDK path kind;
