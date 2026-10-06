@@ -98,6 +98,7 @@ export const IDEMPOTENT_TOOL_NAMES = new Set([
   'journal_query',
   'runs_query',
   'journal_count',
+  'customer_ai_readiness_get',
   'run_evidence_get',
   'automation_runs_list',
   'automation_run_writes',

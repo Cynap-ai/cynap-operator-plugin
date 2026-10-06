@@ -15,8 +15,8 @@ config). If you haven't confirmed this is the right mode, go read
 if you haven't this session.
 
 If the step graph includes an `llm` tool, read `configure-customer-ai` and
-explain native versus BYOK billing first. The AI call is billed under the
-org's funding record even though the surrounding runtime is deterministic.
+read the generated Customer AI paragraph in base context part 5 for payers
+and preview spend before authoring the call.
 
 ## Deliverable shape — ONE file
 

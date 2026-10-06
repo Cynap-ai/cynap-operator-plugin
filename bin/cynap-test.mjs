@@ -24,8 +24,11 @@ import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { assertConnectedOrg, listLocalFiles, readState, resolveOrgSlug, resolveWorkspaceDir } from '../lib/workspace-sync.mjs';
-import { assertSupportedNode, SANDBOX_ENV, sandboxExecArgv } from '../lib/sandboxed-node.mjs';
+import { assertSupportedNode, assertNetworkGated, SANDBOX_ENV, sandboxExecArgv } from '../lib/sandboxed-node.mjs';
 import { installTestingContext, testingContextIsCurrent } from '../lib/testing-context.mjs';
+
+import { createDevAiBroker, bindDevAiBroker } from '../lib/dev-ai-broker.mjs';
+import { warnCustomerAiReadiness } from '../lib/customer-ai-readiness-warning.mjs';
 
 export const ORG_TEST_FILE_RE = /\.test\.(?:ts|mts|js|mjs|cjs)$/;
 export const UNSUPPORTED_EXIT_CODE = 2;
@@ -103,12 +106,18 @@ export function commonJsShimFor(realDir, file) {
 }
 
 export function parseTestArgs(argv) {
-  const out = { dir: null, files: [] };
+  const out = { dir: null, files: [], realAi: false, model: undefined };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--dir') out.dir = argv[++i];
+    else if (argv[i] === '--real-ai') out.realAi = true;
+    else if (argv[i] === '--model') {
+      out.model = argv[++i];
+      if (!out.model || out.model.startsWith('--')) throw new Error('cynap-test: --model needs a value');
+    }
     else if (argv[i].startsWith('--')) throw new Error(`cynap-test: unrecognized option "${argv[i]}"`);
     else out.files.push(argv[i]);
   }
+  if (out.model && !out.realAi) throw new Error('cynap-test: --model requires --real-ai');
   return out;
 }
 
@@ -137,27 +146,34 @@ export function nodeTestArgv(realDir, files, flags = process.allowedNodeEnvironm
   ];
 }
 
-export async function runOrgTests({ cwd = process.cwd(), argv = [], stdio = 'inherit', spawnImpl = spawn } = {}) {
+export async function runOrgTests({ cwd = process.cwd(), argv = [], stdio = 'inherit', spawnImpl = spawn, createBroker = createDevAiBroker, warnReadiness = warnCustomerAiReadiness } = {}) {
   assertSupportedNode();
   const args = parseTestArgs(argv);
+  if (args.realAi) assertNetworkGated();
+  const aiMode = args.realAi ? 'real (developer)' : 'fixtures';
   const org = resolveOrgSlug({ cwd });
   const dir = resolveWorkspaceDir({ cwd, dir: args.dir, org });
   const state = readState(dir);
   if (!state) throw new Error(`cynap-test: ${dir} is not a pulled working directory — run /cynap-pull first.`);
   assertConnectedOrg(state, org, dir);
 
+  // Resolve before any child, including empty runs: an opted-in broken binding is loud.
+  const broker = args.realAi ? await createBroker({ model: args.model }) : null;
   const all = findOrgTests(dir);
   const requested = args.files.length > 0 ? args.files : all;
   const unknown = requested.filter((file) => !all.includes(file));
   if (unknown.length > 0) throw new Error(`cynap-test: not an org test file in ${dir}: ${unknown.join(', ')}`);
   const unsupported = requested.map((file) => inspectOrgTest(dir, file)).filter(Boolean);
   const files = requested.filter((file) => !unsupported.some((item) => item.file === file));
-  if (files.length === 0 && unsupported.length > 0) {
-    return { ok: false, exitCode: UNSUPPORTED_EXIT_CODE, files, unsupported, passed: 0, failed: 0, output: '' };
-  }
-  if (files.length === 0) return { ok: true, exitCode: 0, files, output: '', note: 'no org test files — nothing to run' };
+  // Advisory org readiness never chooses the local payer or gates the sandboxed test.
+  await warnReadiness({ org });
 
-  if (!testingContextIsCurrent(dir)) installTestingContext(dir);
+  if (files.length === 0 && unsupported.length > 0) {
+    return { ok: false, exitCode: UNSUPPORTED_EXIT_CODE, files, aiMode, unsupported, passed: 0, failed: 0, output: '' };
+  }
+  if (files.length === 0) return { ok: true, exitCode: 0, files, aiMode, output: '', note: 'no org test files — nothing to run' };
+
+  if (args.realAi || !testingContextIsCurrent(dir)) installTestingContext(dir, { realAi: args.realAi });
 
   // Files are passed RELATIVE to the working directory: `node --test` treats its arguments as
   // glob patterns, and an absolute pattern starts its walk at `/`, which the sandbox denies.
@@ -165,8 +181,9 @@ export async function runOrgTests({ cwd = process.cwd(), argv = [], stdio = 'inh
   const child = spawnImpl(process.execPath, nodeTestArgv(realDir, files.map((file) => commonJsShimFor(realDir, file))), {
     cwd: realDir,
     env: SANDBOX_ENV,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', ...(broker ? ['ipc'] : [])],
   });
+  if (broker) bindDevAiBroker(child, broker);
   let output = '';
   const capture = (chunk) => {
     output += chunk;
@@ -177,7 +194,7 @@ export async function runOrgTests({ cwd = process.cwd(), argv = [], stdio = 'inh
   const exitCode = await new Promise((resolve) => child.on('close', (code) => resolve(code)));
   const passed = Number(output.match(/^# pass (\d+)$/m)?.[1] ?? 0);
   const failed = Number(output.match(/^# fail (\d+)$/m)?.[1] ?? 0);
-  return { ok: exitCode === 0, exitCode, files, unsupported, passed, failed, output };
+  return { ok: exitCode === 0, exitCode, files, aiMode, unsupported, passed, failed, output };
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -194,7 +211,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const verdict = result.note ??
     `passed ${result.passed} — failed ${result.failed} — unsupported ${(result.unsupported ?? []).length}`;
-  process.stdout.write(`\ncynap-test: ${verdict}. Self-assurance only: nothing on the plane reads this result.\n`);
+  process.stdout.write(`\ncynap-test: AI ${result.aiMode}; ${verdict}. Self-assurance only: nothing on the plane reads this result.\n`);
   process.exitCode = result.exitCode;
   return result;
 }

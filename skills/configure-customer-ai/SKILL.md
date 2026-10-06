@@ -12,10 +12,8 @@ enabled.
 
 ## Explain funding before the user chooses
 
-| Funding | Who pays the provider | Cynap inference charge | Other charges |
-|---|---|---|---|
-| **Native** | Cynap pays the qualified provider route. | Measured usable inference is deducted from org credits. A reservation can remain pending while provider usage is reconciled. | Ordinary runtime charges still apply. |
-| **BYOK** | The customer pays the provider directly with its stored credential. | No Cynap inference debit. | Ordinary runtime charges still apply. |
+Read the generated Customer AI paragraph in base context part 5 for payers,
+preview spend and current native qualification before selecting a funding mode.
 
 There is **no automatic fallback** between native and BYOK. A provider or
 funding failure stays a typed failure; never switch payer to make the call
@@ -38,18 +36,15 @@ fallback provider list. Keep secrets out of config, prompts, logs, tool
 results, and persisted customer AI results. A native model reference is a
 catalog identifier, not permission to set `baseURL`.
 
-## Providers and current availability
+## Readiness and local testing
 
-- **Vercel AI Gateway** is the intended native default.
-- **OpenRouter** is an optional qualified route, not an automatic substitute.
-- Native routes remain unavailable until platform policy marks the exact
-  provider × operation × model route qualified. Handle the typed unavailable
-  result and tell the user that enablement is a platform qualification step.
-- Existing approved direct-provider endpoints can remain BYOK transports;
-  they do not become native endpoints because they appear in workspace config.
-
-Do not run a paid probe or enable a native route while authoring customer
-config.
+Before preview, read the org's admission verdict with `customer_ai_readiness_get`.
+Act on the verdict's actor; when the actor is `owner`, hand the Owner `owner_page`.
+Test locally with synthetic inputs: `/cynap-test` uses fixtures; `/cynap-dev-ai` records
+only your own key reference, and `/cynap-test --real-ai` opts in to real
+calls through the trusted parent. Developer provider denials stay local.
+Read base context part 5 for the preview carve-out. Do not enable a native route
+while authoring config.
 
 ## JEV is evaluate-only
 

@@ -1,6 +1,6 @@
 ---
 description: Run the org's tests locally in a read-only sandbox and report the verdict.
-argument-hint: "[--dir <path>] [file…]"
+argument-hint: "[--real-ai] [--model <model>] [--dir <path>] [file…]"
 ---
 
 # /cynap-test
@@ -41,6 +41,25 @@ process that may only **read** the working directory: no file writes, no child p
 empty environment, and (on Node ≥ 25) no network. A test that needs any of those fails here.
 
 Node ≥ 22.18 is required; an older Node is refused with the version it found.
+
+## Local AI calls
+
+Fixtures remain the default. Configure a key **reference** once with `/cynap-dev-ai`,
+then opt in for one run with `/cynap-test --real-ai`. `--model` selects only an allowed
+model. Use synthetic test inputs; the mock context's default input is empty.
+
+Before an opted-in run, the trusted parent calls `customer_ai_readiness_get` for each
+server-resolved org route and prints the reason and actor as a warning. A denied or
+unavailable verdict never fails the local run. The payer and preview carve-out are
+defined in base context part 5; readiness does not change the local binding.
+
+On an opted-in run, `createMockContext` binds `ctx.tools.llm.complete` to the trusted
+parent broker, overriding any fixture callback for that method. The parent validates
+requests with the SDK schema and enforces local model, token and call bounds. Only plain
+text completions are supported. The child gets no key or network access; real calls
+require Node ≥ 25. An unresolved key or provider denial fails loudly with actor
+`developer`, locally only. There is no fallback to another payer. Results identify
+fixture or real developer mode. `/cynap-checks` remains unchanged.
 
 ## The verdict
 

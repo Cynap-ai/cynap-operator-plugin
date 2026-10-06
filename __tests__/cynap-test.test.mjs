@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { findOrgTests, inspectOrgTest, nodeTestArgv, runOrgTests, UNSUPPORTED_EXIT_CODE } from '../bin/cynap-test.mjs';
-import { assertSupportedNode, FORBIDDEN_GRANTS } from '../lib/sandboxed-node.mjs';
+import { assertSupportedNode, assertNetworkGated, networkIsGated, FORBIDDEN_GRANTS } from '../lib/sandboxed-node.mjs';
 
 const inProcess = (() => {
   try {
@@ -18,6 +18,8 @@ const inProcess = (() => {
   }
 })();
 const needsInProcess = { skip: !inProcess && 'needs a Node that runs tests in-process; CI runs these in the Node 25 step' };
+
+const needsNetworkGate = { skip: (!inProcess || !networkIsGated()) && 'real AI requires Node network permissions' };
 
 const ORG = 'acme';
 let cwd;
@@ -159,4 +161,52 @@ test('an org with no tests passes vacuously and says so', async () => {
   assert.equal(result.ok, true);
   assert.match(result.note, /no org test files/);
   assert.equal(readFileSync(join(dir, '.cynap', 'state.json'), 'utf8').includes(ORG), true);
+});
+
+test('fixtures never create an AI broker or network binding', needsInProcess, async () => {
+  write('fixtures.test.mjs', `import { test } from 'node:test'; import assert from 'node:assert/strict'; import { createMockContext } from '#cynap/testing'; test('fixture', async () => assert.equal(await createMockContext({ llmComplete: () => 'fixture' }).tools.llm.complete('synthetic'), 'fixture'));`);
+  const ran = await runOrgTests({ cwd, stdio: 'pipe', createBroker: () => { throw new Error('broker must not bind'); } });
+  assert.equal(ran.aiMode, 'fixtures');
+  assert.equal(ran.ok, true, ran.output);
+});
+
+test('real AI is brokered over IPC; empty env and no socket; fixture mode restores', needsNetworkGate, async () => {
+  const { spawn } = await import('node:child_process');
+  const { CustomerAiRequestSchema } = await import('../lib/customer-ai-request-schema.mjs');
+  const { createDevAiBroker } = await import('../lib/dev-ai-broker.mjs');
+  const wire = [];
+  let httpCalls = 0;
+  write('ai.test.mjs', `import { test } from 'node:test'; import assert from 'node:assert/strict'; import net from 'node:net'; import { createMockContext } from '#cynap/testing'; test('real', async () => { assert.deepEqual(Object.keys(process.env).filter((key) => !key.startsWith('__CF_') && key !== 'NODE_TEST_WORKER_ID'), []); await assert.rejects(new Promise((resolve, reject) => { const socket = net.connect({ host: '127.0.0.1', port: 9 }); socket.on('error', reject); socket.on('connect', () => { socket.destroy(); resolve(); }); }), { code: 'ERR_ACCESS_DENIED' }); await assert.rejects(createMockContext().tools.llm.complete('synthetic', { invalid: 1n }), /developer/); assert.equal(await createMockContext({ llmComplete: () => 'fixture' }).tools.llm.complete('synthetic'), 'real answer'); });`);
+  const ran = await runOrgTests({ cwd, argv: ['--real-ai'], stdio: 'pipe',
+    createBroker: () => createDevAiBroker({ schema: CustomerAiRequestSchema,
+      config: { endpoint: 'vercel', key: { kind: 'op', reference: 'op://local/item/key' }, allowedModels: ['test/model'], defaultModel: 'test/model', maxTokens: 20, callCap: 1 },
+      resolveKey: () => 'fake-private-value',
+      fetchImpl: async (_url, options) => { httpCalls++; assert.equal(options.headers.Authorization, 'Bearer fake-private-value'); assert.equal(JSON.parse(options.body).max_tokens, 20); return { ok: true, json: async () => ({ choices: [{ message: { content: 'real answer' } }], key: 'fake-private-value' }) }; },
+    }),
+    spawnImpl: (binary, args, options) => {
+      assert.deepEqual(options.env, {});
+      assert.doesNotMatch(JSON.stringify([args, options]), /fake-private-value|op:\/\//);
+      const child = spawn(binary, args, options);
+      child.on('message', (message) => wire.push(message));
+      const send = child.send.bind(child);
+      child.send = (message, ...rest) => { wire.push(message); return send(message, ...rest); };
+      return child;
+    },
+  });
+  assert.equal(ran.ok, true, ran.output);
+  assert.equal(ran.aiMode, 'real (developer)');
+  assert.equal(httpCalls, 1);
+  assert.doesNotMatch(JSON.stringify(wire), /fake-private-value|op:\/\//);
+  assert.equal(wire[0].type, 'llmComplete');
+  write('ai.test.mjs', `import { test } from 'node:test'; import assert from 'node:assert/strict'; import { createMockContext } from '#cynap/testing'; test('fixture restored', async () => assert.equal(await createMockContext({ llmComplete: () => 'fixture' }).tools.llm.complete('synthetic'), 'fixture'));`);
+  const fixtures = await runOrgTests({ cwd, stdio: 'pipe', createBroker: () => { throw new Error('not opted in'); } });
+  assert.equal(fixtures.ok, true, fixtures.output);
+});
+
+test('broken key binding fails before child spawn, even for an empty run', needsNetworkGate, async () => {
+  await assert.rejects(runOrgTests({ cwd, argv: ['--real-ai'], createBroker: () => { throw new Error('developer: configured AI key could not be resolved'); }, spawnImpl: () => { throw new Error('must not spawn'); } }), /could not be resolved/);
+});
+
+test('real AI refuses a runtime that cannot deny sockets', () => {
+  assert.throws(() => assertNetworkGated('22.18.0', new Set()), /cannot deny network/);
 });

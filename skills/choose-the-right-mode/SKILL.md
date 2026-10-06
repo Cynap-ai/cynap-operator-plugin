@@ -11,13 +11,15 @@ customer org. **Pick the mode before writing any config or code.** Read
 makes an AI call, also read `configure-customer-ai`; funding and provider
 availability are independent of execution mode.
 
+Read the generated Customer AI paragraph in base context part 5 for payers and preview spend.
+
 ## The 3 live modes
 
-| Mode | Runtime | AI shape | Billing implication | Deliverable shape |
-|---|---|---|---|---|
-| **code_execution** | Per-run isolated runtime | Selective (`ctx.tools.llm.complete()`) | Runtime is charged separately; each AI call follows the org's native/BYOK funding record. | `automations/handlers/{id}/config.json` + single-file `handler.ts` |
-| **flow** | Platform runtime | One or more model round-trips in a conversation | Each round-trip is customer AI consumption; native/BYOK rules apply and ordinary runtime charges still apply. | `communication/flows/{id}/flow.json` (+ optional `bots.json`) |
-| **deterministic** | Platform runtime | No agentic loop; a fixed sequence may include a bounded `llm` tool call | Runtime stays cheap, but an `llm` step still incurs customer AI consumption under the org's funding mode. | single `automations/{automation-id}.json` with `execution.steps[]` |
+| Mode | Runtime | AI shape | Deliverable shape |
+|---|---|---|---|
+| **code_execution** | Per-run isolated runtime | Selective (`ctx.tools.llm.complete()`) | `automations/handlers/{id}/config.json` + single-file `handler.ts` |
+| **flow** | Platform runtime | One or more model round-trips in a conversation | `communication/flows/{id}/flow.json` (+ optional `bots.json`) |
+| **deterministic** | Platform runtime | No agentic loop; a fixed sequence may include a bounded `llm` tool call | single `automations/{automation-id}.json` with `execution.steps[]` |
 
 ## Decision rules (apply in this order)
 
@@ -91,7 +93,7 @@ Read this before editing a pulled org tree. Each row names the SDK path kind;
 `create`, `update`, and `delete` are the planned operations from `/cynap-push`.
 
 | Kind | Org path | Create | Update | Delete |
-|---|---|---|---|---|
+|---|---|---|---|
 | `org-manifest` | `manifest.json` | human | human | human |
 | `org-profile` | `profile.json` | activate | activate | activate |
 | `org-agents` | `agents.json` | activate | activate | activate |

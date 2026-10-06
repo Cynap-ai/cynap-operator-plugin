@@ -16,10 +16,10 @@ test('customer AI guidance pins the funding, provider, and authorization boundar
   for (const required of [
     'config/ai.json',
     'intent only',
-    'Vercel AI Gateway',
-    'OpenRouter',
-    'org credits',
-    'ordinary runtime charges still apply',
+    'Customer AI paragraph in base context part 5',
+    'customer_ai_readiness_get',
+    '/cynap-test --real-ai',
+    '/cynap-dev-ai',
     'authenticated human',
     'org billing permission',
     'no automatic fallback',
@@ -29,8 +29,8 @@ test('customer AI guidance pins the funding, provider, and authorization boundar
     assert.match(guidance, new RegExp(required, 'i'), `missing customer AI guidance: ${required}`);
   }
 
-  assert.match(guidance, /native[\s\S]*Cynap pays[\s\S]*org credits/i);
-  assert.match(guidance, /BYOK[\s\S]*customer pays[\s\S]*no Cynap inference/i);
+  assert.doesNotMatch(guidance, /\| Funding \|/);
+  assert.match(guidance, /Developer provider denials stay local/);
   assert.match(guidance, /JEV[\s\S]*evaluate-only[\s\S]*probability[\s\S]*authorization/i);
   assert.match(guidance, /credentials[\s\S]*endpoints?[\s\S]*funding[\s\S]*prices?[\s\S]*reservation/i);
   assert.match(guidance, /secrets[\s\S]*config[\s\S]*logs[\s\S]*results/i);

@@ -50,7 +50,38 @@ it with the commit you expect before blaming the code.
 | `login_timeout` | Cynap | The login engine ran past its wait. Report it to Cynap; do not retry in a loop. |
 | `unknown` | Cynap | Report it to Cynap. Never assume an Owner action. |
 
-When more than one reason is true, the first row of the table wins. A reason
+### Customer AI admission
+
+For a `customer_ai` failure, read the persisted `reason`, `actor` and `next_step`.
+Call `customer_ai_readiness_get` to check its current route state. Follow the
+returned actor; for an Owner action, hand off `owner_page`. BYOK remains unchecked.
+The table below is parity-tested against the SDK's closed admission vocabulary.
+
+<!-- customer-ai-admission:start -->
+| Reason | Who acts | What to do next |
+|---|---|---|
+| `admitted` | none | no action is required. |
+| `not_applicable_byok` | none | unchecked: runtime pays with the org’s key. |
+| `funding_incomplete` | owner | the Owner completes native funding setup in Customer AI settings. |
+| `route_not_in_org_config` | operator | the Operator declares a route in the org’s Customer AI config. |
+| `invalid_request` | operator | the Operator fixes the request schema or bounds. |
+| `route_not_activated` | platform | the platform activates the qualified route. |
+| `route_unqualified` | platform | the platform qualifies the route and checks its model policy. |
+| `budget_disabled` | platform | the platform checks its budget policy. |
+| `period_limit` | retry | retry after the period window. |
+| `operation_limit` | retry | retry after the operation window. |
+| `daily_limit` | retry | retry after the daily window. |
+| `window_limit` | retry | retry after the call window. |
+| `credits_exhausted` | owner | the Owner tops up Cynap credits. |
+| `billing_unhealthy` | owner | the Owner resolves the billing issue. |
+| `org_fenced` | platform | the platform checks the org admission fence. |
+| `provider_unavailable` | platform | the platform checks the provider limit or binding. |
+| `platform_gateway_exhausted` | platform | the platform restores gateway capacity. |
+| `own_provider_exhausted` | owner | the Owner tops up their provider account. |
+| `unknown` | platform | the platform investigates the admission signal. |
+<!-- customer-ai-admission:end -->
+
+Use the reason returned by the platform; table order does not select admission. A reason
 whose actor is the Owner is an expected state, not a fault: tell the Owner
 exactly what to do and stop.
 
