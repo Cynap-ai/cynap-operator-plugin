@@ -147,6 +147,9 @@ The server binds the claim to verified CLI credential/consent provenance. An unc
 identical claim replays idempotently; a competing holder or incompatible stale version
 refuses. A claim is implementation authority, not Owner approval or paid-quote acceptance.
 
+Right after a successful claim, and before authoring, follow the `request-discover` skill: it
+calls `request_discover` once and tells you how to treat what comes back.
+
 For Request linkage, pass `request_id` on native `workspace_commit` as described above.
 The ordinary `/cynap-push` CLI does not supply that argument. Proposal proof, exact
 Owner approval and activation remain separate gates; inspect their callable contracts

@@ -1,14 +1,14 @@
 {
   "notice": "GENERATED MIRROR — do not edit directly. Produced by the mirror publisher.",
-  "sourceSha": "33e9a2b7fd1d993da07a4f62cec45385fd3d600a",
+  "sourceSha": "e450cbd82982f60ede7be34777da658b9f6c375a",
   "transformVersion": 1,
   "generatedBy": "publish-public-mirror.mjs",
   "files": {
     ".claude-plugin/compat.json": "8bf60d9c53e1610f04c8c1ebdc857d81ad263b01919aee85b752a618c8e9c131",
-    ".claude-plugin/marketplace.json": "819c17367a42bc82cfb61f7fd28197ff74acc89e868f93704795e57baa2b97f1",
-    ".claude-plugin/plugin.json": "c811e3f73601b6c78615cfc36dc73853322ffe7a23ac89ac8aa64a8aacfd6c9c",
-    ".codex-plugin/plugin.json": "8763c3864acc713585e2d635bb02d9a74f840a7dca8aa9b38936d2de3723a632",
-    "README.md": "936d1be843d97ce85b8d7018839855ec65b23d15c4a8c8ee1abeaab7b8921a3d",
+    ".claude-plugin/marketplace.json": "f73e476a6ccc7f5e9301ee1734a4fe28d223175b66c14e703c76804f3d6ed151",
+    ".claude-plugin/plugin.json": "0698eeed68afb2e4564fd476829bb6dff128b0497232c03de6c77681874f1540",
+    ".codex-plugin/plugin.json": "b354bf74aa39ff6d4e1209234144dc8fe8d3dcf781d846a2db1722b19e181b58",
+    "README.md": "f85a82b0fb332e8f6386b0a52b9de246d85e130a840872c09e534046adc04f61",
     "__tests__/autonomy-lifecycle.test.mjs": "16099053a0f57e87a9bdf3b06c7af394a47e661a5dc47f87ac99115293776e0b",
     "__tests__/checks-no-dev-ai.test.mjs": "278c8c7e15915c941c4695862c787853c7ba86245606622b3ecf60be832bf3d1",
     "__tests__/connect-any-org.test.mjs": "66b056a803d43db1a3e8b4ef0cf2621f2034d6835042338a02f1c212a98cfe8a",
@@ -83,8 +83,8 @@
     "lib/content-codec.mjs": "0fffec89c49cf092e3c3b367a50b26f1b93f2fc76bab5b38a16aefdad3a49aad",
     "lib/customer-ai-admission-reasons.mjs": "1aa51f68e3ba58e264c82c5d7a431d971f155d50be7cfccea990554219b0c3ac",
     "lib/customer-ai-readiness-warning.mjs": "e57a40ea3dae5c517f6692810f758c2ab9a52643279579ad7a9a7cadda753db8",
-    "lib/customer-ai-request-schema.mjs": "85aabd42d02c1924aec6e65c2d024f1f820ba73f3b1bb2fc86ce328778720255",
-    "lib/cynap-sdk-types.mjs": "9415754d87ec717f6daa3356612a19952c9edc2d38206fbe4557ac6574212649",
+    "lib/customer-ai-request-schema.mjs": "a34d0446d07ee4892cee4b52cd9fc526f8671ce717d72ba0f6b70fe343a47e81",
+    "lib/cynap-sdk-types.mjs": "c700a90dc22be71385d9ae946917f0a73d08b8e55cb60b0d75b8662e0d8563a1",
     "lib/cynap-testing.mjs": "404cd9f659dbc8cdf990ad34bd6c4a68f780d3a09376bfebacdc0bd736a57913",
     "lib/dev-ai-broker.mjs": "f2024ca712e2dfafeeb84240b106577ccfd5b78168d49aa230469d90edf66a3f",
     "lib/dev-ai-child.mjs": "567add0d37defb0a4bc0d7e0ef8dcf62b7a5146e80ca7cd3776f386ea14da226",
@@ -129,8 +129,9 @@
     "skills/debug-a-run/SKILL.md": "23f2a0747b014e78d43f95b500fef80618a67b3398384627c5caada0d48233b4",
     "skills/platform-invariants/LEARNINGS.md": "a27ef31ad91d67048983b708be1977de367948432f2dd3539e556c7423e28cea",
     "skills/platform-invariants/SKILL.md": "76dcf7caf987204832e2a0b391fb48d4c42ef9e026c21c615a2c29d87643621a",
+    "skills/request-discover/SKILL.md": "c47225d3e5b0622c604398d4fbc32a98653e793ef14444fdeecf910da207f1e9",
     "skills/scope-to-workflow/SKILL.md": "3b5c72dfb9fb9a365ac2c019fd925f6ba45b284ceaebbed6422a7e89150d4c21",
     "skills/summarize-your-change/LEARNINGS.md": "76cc6d2a058bc8c5ab8f7b36c700ca324b9b5c149a91debea886f163160ce8b5",
-    "skills/summarize-your-change/SKILL.md": "028e7345e85e2998a17a3a86e6e17ed0a6dfaed38636ab1168b38032ada7999d"
+    "skills/summarize-your-change/SKILL.md": "3f0971fc45994d475461b9752d112e562d1c4feb3c916c232660d5103af7794a"
   }
 }
