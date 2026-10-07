@@ -66,6 +66,7 @@ The table below is parity-tested against the SDK's closed admission vocabulary.
 | `route_not_in_org_config` | operator | the Operator declares a route in the org’s Customer AI config. |
 | `operator_run_native_spend` | operator | test with /cynap-test on your own key, or ask the Owner to run it. |
 | `invalid_request` | operator | the Operator fixes the request schema or bounds. |
+| `model_not_allowed` | operator | the Operator adds the model to allowedModels in config/ai.json. |
 | `route_not_activated` | platform | the platform activates the qualified route. |
 | `route_unqualified` | platform | the platform qualifies the route and checks its model policy. |
 | `budget_disabled` | platform | the platform checks its budget policy. |
