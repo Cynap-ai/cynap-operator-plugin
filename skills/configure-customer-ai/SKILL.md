@@ -25,7 +25,7 @@ operation, prompt, or workspace config cannot select or change the payer.
 
 ## What workspace config may declare
 
-`config/ai.json` is intent only. It may narrow execution with exact qualified
+`config/ai.json` is intent only. Activation makes it live, the same way flows go live (exact path; needs a `checks/` assertion naming it). It may narrow execution with exact qualified
 model references, per-task defaults, and per-call/per-run/per-period ceilings.
 The platform intersects that intent with the qualified catalog, the persisted
 funding record, entitlements, and mandatory ceilings.
