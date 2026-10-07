@@ -47,6 +47,15 @@ test('cynap-activate refusal names the code and failureCode instead of request_r
   assert.match(formatRefusal({ ok: false, code: 'http_400' }, { command: 'cynap-activate' }), /^cynap-activate: http_400: request refused/);
 });
 
+test('cynap-activate names the preview as the next step when the step-up reports handler_preview_required', () => {
+  const sha = 'a'.repeat(64);
+  const text = formatRefusal({ ok: false, code: 'automatic_step_up_failed', failureCode: 'handler_preview_required' },
+    { command: 'cynap-activate', commitSha: sha });
+  assert.match(text, /^cynap-activate: automatic_step_up_failed \(handler_preview_required\): no passing preview/);
+  assert.doesNotMatch(text, /Re-run \/cynap-activate once/);
+  assert.match(text, new RegExp(`next: /cynap-preview <automation-id> ${sha}`));
+});
+
 // After a gateway timeout the plugin reconciles; an activation it cannot yet confirm is still running, not refused.
 test('an unconfirmed activation says it may still be running instead of "request refused"', () => {
   for (const code of ['activation_not_confirmed', 'activation_outcome_unknown']) {
