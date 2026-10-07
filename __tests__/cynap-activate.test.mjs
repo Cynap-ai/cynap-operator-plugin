@@ -1,7 +1,10 @@
-// /cynap-activate --reconcile arg parsing.
+// /cynap-activate: arg parsing, the activation flow, and its typed outcome.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseActivateArgs, readActivationAction, reconcileActivation, runActivationFlow } from '../bin/cynap-activate.mjs';
+import {
+  activatedOnChain, describeReady, parseActivateArgs, readActivationAction, readinessOf, runActivationFlow, settleActivation,
+} from '../bin/cynap-activate.mjs';
+import { ACTIVATE_RESPONSE_BUDGET_MS, ACTIVATION_CALL_TIMEOUT_MS, AUTO_CONSENT_TIMEOUT_MS, TOKEN_EXCHANGE_TIMEOUT_MS } from '../bin/operator-proxy.mjs';
 
 const SHA = 'c'.repeat(64);
 
@@ -30,62 +33,6 @@ test('readActivationAction selects the committed SHA from workspace_status', asy
   };
   assert.deepEqual(await readActivationAction({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl }),
     { orgSlug: 'cynap-e2e', nextAction: { kind: 'step_up_and_activate' } });
-});
-
-test('a timed-out activation is reconciled against the live digest before any retry', async () => {
-  const calls = [];
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (_url, init) => {
-    const name = JSON.parse(init.body).params.name;
-    calls.push(name);
-    return { ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: SHA, pending: [] } } }) };
-  } });
-  assert.deepEqual(calls, ['workspace_status']);
-  assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA });
-});
-
-test('reconciliation reads the commit log when status has no pending or live match', async () => {
-  const calls = [];
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (_url, init) => {
-    const name = JSON.parse(init.body).params.name;
-    calls.push(name);
-    const value = name === 'workspace_status' ? { ok: true, live_digest: null, pending: [] } :
-      { ok: true, commits: [{ commit_sha: SHA, outcome: 'orphaned' }] };
-    return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
-  } });
-  assert.deepEqual(calls, ['workspace_status', 'workspace_log']);
-  assert.equal(result.state, 'orphaned');
-  assert.equal(result.ok, false);
-  assert.match(result.message, /activation not confirmed: orphaned/);
-});
-
-test('reconciliation confirms only an activated or ancestor log outcome', async () => {
-  for (const outcome of ['activated', 'ancestor']) {
-    const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (_url, init) => {
-      const value = JSON.parse(init.body).params.name === 'workspace_status' ? { ok: true, live_digest: null, pending: [] } :
-        { ok: true, commits: [{ commit_sha: SHA, outcome }] };
-      return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
-    } });
-    assert.deepEqual(result, { ok: true, state: outcome, commit_sha: SHA });
-  }
-});
-
-test('reconciliation of a still-pending commit is not a confirmed activation', async () => {
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => ({
-    ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
-      pending: [{ commit_sha: SHA, state: 'awaiting_owner' }] } } }),
-  }) });
-  assert.equal(result.ok, false);
-  assert.match(result.message, /activation not confirmed: awaiting_owner/);
-});
-
-test('reconciliation with no recorded outcome is not confirmed', async () => {
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (_url, init) => {
-    const value = JSON.parse(init.body).params.name === 'workspace_status' ? { ok: true, live_digest: null, pending: [] } :
-      { ok: true, commits: [] };
-    return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
-  } });
-  assert.equal(result.ok, false);
-  assert.match(result.message, /activation not confirmed: unknown/);
 });
 
 test('handler_preview_required previews the commit, then rechecks status before owner step-up', async () => {
@@ -192,122 +139,131 @@ test('a next action instead of an activation says nothing was activated', async 
   assert.match(describeNotActivated('blocked_by_chain', 'x'), /^not activated \(blocked_by_chain\): an earlier pending commit/);
 });
 
-test('reconciliation waits, bounded, while the commit is still activating', async () => {
-  let reads = 0;
-  const waits = [];
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, intervalMs: 10, waitMs: 100,
-    wait: async (ms) => { waits.push(ms); },
-    fetchImpl: async () => {
-      reads += 1;
-      const value = reads < 3
-        ? { ok: true, live_digest: null, pending: [{ commit_sha: SHA, state: 'activating' }] }
-        : { ok: true, live_digest: SHA, pending: [] };
-      return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
-    } });
-  assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA });
-  assert.equal(reads, 3);
-  assert.deepEqual(waits, [10, 10]);
+// ── the outcome is typed by the proxy, success read from the chain, readiness from the marker ──
+
+const statusAnswer = (value) => ({ ok: true, json: async () => ({ result: { structuredContent: value } }) });
+const B = 'b'.repeat(64);
+
+test('activatedOnChain: the live ref is C, or C is an activated ancestor, and C is not the claimed head', () => {
+  assert.equal(activatedOnChain({ base_ref: { kind: 'commit', value: SHA } }, SHA), true);
+  assert.equal(activatedOnChain({ base_ref: { kind: 'commit', value: B },
+    recent: [{ sha: B, outcome: 'activated' }, { sha: SHA, outcome: 'activated' }] }, SHA), true);
+  assert.equal(activatedOnChain({ base_ref: { kind: 'commit', value: B }, recent: [{ sha: SHA, outcome: 'orphaned' }] }, SHA), false);
+  assert.equal(activatedOnChain({ base_ref: { kind: 'commit', value: SHA }, head_state: { activating: SHA } }, SHA), false);
+  // The deleted live_digest inference: a live digest equal to C proves nothing.
+  assert.equal(activatedOnChain({ live_digest: SHA, base_ref: { kind: 'digest', value: SHA } }, SHA), false);
 });
 
-test('reconciliation stops waiting at its budget and reports the commit as still activating', async () => {
+test('readinessOf: only the marker for C says ready; an older server or another commit is unknown', () => {
+  assert.equal(readinessOf({ readiness: { commit_sha: SHA, state: 'yes' } }, SHA), 'yes');
+  assert.equal(readinessOf({ readiness: { commit_sha: SHA, state: 'projecting' } }, SHA), 'projecting');
+  assert.equal(readinessOf({ readiness: { commit_sha: SHA, state: 'failed' } }, SHA), 'failed');
+  assert.equal(readinessOf({}, SHA), 'unknown'); // older server: no field
+  assert.equal(readinessOf({ readiness: null }, SHA), 'unknown');
+  assert.equal(readinessOf({ readiness: { commit_sha: B, state: 'yes' } }, SHA), 'unknown');
+  assert.equal(describeReady('unknown'), 'ready: unknown');
+});
+
+test('settleActivation: success only from base_ref, then waits for the projected marker', async () => {
+  const reads = [];
+  const answers = [
+    { ok: true, base_ref: { kind: 'commit', value: B }, head_state: { activating: SHA }, pending: [{ commit_sha: SHA, state: 'activating' }] },
+    { ok: true, base_ref: { kind: 'commit', value: SHA }, head_state: null, pending: [], readiness: { commit_sha: SHA, state: 'projecting' } },
+    { ok: true, base_ref: { kind: 'commit', value: SHA }, head_state: null, pending: [], readiness: { commit_sha: SHA, state: 'yes' } },
+  ];
+  const result = await settleActivation({ slug: 'cynap-e2e', commitSha: SHA, intervalMs: 10, wait: async () => {},
+    fetchImpl: async () => { reads.push(1); return statusAnswer(answers[Math.min(reads.length - 1, answers.length - 1)]); } });
+  assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA, ready: 'yes' });
+  assert.equal(reads.length, 3);
+});
+
+test('settleActivation: an older server without readiness reports ready unknown, never yes', async () => {
+  const result = await settleActivation({ slug: 'cynap-e2e', commitSha: SHA, wait: async () => {},
+    fetchImpl: async () => statusAnswer({ ok: true, base_ref: { kind: 'commit', value: SHA }, live_digest: SHA, pending: [] }) });
+  assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA, ready: 'unknown' });
+});
+
+test('settleActivation: the readiness wait is bounded and reports projecting when it runs out', async () => {
   let reads = 0;
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, intervalMs: 10, waitMs: 30,
-    wait: async () => {},
-    fetchImpl: async () => {
-      reads += 1;
-      return { ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
-        pending: [{ commit_sha: SHA, state: 'activating' }] } } }) };
-    } });
+  const result = await settleActivation({ slug: 'cynap-e2e', commitSha: SHA, intervalMs: 10, readyWaitMs: 30, wait: async () => {},
+    fetchImpl: async () => { reads += 1; return statusAnswer({ ok: true, base_ref: { kind: 'commit', value: SHA }, pending: [],
+      readiness: { commit_sha: SHA, state: 'projecting' } }); } });
+  assert.equal(result.ready, 'projecting');
   assert.equal(reads, 4);
-  assert.equal(result.ok, false);
-  assert.match(result.message, /activation not confirmed: activating/);
 });
 
-test('an upstream gateway timeout from the proxy is reconciled, not reported as a failure', async () => {
+test('settleActivation: a recorded failure names its code; an unsettled commit is outcome unknown', async () => {
+  const failed = await settleActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => statusAnswer({ ok: true,
+    base_ref: { kind: 'commit', value: B }, last_failure: { sha: SHA, code: 'preview_ack_required', message: 'ack' }, pending: [] }) });
+  assert.deepEqual(failed, { ok: false, code: 'activation_failed', commit_sha: SHA, failure_code: 'preview_ack_required', failure_message: 'ack' });
+  const pendingFailed = await settleActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => statusAnswer({ ok: true,
+    base_ref: { kind: 'commit', value: B }, pending: [{ commit_sha: SHA, state: 'failed', failure_code: 'post_deploy_failed' }] }) });
+  assert.equal(pendingFailed.failure_code, 'post_deploy_failed');
+  const unknown = await settleActivation({ slug: 'cynap-e2e', commitSha: SHA, intervalMs: 10, waitMs: 20, wait: async () => {},
+    fetchImpl: async () => statusAnswer({ ok: true, base_ref: { kind: 'commit', value: B }, pending: [{ commit_sha: SHA, state: 'activating' }] }) });
+  assert.deepEqual(unknown, { ok: false, code: 'activation_outcome_unknown', commit_sha: SHA });
+});
+
+test('the CLI budget is computed from the proxy deadlines, so the proxy outcome arrives first', () => {
+  assert.ok(ACTIVATE_RESPONSE_BUDGET_MS > AUTO_CONSENT_TIMEOUT_MS + TOKEN_EXCHANGE_TIMEOUT_MS + ACTIVATION_CALL_TIMEOUT_MS);
+});
+
+async function withNonce(run) {
   const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const { activate } = await import('../bin/cynap-activate.mjs');
   const { resolveWorkingDir } = await import('../lib/connect.mjs');
   const home = process.env.HOME;
-  process.env.HOME = mkdtempSync(join(tmpdir(), 'activate-504-'));
+  process.env.HOME = mkdtempSync(join(tmpdir(), 'activate-outcome-'));
   try {
     const dir = resolveWorkingDir('cynap-e2e');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, '.operator-control'), 'nonce\n');
-    const urls = [];
-    const result = await activate({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (url) => {
-      urls.push(String(url));
-      if (String(url).endsWith('/activate')) {
-        return { ok: false, status: 400, json: async () => ({ error: 'activation_failed', failureCode: 'http_504' }) };
-      }
-      return { ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: SHA, pending: [] } } }) };
-    } });
-    assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA });
-    assert.ok(urls.some((url) => url.endsWith('/mcp')));
+    return await run();
   } finally {
     process.env.HOME = home;
   }
-});
+}
 
-test('an accepted (activation_pending) activation is polled to its real outcome, never reported as pending', async () => {
-  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
+test('activate renders the proxy outcome and derives nothing from timing', async () => {
   const { activate } = await import('../bin/cynap-activate.mjs');
-  const { resolveWorkingDir } = await import('../lib/connect.mjs');
-  const home = process.env.HOME;
-  process.env.HOME = mkdtempSync(join(tmpdir(), 'activate-async-'));
-  try {
-    const dir = resolveWorkingDir('cynap-e2e');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, '.operator-control'), 'nonce\n');
-    let statusReads = 0;
-    const result = await activate({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async (url) => {
-      if (String(url).endsWith('/activate')) {
-        return { ok: true, status: 200, json: async () => ({ ok: true, step_up: 'automatic',
-          result: { structuredContent: { ok: false, code: 'activation_pending', commit_sha: SHA } } }) };
-      }
-      statusReads += 1;
-      const value = statusReads < 2
-        ? { ok: true, live_digest: null, pending: [{ commit_sha: SHA, state: 'activating' }] }
-        : { ok: true, live_digest: SHA, pending: [] };
-      return { ok: true, json: async () => ({ result: { structuredContent: value } }) };
-    } });
-    assert.deepEqual(result, { ok: true, state: 'activated', commit_sha: SHA, step_up: 'automatic' });
-    assert.equal(statusReads, 2);
-  } finally {
-    process.env.HOME = home;
-  }
+  const answer = (status, body) => async () => ({ ok: status === 200, status, json: async () => body });
+  await withNonce(async () => {
+    const neverSettle = async () => { throw new Error('a consent outcome must not read the chain'); };
+    assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+      fetchImpl: answer(400, { outcome: 'consent_expired', error: 'consent_expired' }) }),
+    { ok: false, code: 'consent_expired', commit_sha: SHA });
+    assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+      fetchImpl: answer(400, { outcome: 'consent_denied', error: 'consent_denied' }) }),
+    { ok: false, code: 'consent_denied', commit_sha: SHA });
+    const failed = await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+      fetchImpl: answer(200, { ok: false, outcome: 'failed', reason: 'checks_failed',
+        result: { result: { structuredContent: { ok: false, code: 'checks_failed' } } } }) });
+    assert.equal(failed.code, 'checks_failed');
+    const settled = await activate({ slug: 'cynap-e2e', commitSha: SHA,
+      settle: async () => ({ ok: true, state: 'activated', commit_sha: SHA, ready: 'yes' }),
+      fetchImpl: answer(200, { ok: true, outcome: 'activating', reason: 'http_504', result: null, step_up: 'browser' }) });
+    assert.deepEqual(settled, { ok: true, state: 'activated', commit_sha: SHA, ready: 'yes', step_up: 'browser' });
+    // An old proxy (no outcome field) is not guessed at.
+    assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+      fetchImpl: answer(200, { ok: true, result: {} }) }), { ok: false, code: 'activation_outcome_unknown', commit_sha: SHA });
+  });
 });
 
-test('reconciliation reports a failed background activation with its failure code', async () => {
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => ({
-    ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
-      pending: [{ commit_sha: SHA, state: 'failed', failure_code: 'post_deploy_failed' }] } } }),
-  }) });
-  assert.equal(result.ok, false);
-  assert.equal(result.state, 'failed');
-  assert.equal(result.failure_code, 'post_deploy_failed');
-});
-
-test('a released commit with a recorded failure reports the code and reason, not a timeout', async () => {
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => ({
-    ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
-      last_failure: { sha: SHA, code: 'preview_ack_required', message: 'acknowledge the no-preview notice' },
-      pending: [{ commit_sha: SHA, state: 'pending' }] } } }),
-  }) });
-  assert.equal(result.failure_code, 'preview_ack_required');
-  assert.match(result.message, /refused: preview_ack_required \(acknowledge the no-preview notice\)/);
-  assert.doesNotMatch(result.message, /timed out/);
-});
-
-test('a failure recorded for another commit keeps the timeout wording', async () => {
-  const result = await reconcileActivation({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl: async () => ({
-    ok: true, json: async () => ({ result: { structuredContent: { ok: true, live_digest: null,
-      last_failure: { sha: 'f'.repeat(64), code: 'checks_failed', message: 'other' },
-      pending: [{ commit_sha: SHA, state: 'pending' }] } } }),
-  }) });
-  assert.equal(result.failure_code, undefined);
-  assert.match(result.message, /timed out/);
+test('activate: a CLI abort is "outcome unknown", never a guessed cause', async () => {
+  const { activate } = await import('../bin/cynap-activate.mjs');
+  await withNonce(async () => {
+    const result = await activate({ slug: 'cynap-e2e', commitSha: SHA, budgetMs: 5,
+      settle: async () => { throw new Error('must not settle'); },
+      // AbortSignal.timeout's timer is unref'd; a real fetch holds a socket open, so this
+      // stand-in holds a ref'd timer until the abort, or the runner sees an empty loop.
+      fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
+        const keepAlive = setInterval(() => {}, 1000);
+        init.signal.addEventListener('abort', () => {
+          clearInterval(keepAlive);
+          reject(init.signal.reason);
+        });
+      }) });
+    assert.deepEqual(result, { ok: false, code: 'activation_outcome_unknown', commit_sha: SHA });
+  });
 });

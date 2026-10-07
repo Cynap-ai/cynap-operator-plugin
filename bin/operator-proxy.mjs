@@ -1588,6 +1588,24 @@ export function deleteMarker(slug, sessionId, baseDir) {
  * consent the login is still legitimately waiting on. */
 export const AUTO_CONSENT_TIMEOUT_MS = 5 * 60 * 1000;
 
+// Every hop after consent has an explicit bound, and the CLI's wait for /activate is
+// computed from them (`ACTIVATE_RESPONSE_BUDGET_MS`), so the proxy's typed outcome always arrives
+// before the CLI gives up. AUTO_CONSENT_TIMEOUT_MS above is the one consent deadline.
+/** The code-for-credential exchange and the automatic step-up request. */
+export const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000;
+/** The workspace_activate_commit call. API Gateway answers within 29 s; a longer activation
+ * returns `activation_pending` and finishes server-side. */
+export const ACTIVATION_CALL_TIMEOUT_MS = 45_000;
+const ACTIVATION_OUTCOME_MARGIN_MS = 15_000;
+export const ACTIVATE_RESPONSE_BUDGET_MS =
+  AUTO_CONSENT_TIMEOUT_MS + TOKEN_EXCHANGE_TIMEOUT_MS + ACTIVATION_CALL_TIMEOUT_MS + ACTIVATION_OUTCOME_MARGIN_MS;
+
+/** The closed set of terminal answers /activate gives. `consent_*` follow RFC 8628's
+ * `expired_token` / `access_denied` split: nobody answered is not somebody said no. */
+export const ACTIVATION_OUTCOMES = Object.freeze(['consent_expired', 'consent_denied', 'activating', 'activated', 'failed']);
+
+const consentError = (outcome, message) => Object.assign(new Error(message), { consentOutcome: outcome });
+
 /** The closed set of reasons that make a failure re-authable. Anything not on
  * this list is a real error and is re-thrown untouched — consent can only
  * repair a credential problem, never a backend outage or a bad request. */
@@ -2331,6 +2349,8 @@ function startLoopbackListener(expectedState) {
       const code = url.searchParams.get('code');
       if (state !== expectedState) {
         rejectCode(new Error('loopback state mismatch (possible CSRF) — login aborted'));
+      } else if (err === 'access_denied') {
+        rejectCode(consentError('consent_denied', `authorization denied: ${err}`));
       } else if (err) {
         rejectCode(new Error(`authorization denied: ${err}`));
       } else if (!code) {
@@ -2345,7 +2365,7 @@ function startLoopbackListener(expectedState) {
         Promise.race([
           codePromise,
           new Promise((_, rej) =>
-            setTimeout(() => rej(new Error('operator login timed out')), timeoutMs)
+            setTimeout(() => rej(consentError('consent_expired', 'operator login timed out')), timeoutMs)
           ),
         ]);
       resolveListener({ server, port, waitForCode });
@@ -2366,7 +2386,7 @@ export async function pkceLoopbackLogin({
   fetchImpl = fetch,
   open = openBrowser,
   out = process.stderr,
-  timeoutMs = 5 * 60 * 1000,
+  timeoutMs = AUTO_CONSENT_TIMEOUT_MS,
   requestKind = 'login',
   commitSha,
 }) {
@@ -2410,6 +2430,7 @@ export async function pkceLoopbackLogin({
       client_id: clientId,
       redirect_uri: redirectUri,
     }),
+    signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -2459,6 +2480,7 @@ export async function requestAutomaticStepUp({ mintHost, commitSha, getAuthHeade
       ...stagingProtectionBypassHeaders(),
     }),
     body: JSON.stringify({ commit_sha: commitSha }),
+    signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
   });
   if (res.status === 403) {
     const body = await res.json().catch(() => null);
@@ -2506,6 +2528,7 @@ export async function activateCommitWithStepUp({
   automaticStepUp = requestAutomaticStepUp,
   fetchImpl = fetch,
   out = process.stderr,
+  callTimeoutMs = ACTIVATION_CALL_TIMEOUT_MS,
 }) {
   if (!/^[a-f0-9]{64}$/i.test(commitSha ?? '')) {
     throw new ActivationError('invalid_commit_sha', 'activation requires a 64-character commit sha');
@@ -2519,16 +2542,22 @@ export async function activateCommitWithStepUp({
       ? await automaticStepUp({ mintHost, commitSha, getAuthHeaders, pluginVersion, fetchImpl })
       : null;
   const stepUp = automatic ? 'automatic' : 'browser';
-  const { credential } = automatic
-    ? automatic
-    : await login({
-        mintHost,
-        orgSlug,
-        pluginVersion,
-        requestKind: 'activation',
-        commitSha,
-        out,
-      });
+  let credential;
+  try {
+    ({ credential } = automatic
+      ? automatic
+      : await login({
+          mintHost,
+          orgSlug,
+          pluginVersion,
+          requestKind: 'activation',
+          commitSha,
+          out,
+        }));
+  } catch (error) {
+    if (error?.consentOutcome) throw new ActivationError(error.consentOutcome, error.message);
+    throw error;
+  }
   if (!credential) throw new Error('activation PKCE exchange returned no credential');
   const callWithPurposeCredential = async (name, args) => {
     const response = await fetchImpl(`${mcpHost}${mcpPath}`, {
@@ -2544,19 +2573,33 @@ export async function activateCommitWithStepUp({
         method: 'tools/call',
         params: { name, arguments: args },
       }),
+      signal: AbortSignal.timeout(callTimeoutMs),
     });
     return { status: response.status, ok: response.ok, text: await readUpstreamResponseText(response) };
   };
   // `reconcile_operator_edits` is the ONLY optional arg, and is present only when the operator
   // asked for it: every other argument stays exactly {commit_sha}.
-  const activation = await callWithPurposeCredential(
-    'workspace_activate_commit',
-    reconcile ? { commit_sha: commitSha, reconcile_operator_edits: true } : { commit_sha: commitSha }
-  );
+  let activation;
+  try {
+    activation = await callWithPurposeCredential(
+      'workspace_activate_commit',
+      reconcile ? { commit_sha: commitSha, reconcile_operator_edits: true } : { commit_sha: commitSha }
+    );
+  } catch (error) {
+    // The call was sent; the server may be activating. The chain, not this proxy, settles it.
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+      return { body: null, witness: null, stepUp, outcome: 'activating', reason: 'activation_call_timeout' };
+    }
+    throw error;
+  }
+  if (GATEWAY_TIMEOUT_STATUSES.has(activation.status)) {
+    return { body: null, witness: null, stepUp, outcome: 'activating', reason: `http_${activation.status}` };
+  }
   if (!activation.ok) {
     throw new ActivationError('activation_failed', `workspace activation failed: ${activation.status}`, `http_${activation.status}`);
   }
-  if (!witness) return { body: activation.text, witness: null, stepUp };
+  const answer = classifyActivationAnswer(activation.status, activation.text);
+  if (!witness) return { body: activation.text, witness: null, stepUp, ...answer };
   // Release-journey witness (Spec A §9 → Spec D §8.2 leg 5). The purpose credential
   // lives only in this function, so only this function can prove its limits: a
   // second use must be refused, and so must any tool other than
@@ -2566,6 +2609,7 @@ export async function activateCommitWithStepUp({
   return {
     body: activation.text,
     stepUp,
+    ...answer,
     witness: {
       replay: summarizeToolAnswer(replay.status, replay.text),
       foreignTool: summarizeToolAnswer(foreignTool.status, foreignTool.text),
@@ -2590,9 +2634,8 @@ function lastJsonRpcMessage(text) {
   return null;
 }
 
-/** A witness-sized summary of one tool answer: was it refused, and with which code.
- * Refused means an HTTP error, a JSON-RPC error, an `isError` result, or `ok: false`. */
-export function summarizeToolAnswer(httpStatus, text) {
+/** The last JSON-RPC message of a tool answer and its structured result, when one parses. */
+function structuredToolAnswer(text) {
   const message = lastJsonRpcMessage(text);
   const result = message?.result;
   let structured = result?.structuredContent ?? null;
@@ -2604,6 +2647,25 @@ export function summarizeToolAnswer(httpStatus, text) {
       structured = null;
     }
   }
+  return { message, result, structured };
+}
+
+/** An upstream gateway timeout says nothing about the activation itself: it may still be running. */
+const GATEWAY_TIMEOUT_STATUSES = new Set([502, 503, 504]);
+
+/** The typed outcome of a workspace_activate_commit answer. */
+export function classifyActivationAnswer(httpStatus, text) {
+  const { message, structured } = structuredToolAnswer(text);
+  if (structured?.ok === true) return { outcome: 'activated' };
+  if (structured?.code === 'activation_pending') return { outcome: 'activating' };
+  const code = structured?.code ?? message?.error?.code ?? `http_${httpStatus}`;
+  return { outcome: 'failed', reason: String(code) };
+}
+
+/** A witness-sized summary of one tool answer: was it refused, and with which code.
+ * Refused means an HTTP error, a JSON-RPC error, an `isError` result, or `ok: false`. */
+export function summarizeToolAnswer(httpStatus, text) {
+  const { message, result, structured } = structuredToolAnswer(text);
   const code = structured?.code ?? message?.error?.code ?? null;
   const refused =
     httpStatus >= 400 || Boolean(message?.error) || result?.isError === true || structured?.ok === false;
@@ -3293,20 +3355,34 @@ export function createProxyServer({
         if (payload?.reconcile_operator_edits !== undefined && typeof payload.reconcile_operator_edits !== 'boolean') {
           throw new ActivationError('invalid_request', 'reconcile_operator_edits must be a boolean');
         }
-        const { body, witness, stepUp } = await requestActivation(payload?.commit_sha, {
+        const { body, witness, stepUp, outcome, reason } = await requestActivation(payload?.commit_sha, {
           witness: payload?.witness === true,
           reconcile: payload?.reconcile_operator_edits === true,
         });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ ok: true, result: body, step_up: stepUp, ...(witness ? { witness } : {}) }));
+        res.end(JSON.stringify({
+          ok: outcome !== 'failed',
+          outcome,
+          ...(reason ? { reason } : {}),
+          result: body,
+          step_up: stepUp,
+          ...(witness ? { witness } : {}),
+        }));
       } catch (error) {
         // `error` is always an identifier so the CLI can name the cause; the prose goes to proxy.log.
         const code = error instanceof ActivationError ? error.code : 'activation_failed';
         const failureCode = error instanceof ActivationError ? error.failureCode : undefined;
         const message = error instanceof Error ? error.message : 'activation failed';
+        const outcome = code === 'consent_expired' || code === 'consent_denied' ? code : 'failed';
         process.stderr.write(`[operator-proxy] activation refused: ${code}${failureCode ? ` (${failureCode})` : ''}: ${message}\n`);
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ error: code, ...(failureCode ? { failureCode } : {}), message }));
+        res.end(JSON.stringify({
+          outcome,
+          ...(outcome === 'failed' ? { reason: failureCode ?? code } : {}),
+          error: code,
+          ...(failureCode ? { failureCode } : {}),
+          message,
+        }));
       }
       return;
     }

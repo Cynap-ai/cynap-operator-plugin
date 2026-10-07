@@ -56,19 +56,24 @@ test('cynap-activate names the preview as the next step when the step-up reports
   assert.match(text, new RegExp(`next: /cynap-preview <automation-id> ${sha}`));
 });
 
-// After a gateway timeout the plugin reconciles; an activation it cannot yet confirm is still running, not refused.
-test('an unconfirmed activation says it may still be running instead of "request refused"', () => {
-  for (const code of ['activation_not_confirmed', 'activation_outcome_unknown']) {
-    const text = formatRefusal({ ok: false, code, commit_sha: 'a'.repeat(64) }, { command: 'cynap-activate' });
-    assert.match(text, new RegExp(`^cynap-activate: ${code}: the activation request timed out`));
-    assert.doesNotMatch(text, /request refused/);
-  }
+// an outcome the CLI could not learn is said to be unknown, never given a guessed cause.
+test('an unknown activation outcome says so and points at /cynap-status', () => {
+  const text = formatRefusal({ ok: false, code: 'activation_outcome_unknown', commit_sha: 'a'.repeat(64) }, { command: 'cynap-activate' });
+  assert.match(text, /^cynap-activate: activation_outcome_unknown: outcome unknown — run \/cynap-status/);
+  assert.doesNotMatch(text, /request refused|timed out|refused/);
 });
 
-test('an unconfirmed activation with a recorded failure names the code and reason, not a timeout', () => {
-  const text = formatRefusal({ ok: false, code: 'activation_not_confirmed', commit_sha: 'a'.repeat(64),
+test('consent expiry and consent denial are distinct answers', () => {
+  const expired = formatRefusal({ ok: false, code: 'consent_expired' }, { command: 'cynap-activate' });
+  const denied = formatRefusal({ ok: false, code: 'consent_denied' }, { command: 'cynap-activate' });
+  assert.match(expired, /^cynap-activate: consent_expired: nobody approved the activation/);
+  assert.match(denied, /^cynap-activate: consent_denied: the activation was declined/);
+});
+
+test('a recorded activation failure names the code and reason', () => {
+  const text = formatRefusal({ ok: false, code: 'activation_failed', commit_sha: 'a'.repeat(64),
     failure_code: 'preview_ack_required', failure_message: 'acknowledge the\nno-preview notice' }, { command: 'cynap-activate' });
-  assert.match(text, /^cynap-activate: activation_not_confirmed: the activation ran and was refused: preview_ack_required \(acknowledge the no-preview notice\)/);
+  assert.match(text, /^cynap-activate: activation_failed: the activation ran and was refused: preview_ack_required \(acknowledge the no-preview notice\)/);
   assert.doesNotMatch(text, /timed out/);
 });
 

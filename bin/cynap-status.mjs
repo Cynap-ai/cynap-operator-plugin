@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { describeReady, readinessOf } from '../lib/activation-readiness.mjs';
 import { probeProxyHealth, stablePortForSlug } from '../lib/connect.mjs';
 import { formatNextAction, formatRefusal, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
 import { assertConnectedOrg, mcpCall, readState, resolveOrgSlug, resolveWorkspaceDir, STATE_REL_PATH } from '../lib/workspace-sync.mjs';
@@ -52,9 +53,14 @@ export function formatStatus(result) {
   if (!result.ok) return `${lines.join('\n')}\n${formatRefusal(result, { command: 'cynap-status' })}`;
   const s = result.platform;
   lines.push(`workspace: ${result.workspace.root ?? '(unresolved)'} (${result.org})`);
-  lines.push(`accepted tip: ${s.accepted_tip ?? 'none'}`);
+  // name the live commit and whether it is serving, not "deployed" (that only ever meant
+  // a content manifest exists).
+  const liveCommit = s.base_ref?.kind === 'commit' ? s.base_ref.value : null;
+  lines.push(`live commit: ${liveCommit ?? (s.base_ref ? 'none (no commit activated yet)' : 'unknown')}`);
+  lines.push(liveCommit ? describeReady(readinessOf(s, liveCommit)) : 'ready: unknown');
+  if (s.accepted_tip && s.accepted_tip !== liveCommit) lines.push(`tip ${s.accepted_tip}: accepted, not activated`);
   lines.push(`live digest: ${s.live_digest ?? 'none'}`);
-  lines.push(`deployment: ${s.deployment_state}${s.deployment_state === 'degraded' ? ' — the live deployment identity could not be read reliably; inspect the platform before activation' : ''}`);
+  if (s.deployment_state === 'degraded') lines.push('live deployment identity could not be read reliably; inspect the platform before activation');
   if (s.last_failure) lines.push(`last failure: ${s.last_failure.code ?? s.last_failure.reason ?? JSON.stringify(s.last_failure)}`);
   if (s.frozen) lines.push('chain frozen: recovery currently needs a platform admin.');
   const chain = Array.isArray(s.chain) ? s.chain : [];

@@ -6,8 +6,11 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { resolveWorkingDir, stablePortForSlug } from '../lib/connect.mjs';
-import { ACTIVATE_PATH, CONTROL_FILE, CONTROL_HEADER } from './operator-proxy.mjs';
+import {
+  ACTIVATE_PATH, ACTIVATE_RESPONSE_BUDGET_MS, ACTIVATION_OUTCOMES, CONTROL_FILE, CONTROL_HEADER,
+} from './operator-proxy.mjs';
 import { runPreview } from './cynap-preview.mjs';
+import { describeReady, readinessOf } from '../lib/activation-readiness.mjs';
 import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE, unwrapToolEnvelope } from '../lib/format-refusal.mjs';
 import { isProxyUnreachableError, mcpCall, resolveOrgSlug } from '../lib/workspace-sync.mjs';
 
@@ -28,55 +31,72 @@ export function parseActivateArgs(argv) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** An upstream gateway timeout says nothing about the activation itself: it may still be running. */
-const GATEWAY_TIMEOUT_CODES = new Set(['http_502', 'http_503', 'http_504']);
+/** How long to follow an `activating` answer on the chain, and then wait for readiness. Readiness
+ * waits for the post-deploy projection (live lag p50 15.6 s, max 43.4 s); each read is one short
+ * workspace_status call, never a request held open on the 29 s gateway path. */
+export const ACTIVATION_SETTLE_MS = 10 * 60 * 1000;
+export const READY_WAIT_MS = 90 * 1000;
 
-export async function reconcileActivation({
-  slug, commitSha, fetchImpl = fetch, waitMs = 10 * 60 * 1000, intervalMs = 5000, wait = sleep,
-}) {
-  const proxyUrl = `http://127.0.0.1:${stablePortForSlug(slug)}/mcp`;
-  const call = (name, args) => mcpCall(proxyUrl, name, args, { fetchImpl });
-  // Bounded: while the server reports the commit as `activating`, re-read until it lands or the
-  // budget runs out, so a slow activation is reported by its real outcome, not as a failure.
-  let status;
-  for (let waited = 0; ; waited += intervalMs) {
-    status = await call('workspace_status', {});
-    if (status?.ok === false) return status;
-    if (status.live_digest === commitSha) return { ok: true, state: 'activated', commit_sha: commitSha };
-    const activating = status.pending?.some((item) => item.commit_sha === commitSha && item.state === 'activating');
-    if (!activating || waited + intervalMs > waitMs) break;
-    await wait(intervalMs);
-  }
-  // a recorded refusal is not a timeout. Name the code and the reason the server stored.
-  const lastFailure = status.last_failure?.sha === commitSha ? status.last_failure : null;
-  const unconfirmed = (state, extra = {}) => {
-    const code = extra.failure_code ?? lastFailure?.code;
-    const reason = lastFailure?.message;
-    const outcome = code
-      ? `The activation ran and was refused: ${code}${reason ? ` (${reason})` : ''}.`
-      : 'The activation request timed out; check /cynap-status before retrying.';
-    return {
-      ok: false, code: 'activation_not_confirmed', state, commit_sha: commitSha, ...extra,
-      ...(code ? { failure_code: code } : {}),
-      ...(reason ? { failure_message: reason } : {}),
-      message: `activation not confirmed: ${state}. ${outcome}`,
-    };
-  };
-  const pending = status.pending?.find((item) => item.commit_sha === commitSha);
-  if (pending) return unconfirmed(pending.state ?? 'pending', {
-    ...(pending.next_action ? { next_action: pending.next_action } : {}),
-    ...(pending.failure_code ? { failure_code: pending.failure_code } : {}),
-  });
-  const log = await call('workspace_log', { limit: 20 });
-  const commit = log?.commits?.find((item) => item.commit_sha === commitSha || item.sha === commitSha);
-  if (!commit) return unconfirmed('unknown', { code: 'activation_outcome_unknown' });
-  if (commit.outcome === 'activated' || commit.outcome === 'ancestor') {
-    return { ok: true, state: commit.outcome, commit_sha: commitSha };
-  }
-  return unconfirmed(commit.outcome ?? 'recorded');
+export { describeReady, readinessOf };
+
+/** "Was C activated?" is read from the chain: the live ref is C, or C is a recently
+ * activated ancestor of it, and C is not the claimed head. Never inferred from timing. */
+export function activatedOnChain(status, commitSha) {
+  if (status?.head_state?.activating === commitSha) return false;
+  if (status?.base_ref?.kind === 'commit' && status.base_ref.value === commitSha) return true;
+  return Array.isArray(status?.recent) &&
+    status.recent.some((entry) => entry.sha === commitSha && entry.outcome === 'activated');
 }
 
-export async function activate({ slug, commitSha, witness = false, reconcile = false, fetchImpl = fetch }) {
+const outcomeUnknown = (commitSha) => ({ ok: false, code: 'activation_outcome_unknown', commit_sha: commitSha });
+
+/** Follow an accepted activation on the chain, then wait (bounded) for its readiness record. */
+export async function settleActivation({
+  slug, commitSha, fetchImpl = fetch, waitMs = ACTIVATION_SETTLE_MS, readyWaitMs = READY_WAIT_MS,
+  intervalMs = 5000, wait = sleep,
+}) {
+  const proxyUrl = `http://127.0.0.1:${stablePortForSlug(slug)}/mcp`;
+  const readStatus = () => mcpCall(proxyUrl, 'workspace_status', {}, { fetchImpl });
+  let status;
+  for (let waited = 0; ; waited += intervalMs) {
+    status = await readStatus();
+    if (status?.ok === false) return status;
+    if (activatedOnChain(status, commitSha)) break;
+    const failure = status?.last_failure?.sha === commitSha ? status.last_failure : null;
+    if (failure) {
+      return { ok: false, code: 'activation_failed', commit_sha: commitSha, failure_code: failure.code,
+        ...(failure.message ? { failure_message: failure.message } : {}) };
+    }
+    const pending = status?.pending?.find((item) => item.commit_sha === commitSha);
+    if (pending?.state === 'failed') {
+      return { ok: false, code: 'activation_failed', commit_sha: commitSha,
+        ...(pending.failure_code ? { failure_code: pending.failure_code } : {}) };
+    }
+    const running = status?.head_state?.activating === commitSha || pending?.state === 'activating';
+    if (!running || waited + intervalMs > waitMs) return outcomeUnknown(commitSha);
+    await wait(intervalMs);
+  }
+  for (let waited = 0; ; waited += intervalMs) {
+    const ready = readinessOf(status, commitSha);
+    if (ready !== 'projecting' || waited + intervalMs > readyWaitMs) {
+      return { ok: true, state: 'activated', commit_sha: commitSha, ready };
+    }
+    await wait(intervalMs);
+    const next = await readStatus();
+    if (next?.ok === false) return { ok: true, state: 'activated', commit_sha: commitSha, ready: 'unknown' };
+    status = next;
+  }
+}
+
+const OUTCOMES = new Set(ACTIVATION_OUTCOMES);
+
+/**
+ * POST /activate and render its one typed outcome. The proxy owns every deadline, and the wait
+ * here is computed from them, so the proxy's answer arrives first; if it still does not, the
+ * outcome is unknown and said so — never guessed from timing.
+ */
+export async function activate({ slug, commitSha, witness = false, reconcile = false, fetchImpl = fetch,
+  budgetMs = ACTIVATE_RESPONSE_BUDGET_MS, settle = settleActivation }) {
   const noncePath = join(resolveWorkingDir(slug), CONTROL_FILE);
   const nonce = readFileSync(noncePath, 'utf8').trim();
   if (!nonce) throw new Error('operator activation: local control nonce is missing; run /cynap-connect again.');
@@ -89,24 +109,27 @@ export async function activate({ slug, commitSha, witness = false, reconcile = f
       ...(witness ? { witness: true } : {}),
       ...(reconcile ? { reconcile_operator_edits: true } : {}),
     }),
-    signal: AbortSignal.timeout(5 * 60 * 1000),
+    signal: AbortSignal.timeout(budgetMs),
   }); } catch (error) {
-    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return reconcileActivation({ slug, commitSha, fetchImpl });
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return outcomeUnknown(commitSha);
     throw error;
   }
-  if ([502, 503, 504].includes(response.status)) return reconcileActivation({ slug, commitSha, fetchImpl });
   const body = await response.json().catch(() => null);
-  if (body?.error === 'activation_failed' && GATEWAY_TIMEOUT_CODES.has(body?.failureCode)) {
-    return reconcileActivation({ slug, commitSha, fetchImpl });
+  const outcome = body?.outcome;
+  if (!OUTCOMES.has(outcome)) {
+    // A local refusal before any activation began (nonce, proxy not ready) carries no outcome.
+    return body?.error ? { ok: false, code: body.error, message: body.message } : outcomeUnknown(commitSha);
   }
-  if (!response.ok || body?.ok !== true) return { ok: false, code: body?.error ?? `http_${response.status}`, ...(body?.failureCode ? { failureCode: body.failureCode } : {}), message: body?.message };
-  const unwrapped = unwrapToolEnvelope(body.result);
-  // The server accepts the activation and finishes it in the background: poll to its real outcome.
-  const settled = unwrapped?.code === 'activation_pending' && !witness
-    ? await reconcileActivation({ slug, commitSha, fetchImpl })
-    : unwrapped;
-  const result = body.step_up && settled && typeof settled === 'object' ? { ...settled, step_up: body.step_up } : settled;
-  return witness ? { result, witness: body.witness ?? null } : result;
+  if (outcome === 'consent_expired' || outcome === 'consent_denied') return { ok: false, code: outcome, commit_sha: commitSha };
+  const unwrapped = body.result == null ? null : unwrapToolEnvelope(body.result);
+  if (outcome === 'failed') {
+    return unwrapped && unwrapped.ok === false
+      ? unwrapped
+      : { ok: false, code: body.error ?? 'activation_failed', ...(body.reason ? { failureCode: body.reason } : {}), message: body.message };
+  }
+  if (witness) return { result: unwrapped, witness: body.witness ?? null };
+  const settled = await settle({ slug, commitSha, fetchImpl });
+  return body.step_up && settled && typeof settled === 'object' ? { ...settled, step_up: body.step_up } : settled;
 }
 
 /** Read only the selected commit's next action through the plugin's local MCP proxy. */
@@ -183,11 +206,11 @@ export async function main(argv = process.argv.slice(2)) {
   if (json) process.stdout.write(`${JSON.stringify(result)}\n`);
   else if (result?.ok === false || result?.code) {
     process.stdout.write(formatRefusal(result, { command: 'cynap-activate', commitSha }));
-    if (result.code === 'activation_pending' && result.step_up === 'automatic') process.stdout.write('activated automatically on the test org (no browser step-up)\n');
   }
   else if (notActivated(result)) process.stdout.write(describeNotActivated(result.next_action.kind, commitSha));
   else {
     process.stdout.write(`${result?.state ?? result?.status ?? result?.nextAction ?? 'activation submitted'}${result?.message ? `: ${result.message}` : ''}\n`);
+    if (result?.ready) process.stdout.write(`${describeReady(result.ready)}\n`);
     if (result?.step_up === 'automatic') process.stdout.write('activated automatically on the test org (no browser step-up)\n');
     const action = result?.next_action;
     if (action?.command) process.stdout.write(`next: ${action.command}${action.reason ? ` — ${action.reason}` : ''}\n`);
@@ -195,7 +218,6 @@ export async function main(argv = process.argv.slice(2)) {
     if (url) process.stdout.write(`approval: ${url}${result?.expires_in ? ` (valid for ${result.expires_in} seconds)` : result?.expires_at ? ` (valid until ${result.expires_at})` : ''}\n`);
   }
   if (!json && notActivated(result)) process.exitCode = 1;
-  if (result?.code === 'activation_pending') return result;
   if (result?.ok === false || result?.code) process.exitCode = result.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;
   return result;
 }
