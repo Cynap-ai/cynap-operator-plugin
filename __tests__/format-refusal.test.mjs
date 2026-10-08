@@ -82,3 +82,11 @@ test('activation_pending reads as accepted, never as refused', () => {
   assert.match(text, /^cynap-activate: activation_pending: activation accepted; post-deploy is still awaiting/);
   assert.doesNotMatch(text, /refused/);
 });
+
+test('surface_approval_required names the portal approve path, not a generic failure', () => {
+  const text = formatRefusal({ ok: false, code: 'surface_approval_required', failureCode: 'surface_approval_required' },
+    { command: 'cynap-activate', commitSha: 'a'.repeat(64) });
+  assert.match(text, /^cynap-activate: surface_approval_required: /);
+  assert.match(text, /Settings → Operators → Pending changes/);
+  assert.doesNotMatch(text, /the activation request failed/);
+});

@@ -2352,7 +2352,14 @@ function startLoopbackListener(expectedState) {
       } else if (err === 'access_denied') {
         rejectCode(consentError('consent_denied', `authorization denied: ${err}`));
       } else if (err) {
-        rejectCode(new Error(`authorization denied: ${err}`));
+        // A typed refusal (e.g. surface_approval_required) keeps its code and the portal's
+        // error_description, so the CLI names the cause and the next step instead of a generic failure.
+        const description = (url.searchParams.get('error_description') ?? '')
+          .replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
+        rejectCode(Object.assign(new Error(`authorization denied: ${err}${description ? `: ${description}` : ''}`), {
+          oauthError: err,
+          ...(description ? { oauthErrorDescription: description } : {}),
+        }));
       } else if (!code) {
         rejectCode(new Error('no code in loopback callback'));
       } else {
@@ -2556,6 +2563,9 @@ export async function activateCommitWithStepUp({
         }));
   } catch (error) {
     if (error?.consentOutcome) throw new ActivationError(error.consentOutcome, error.message);
+    if (typeof error?.oauthError === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(error.oauthError)) {
+      throw new ActivationError(error.oauthError, error.oauthErrorDescription ?? error.message);
+    }
     throw error;
   }
   if (!credential) throw new Error('activation PKCE exchange returned no credential');
