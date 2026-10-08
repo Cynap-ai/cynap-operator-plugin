@@ -89,3 +89,14 @@ test('status names the live commit, its readiness, and a tip that is accepted bu
   assert.doesNotMatch(caughtUp, /accepted, not activated/);
   assert.match(formatStatus(platform({ base_ref: { kind: 'digest', value: SHA } })), /live commit: none \(no commit activated yet\)\nready: unknown/);
 });
+
+// A handler-code activation moves the live commit but not the manifest digest: the digest line
+// must say it covers config only, never read as "what is live".
+test('status labels the manifest digest as config-only after a handler-only activation', () => {
+  const output = formatStatus({ ok: true, org: 'cynap-e2e', workspace: { root: '/w' }, proxies: [],
+    platform: { ok: true, accepted_tip: SHA, live_digest: 'f'.repeat(64), deployment_state: 'deployed',
+      base_ref: { kind: 'commit', value: SHA }, readiness: { commit_sha: SHA, state: 'yes' }, chain: [], pending: [] } });
+  assert.match(output, new RegExp(`live commit: ${SHA}\\nready: yes`));
+  assert.match(output, new RegExp(`config digest: ${'f'.repeat(64)} \\(config files only; handler code is not in it\\)`));
+  assert.doesNotMatch(output, /live digest/);
+});

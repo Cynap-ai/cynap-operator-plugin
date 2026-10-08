@@ -59,7 +59,9 @@ export function formatStatus(result) {
   lines.push(`live commit: ${liveCommit ?? (s.base_ref ? 'none (no commit activated yet)' : 'unknown')}`);
   lines.push(liveCommit ? describeReady(readinessOf(s, liveCommit)) : 'ready: unknown');
   if (s.accepted_tip && s.accepted_tip !== liveCommit) lines.push(`tip ${s.accepted_tip}: accepted, not activated`);
-  lines.push(`live digest: ${s.live_digest ?? 'none'}`);
+  // The digest hashes classified config files only; a handler-code activation leaves it unchanged,
+  // so it never stands in for what is serving. The live commit above is that.
+  lines.push(`config digest: ${s.live_digest ?? 'none'} (config files only; handler code is not in it)`);
   if (s.deployment_state === 'degraded') lines.push('live deployment identity could not be read reliably; inspect the platform before activation');
   if (s.last_failure) lines.push(`last failure: ${s.last_failure.code ?? s.last_failure.reason ?? JSON.stringify(s.last_failure)}`);
   if (s.frozen) lines.push('chain frozen: recovery currently needs a platform admin.');
