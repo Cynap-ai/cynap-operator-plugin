@@ -38,7 +38,7 @@ object and pass it as an additional argument alongside `changes` / `message`
 }
 ```
 
-## The five fields
+## The six fields
 
 - **`what_changed`** (required, 1-500 chars) — one or two sentences
   describing what you changed, in your own words. Not a diff dump — a
@@ -52,11 +52,37 @@ object and pass it as an additional argument alongside `changes` / `message`
   ids or names you edited (e.g. the `{handler-id}` from
   `automations/handlers/{handler-id}/`). Empty array for a schema-only or
   context-only change that touches no automation.
+- **`intended_outcomes`** (array; see "Intended outcomes" below) — which
+  Scope outcome lines this change delivers. Required for a Request-bound
+  commit on a build Request that has a published Scope; optional otherwise.
 - **`mode`** (required, up to 50 characters — a free string on the wire
   schema, but authored from a closed vocabulary by convention) — the
   authoring mode this change falls under: one of `code_execution`, `flow`,
   `deterministic`, `schema`, or `mixed` (if the change spans more than one).
   Use `choose-the-right-mode`'s vocabulary — don't invent a new label.
+
+## Intended outcomes
+
+`intended_outcomes` is an array of `{ "outcome": "<what the change delivers, in your words>",
+"scope_lines": ["<scope outcome line id>", ...] }`.
+
+- Each entry cites at least one **outcome line** of the Request's latest published Scope
+  (`request_get` returns the Scope with its line ids). Cite only lines from the Scope's
+  **outcomes** section: an id from an exclusion, assumption or open question is refused
+  like an unknown id.
+- The array and each entry's `scope_lines` hold at least one item on a Request-bound build.
+  The check runs at `propose`, against the Scope version that is latest then. If the Scope is
+  republished after your commit and a cited line no longer resolves, re-commit with fresh ids.
+- This is the **Intended outcome** the owner reads on the review pane (shown as the Scope
+  line text). It is not the private `stated_intent` you gave `request_discover`.
+- Never put a row value or an `*_id`/`*_ref`-shaped token in `outcome`; the `scope_lines`
+  key is the only place line ids belong.
+
+```json
+"intended_outcomes": [
+  { "outcome": "Invoices now re-authenticate before sync.", "scope_lines": ["<outcome-line-id>"] }
+]
+```
 
 ## The hard rule: NO PHI, NO row values, NO entity instances
 
@@ -110,6 +136,14 @@ A Request-bound commit with an overview looks like this:
 }
 ```
 
+## Sending the overview through `/cynap-push`
+
+For an ordinary (unbound) commit via `/cynap-push`, write the finished `change_overview`
+object as JSON to `.cynap/change-overview.json` in the workspace directory before running
+the push. `/cynap-push` forwards that object unchanged on `workspace_commit`, validates
+nothing itself, and deletes the file after a successful commit. Invalid JSON stops the push
+before any commit; delete or fix the file.
+
 ## What happens if you omit `change_overview`
 
 Nothing breaks. `change_overview` is **optional** — the commit succeeds
@@ -123,8 +157,8 @@ call.
 ## Checklist
 
 1. Finish authoring the change (config/handler/flow/schema file(s)).
-2. Compose `change_overview` — five fields, no PHI/row values, `mode` from
-   the closed vocabulary.
+2. Compose `change_overview` — no PHI/row values, `mode` from the closed
+   vocabulary, `intended_outcomes` citing Scope outcome lines on a Request-bound build.
 3. Pass it as an argument on the SAME `workspace_commit` call — never a
    separate tool call, never after the fact.
 4. If you genuinely can't summarize honestly (e.g. an automated/scripted
@@ -150,8 +184,9 @@ refuses. A claim is implementation authority, not Owner approval or paid-quote a
 Right after a successful claim, and before authoring, follow the `request-discover` skill: it
 calls `request_discover` once and tells you how to treat what comes back.
 
-For Request linkage, pass `request_id` on native `workspace_commit` as described above.
-The ordinary `/cynap-push` CLI does not supply that argument. Proposal proof, exact
+For Request linkage, a Request-bound commit goes through native `workspace_commit` with
+`request_id`, never `/cynap-push`: that is where the `intended_outcomes` rule applies.
+The ordinary `/cynap-push` CLI supplies no `request_id` and has no Request flag. Proposal proof, exact
 Owner approval and activation remain separate gates; inspect their callable contracts
 and do not infer them from an Owner-Operator persona or a successful claim.
 

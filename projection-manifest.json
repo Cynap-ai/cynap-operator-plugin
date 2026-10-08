@@ -1,14 +1,14 @@
 {
   "notice": "GENERATED MIRROR — do not edit directly. Produced by the mirror publisher.",
-  "sourceSha": "a1262a0481cba00e7b1b4e75c08dac2e592e1066",
+  "sourceSha": "50a9af6f938512d8f076c61403a8db1bbb852b6a",
   "transformVersion": 1,
   "generatedBy": "publish-public-mirror.mjs",
   "files": {
     ".claude-plugin/compat.json": "8bf60d9c53e1610f04c8c1ebdc857d81ad263b01919aee85b752a618c8e9c131",
-    ".claude-plugin/marketplace.json": "4ba32c05eeaaefabdf978535fbf277a079adb3b9ca6bd42b1397fd97280684c7",
-    ".claude-plugin/plugin.json": "d016cc19da26c4463f8f476d33efe17abb950213d26447433461ede24fad86be",
-    ".codex-plugin/plugin.json": "fca2cce9951a4d2a81cc19bb01cf6b38e1ec3632869c4386b817573861743d36",
-    "README.md": "41dfa58e3aae552b2dfb60d0f2e9bf69be238ae6dbf53a5d3bdf78144ed6e444",
+    ".claude-plugin/marketplace.json": "5a54268a5de8acb8447cd1b41876b03aaf997b36131a8183439874d6656ffde8",
+    ".claude-plugin/plugin.json": "c408a43686b2ba9d684506900e46cda72917679b2c59590f0703ad92bd0b5107",
+    ".codex-plugin/plugin.json": "e9dc65fab894a86f853e51db765b9054bfdb79eb59b60febcd94f4ac420430a4",
+    "README.md": "6879e885b9f8e5818ba6141ee594ca6516cf184995d3507e6946ac64c137d820",
     "__tests__/autonomy-lifecycle.test.mjs": "16099053a0f57e87a9bdf3b06c7af394a47e661a5dc47f87ac99115293776e0b",
     "__tests__/checks-no-dev-ai.test.mjs": "278c8c7e15915c941c4695862c787853c7ba86245606622b3ecf60be832bf3d1",
     "__tests__/connect-any-org.test.mjs": "66b056a803d43db1a3e8b4ef0cf2621f2034d6835042338a02f1c212a98cfe8a",
@@ -21,7 +21,7 @@
     "__tests__/cynap-preview.test.mjs": "b745a14cd364bcb46b97589bc85a9855a32c419219c6af706750bc49d18a1834",
     "__tests__/cynap-pull-discarded.test.mjs": "22b131aee9a02664e66bedc7584b329dfbb588d80e797d257480741ebe808907",
     "__tests__/cynap-pull.test.mjs": "42cfb9ec50d9b4611a0d90ad4a0cb9df10bc06ba6829741e0d94e058a0dfc281",
-    "__tests__/cynap-push.test.mjs": "08ec0c2f008b2b5763f802180200d1d1e4f69c77c7e7f20008a6f43837862f18",
+    "__tests__/cynap-push.test.mjs": "3b282742878624c0bbb2736bd2d7c9cd4d01f976b2e578125aac5bf4e944108a",
     "__tests__/cynap-run-script.test.mjs": "995656cdcb32568ed9fc64a50c5d5a1f8de190e2c8133e732eae567343e79f8f",
     "__tests__/cynap-status.test.mjs": "235548ba088841f7a31d2625f5aa8047f08ad221b774738a64007dfb213dec1a",
     "__tests__/cynap-test.test.mjs": "5642d3a8175a0ca82384db3d4e73f805e16fe3b9560dd1de0d0900138ae9b3ac",
@@ -55,7 +55,7 @@
     "bin/cynap-disconnect.mjs": "122ea85a512c56b00e686d5a547236b163ff374fa13b4f634d7516610626f621",
     "bin/cynap-preview.mjs": "c3947432f9e71a54bf146d8ea9acf6bdbc0f552136602328fed5c898aac258aa",
     "bin/cynap-pull.mjs": "6daebaa2763e2947f22c9a5969840cd156478e6d47b991346f145ce0c4fe2f92",
-    "bin/cynap-push.mjs": "3dab659ca415fe7a9d9f891c199243c467630b84e236eb3a1ebd518741c1085c",
+    "bin/cynap-push.mjs": "c199245dd3e3adede278dfe60fa1fb429c4ca49bcdcebb44804053ad6f52582c",
     "bin/cynap-run-script.mjs": "12ebbcdb4da08d2cd31b3f24031f8eb2a8627eedf444f7b46a652b5a321cd3a6",
     "bin/cynap-script-host.mjs": "4d64e953a33d43d6f67f40b092990e6051769dd980d38f8e7fc72f9bf995b8a9",
     "bin/cynap-status.mjs": "4b021b4d731efccc5ba55d57d1c93d7ec66ed1c7d8db87b6ff68c4cc4a3ed819",
@@ -135,6 +135,6 @@
     "skills/request-discover/SKILL.md": "c47225d3e5b0622c604398d4fbc32a98653e793ef14444fdeecf910da207f1e9",
     "skills/scope-to-workflow/SKILL.md": "3b5c72dfb9fb9a365ac2c019fd925f6ba45b284ceaebbed6422a7e89150d4c21",
     "skills/summarize-your-change/LEARNINGS.md": "76cc6d2a058bc8c5ab8f7b36c700ca324b9b5c149a91debea886f163160ce8b5",
-    "skills/summarize-your-change/SKILL.md": "3f0971fc45994d475461b9752d112e562d1c4feb3c916c232660d5103af7794a"
+    "skills/summarize-your-change/SKILL.md": "03a4d69184aa5becccd97e6fb58799b1757a2ada3e10b461c1773048a7680721"
   }
 }

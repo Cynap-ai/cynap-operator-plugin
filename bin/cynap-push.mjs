@@ -4,7 +4,7 @@
 // bytes, validates against the tip, and commits. Never activates (spec: "/cynap-push never
 // activates"). Zero external dependencies — Node built-ins + sibling lib modules only.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -20,6 +20,7 @@ import {
   assertConnectedOrg,
   listLocalFiles,
   mcpCall,
+  RESERVED_DIR,
   readState,
   resolveOrgSlug,
   resolveWorkspaceDir,
@@ -29,6 +30,9 @@ import {
 
 const VALID_INTENTS = new Set(['edit', 'repair', 'revert', 'provision', 'migration', 'drift_repair']);
 const SURFACE_ID_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
+// The overview the `summarize-your-change` skill wrote for this push (spec R-3.3). The file is the
+// whole contract: push gains no flag and no Request selector, and forwards the object as written.
+const CHANGE_OVERVIEW_FILE = 'change-overview.json';
 
 export function parsePushArgs(argv) {
   const args = { dir: null, dryRun: false, json: false, message: null, intent: 'edit', proxyUrl: null, rebuild: null };
@@ -51,6 +55,25 @@ export function parsePushArgs(argv) {
     throw new Error('cynap-push: --rebuild needs a surface id (the <id> of surfaces/<id>/)');
   }
   return args;
+}
+
+function changeOverviewPath(dir) {
+  return join(dir, RESERVED_DIR, CHANGE_OVERVIEW_FILE);
+}
+
+/**
+ * The skill-produced `change_overview`, forwarded verbatim. The server owns every rule about its
+ * shape (`validateChangeOverview`), so this reads and parses the JSON and checks nothing else.
+ * Returns `{ overview }` (null when the skill wrote none) or `{ error }` for unparseable JSON.
+ */
+function readChangeOverview(dir) {
+  const path = changeOverviewPath(dir);
+  if (!existsSync(path)) return { overview: null };
+  try {
+    return { overview: JSON.parse(readFileSync(path, 'utf8')) };
+  } catch (error) {
+    return { error: `${RESERVED_DIR}/${CHANGE_OVERVIEW_FILE} is not valid JSON: ${error instanceof Error ? error.message : String(error)}` };
+  }
 }
 
 function readLocalFileMap(dir) {
@@ -128,6 +151,9 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
       message: refusals.map((r) => `${r.path}: ${r.kind}${r.entrance ? ` (entrance: ${r.entrance})` : ''}`).join('\n'),
     };
   }
+
+  const { overview: changeOverview, error: overviewError } = readChangeOverview(dir);
+  if (overviewError) return { ok: false, reason: 'change_overview_unreadable', message: overviewError };
 
   const plannedBytes = new Map();
   for (const path of [...plan.creates, ...plan.updates]) plannedBytes.set(path, readFileSync(join(dir, path)));
@@ -210,6 +236,7 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
     message: args.message,
     intent: args.intent,
     expected_head_sha: state.base,
+    ...(changeOverview === null ? {} : { change_overview: changeOverview }),
     ...(args.rebuild ? { rebuild_surface_id: args.rebuild } : {}),
   });
 
@@ -260,6 +287,7 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
   for (const path of plan.updates) nextFiles[path] = local.get(path);
   for (const path of plan.deletes) delete nextFiles[path];
   writeStateAtomic(dir, { org, base: commitSha, files: nextFiles });
+  rmSync(changeOverviewPath(dir), { force: true }); // one overview per commit: never carried to the next push
 
   // Step 6: print the chain position + Spec A's activation block (verbatim, when present).
   const readBack = await call('workspace_get_commit', { sha: commitSha });

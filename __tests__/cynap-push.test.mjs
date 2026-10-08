@@ -3,11 +3,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { builtSurfaceIds, main, push } from '../bin/cynap-push.mjs';
+import { builtSurfaceIds, main, parsePushArgs, push } from '../bin/cynap-push.mjs';
 import { formatRefusal, formatSurfaceRefusal, formatValidationErrors } from '../lib/format-refusal.mjs';
 import { readState, sha256Hex, writeStateAtomic, WorkspaceSyncError } from '../lib/workspace-sync.mjs';
 
@@ -609,5 +609,72 @@ test('push: without a readable proxy /health the candidate line is the portal pa
     assert.deepEqual(result.candidateUrls, [`/cynap-e2e/_surface-candidate/${NEW_SHA}/ops-board/`]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// R-3.3: the skill-produced overview is forwarded as written — no validation, no request_id, no flag.
+function overviewHarness(dir, onCommit) {
+  mkdirSync(join(dir, 'automations'), { recursive: true });
+  writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+  writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+  return fakeFetch({
+    ...noChecksOnLive(),
+    workspace_validate: () => ({ ok: true, status: 'passed' }),
+    workspace_commit: (args) => {
+      onCommit(args);
+      return { ok: true, commit: { commit_sha: NEW_SHA, parent_commit_sha: args.expected_head_sha, created_at: '2026-10-08T00:00:00Z' } };
+    },
+    workspace_get_commit: () => ({ ok: true, commit: {}, state: 'pending', position: 0, operations: [] }),
+  });
+}
+
+test('push: forwards .cynap/change-overview.json verbatim, adds no request_id, and consumes the file', async () => {
+  const dir = scratchDir();
+  try {
+    // Deliberately not a valid overview: push must not judge it (the server owns the shape).
+    const overview = { what_changed: 'x', intended_outcomes: [{ outcome: 'o', scope_lines: [] }], unknown_key: 1 };
+    let sent;
+    const fetchImpl = overviewHarness(dir, (args) => { sent = args; });
+    writeFileSync(join(dir, '.cynap', 'change-overview.json'), JSON.stringify(overview));
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'edit'], fetchImpl });
+    assert.equal(result.ok, true);
+    assert.deepEqual(sent.change_overview, overview);
+    assert.equal('request_id' in sent, false);
+    assert.equal(existsSync(join(dir, '.cynap', 'change-overview.json')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push: without an overview file, workspace_commit carries no change_overview', async () => {
+  const dir = scratchDir();
+  try {
+    let sent;
+    const fetchImpl = overviewHarness(dir, (args) => { sent = args; });
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'edit'], fetchImpl });
+    assert.equal(result.ok, true);
+    assert.equal('change_overview' in sent, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push: an unparseable overview file stops before any MCP call and keeps the file', async () => {
+  const dir = scratchDir();
+  try {
+    overviewHarness(dir, () => {});
+    writeFileSync(join(dir, '.cynap', 'change-overview.json'), '{not json');
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'edit'], fetchImpl: async () => { throw new Error('no MCP call expected'); } });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'change_overview_unreadable');
+    assert.equal(existsSync(join(dir, '.cynap', 'change-overview.json')), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parsePushArgs: no Request selector or overview flag exists', () => {
+  for (const flag of ['--request', '--request-id', '--overview']) {
+    assert.throws(() => parsePushArgs([flag, 'x', '-m', 'm']), /unrecognized argument/);
   }
 });
