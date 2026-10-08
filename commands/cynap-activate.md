@@ -48,6 +48,12 @@ same commit as a runtime change. Ship the check change separately.
 assertion in the pending suite; add coverage and make a new commit. For a deleted
 path, the covering assertion needs `"allow_absent": true`.
 
+A commit that changes `communication/webchat/<bot-slug>.json` also installs the website chat. The result lists
+`webchat_installations`; once the route is active each entry carries the one-line `snippet` to hand the customer
+(see the `install-website-chat` skill). `webchat_provisioning_failed` means the files are live but the install
+did not finish: re-run the same activation to resume. A commit may change only one such file
+(`webchat_binding_not_alone`).
+
 ## `--reconcile` (rare, opt-in)
 
 Add `--reconcile` only when `next_action.kind` is `baseline_required` because the live files
