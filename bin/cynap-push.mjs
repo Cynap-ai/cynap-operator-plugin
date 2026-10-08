@@ -12,6 +12,7 @@ import { stablePortForSlug } from '../lib/connect.mjs';
 import { encodeContent } from '../lib/content-codec.mjs';
 import { classifyPath, collectFingerprintPaths, effectForKind, evaluateChecks } from './cynap-checks-core.mjs';
 import { buildPushPlan } from '../lib/workspace-diff.mjs';
+import { automationsMissingCustomerAiConfig, formatCustomerAiConfigWarning } from '../lib/customer-ai-config-warning.mjs';
 import { checkPushEffects, classifyForPush } from '../lib/workspace-kinds.mjs';
 import { runChecksPreflight } from '../lib/workspace-checks-preflight.mjs';
 import { formatRefusal, refusalErrors, refusalRunId, SURFACE_REFUSAL_MESSAGES, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
@@ -276,6 +277,7 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
     nextAction: committed.activation?.next_action ?? committed.next_action ?? readBack?.next_action ?? null,
     candidateUrls: surfaces.map((id) => candidateUrl(mintHost, org, commitSha, id)),
     surfaceWarnings: Array.isArray(committed.surface_warnings) ? committed.surface_warnings : [],
+    customerAiConfigMissing: automationsMissingCustomerAiConfig(dir, [...local.keys()]),
   };
 }
 
@@ -338,6 +340,7 @@ export async function main(argv = process.argv.slice(2), { cwd, fetchImpl } = {}
         activation: result.activation,
         ...(result.candidateUrls.length > 0 ? { candidate_urls: result.candidateUrls } : {}),
         ...(result.surfaceWarnings.length > 0 ? { surface_warnings: result.surfaceWarnings } : {}),
+        ...(result.customerAiConfigMissing.length > 0 ? { customer_ai_config_missing: result.customerAiConfigMissing } : {}),
       },
       null,
       2
@@ -347,6 +350,7 @@ export async function main(argv = process.argv.slice(2), { cwd, fetchImpl } = {}
     process.stdout.write(`committed ${result.commitSha}${result.state ? ` (${result.state})` : ''}\n`);
     for (const url of result.candidateUrls) process.stdout.write(`candidate: ${url}\n`);
     for (const warning of result.surfaceWarnings) process.stdout.write(`${formatSurfaceWarning(warning)}\n`);
+    if (result.customerAiConfigMissing.length > 0) process.stdout.write(`${formatCustomerAiConfigWarning(result.customerAiConfigMissing)}\n`);
     if (result.nextAction?.command) process.stdout.write(`next: ${result.nextAction.command}${result.nextAction.reason ? ` — ${result.nextAction.reason}` : ''}\n`);
     if (result.nextAction?.kind === 'baseline_required') process.stdout.write('This commit needs --reconcile before activation.\n');
     if (result.nextAction?.kind === 'handler_preview_required') process.stdout.write(`Preview the handler before activation: /cynap-preview <automation-id> ${result.commitSha}\n`);

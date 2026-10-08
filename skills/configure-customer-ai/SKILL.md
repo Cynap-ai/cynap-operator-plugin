@@ -30,6 +30,24 @@ model references, per-task defaults, and per-call/per-run/per-period ceilings.
 The platform intersects that intent with the qualified catalog, the persisted
 funding record, entitlements, and mandatory ceilings.
 
+An org whose handlers call `ctx.tools.llm` needs this file. Without it, BYOK calls run
+with no `allowedModels` check or org call limits, and native calls are refused.
+Readiness reports `config.file.present: false` and `/cynap-push` warns. Start from:
+
+```json
+{
+  "version": 1,
+  "allowedModels": ["google/gemini-2.5-flash"],
+  "maxOutputTokens": 1200,
+  "maxCallsPerRun": 10,
+  "maxCallsPerPeriod": 2000
+}
+```
+
+List every model a handler passes as `model`. Add a `checks/` assertion naming
+`config/ai.json`, then activate it like any other workspace change. `nativeRoute`
+and per-task `tasks` entries are optional.
+
 Config and callers must never supply provider credentials, native provider
 endpoints, funding mode, prices, reservation amounts, debit authority, or a
 fallback provider list. Keep secrets out of config, prompts, logs, tool
