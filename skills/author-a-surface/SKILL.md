@@ -211,6 +211,8 @@ the surface and the handler.
 | `unbounded_mediated_write` | yes | Bound a mediated write with `automationIds` and `triggerActions`. |
 | `direct_write_not_admissible` | yes | A surface may not declare a direct write; use a bounded mediated write. |
 | `bounds_on_non_mediated_tool` | yes | Put `automationIds`/`triggerActions` only on a mediated write. |
+| `bounds_on_conversation_command` | yes | Declare a conversation command without `automationIds`/`triggerActions`: it is not an automation grant. |
+| `conversation_command_undeclared_args` | yes | This conversation command has no declared argument keys in the app-visible projection; regenerate the projection (`pnpm codegen:app-visible-tools`). |
 | `duplicate_tool` | yes | Declare each tool once in `tools.json`. |
 | `manifest_schema` | yes | Correct the manifest to its schema; unknown keys are refused. |
 | `duplicate_route` | yes | Give every route a unique `path`. |
