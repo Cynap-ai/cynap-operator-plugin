@@ -306,6 +306,21 @@ export const ACTIVATE_PATH = '/activate';
 /** Nonce-gated preview control route. The operator token remains inside the proxy. */
 export const PREVIEW_PATH = '/preview';
 
+/** Error names a failing preview may report. Mirrors the server's list; anything else is dropped. */
+const PREVIEW_ERROR_NAMES = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError',
+  'EvalError', 'AggregateError', 'AbortError', 'TimeoutError']);
+const PREVIEW_HANDLER_SITE = /^handler\.js:[1-9]\d{0,5}:[1-9]\d{0,4}$/;
+
+/**
+ * Where a failing preview's handler threw: an error name and an optional `handler.js:line:col`.
+ * Re-validated here because nothing else from the handler may leave the preview.
+ */
+export function previewFailureLocation(value) {
+  if (typeof value !== 'object' || value === null || !PREVIEW_ERROR_NAMES.has(value.errorName)) return undefined;
+  return { errorName: value.errorName,
+    ...(typeof value.site === 'string' && PREVIEW_HANDLER_SITE.test(value.site) ? { site: value.site } : {}) };
+}
+
 /** The local preview route's upstream leg; exported so its auth/body contract is tested without a socket. */
 export async function forwardPreviewRequest({ method, input, previewId, orgSlug, mcpHost, tokenManager, pluginVersion, fetchImpl = fetch }) {
   let upstreamPath;
@@ -340,6 +355,7 @@ export async function forwardPreviewRequest({ method, input, previewId, orgSlug,
     ...(typeof answer.status === 'string' ? { status: answer.status } : {}),
     ...(typeof answer.failureCode === 'string' ? { failureCode: answer.failureCode } : {}),
     ...(typeof answer.operatorText === 'string' ? { operatorText: answer.operatorText } : {}),
+    ...(previewFailureLocation(answer.failureLocation) ? { failureLocation: previewFailureLocation(answer.failureLocation) } : {}),
     ...(typeof answer.error === 'string' ? { error: answer.error } : {}),
     ...(typeof answer.retryAfterMs === 'number' ? { retryAfterMs: answer.retryAfterMs } : {}),
     ...(Array.isArray(answer.effectKinds) ? { effectKinds: answer.effectKinds.filter((item) =>

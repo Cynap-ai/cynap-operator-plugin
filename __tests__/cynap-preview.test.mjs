@@ -63,6 +63,23 @@ test('capture tool failure survives the counts-and-kinds projection without erro
     { status: 'fail', attemptId: 'id', failureCode: 'capture_tool_failed', effectKinds: [{ kind: 'message', count: 0 }] });
 });
 
+test('a runtime failure keeps only a validated error name and handler.js site', async () => {
+  const response = await forwardPreviewRequest({
+    method: 'GET', previewId: '0b0f3a52-5b1c-4f3e-9a55-0d1c2e3f4a5b', orgSlug: 'cynap-e2e', mcpHost: 'https://mcp.example',
+    tokenManager: { getToken: async () => 't' }, pluginVersion: '0.0.0',
+    fetchImpl: async () => ({ status: 200, json: async () => ({ previewId: '0b0f3a52-5b1c-4f3e-9a55-0d1c2e3f4a5b',
+      status: 'fail', failureCode: 'handler_runtime_error',
+      failureLocation: { errorName: 'TypeError', site: 'handler.js:271:15', message: 'private' } }) }),
+  });
+  assert.deepEqual(response.body.failureLocation, { errorName: 'TypeError', site: 'handler.js:271:15' });
+  const summary = previewSummary(response.body);
+  assert.deepEqual(summary.failureLocation, { errorName: 'TypeError', site: 'handler.js:271:15' });
+  assert.ok(!JSON.stringify(summary).includes('private'));
+  assert.equal(previewSummary({ status: 'fail', failureLocation: { errorName: 'PrivateError', site: 'handler.js:1:1' } }).failureLocation, undefined);
+  assert.deepEqual(previewSummary({ status: 'fail', failureLocation: { errorName: 'Error', site: '/var/task/x.js:1:1' } }).failureLocation,
+    { errorName: 'Error' });
+});
+
 test('a failure prints its underlying cause, including the socket error fetch hides', () => {
   const refused = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:4100'), { code: 'ECONNREFUSED' }) });
   assert.equal(failureReason(refused), ': fetch failed: ECONNREFUSED');

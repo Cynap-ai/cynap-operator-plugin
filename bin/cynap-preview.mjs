@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { resolveWorkingDir, stablePortForSlug } from '../lib/connect.mjs';
-import { CONTROL_FILE, CONTROL_HEADER, PREVIEW_PATH } from './operator-proxy.mjs';
+import { CONTROL_FILE, CONTROL_HEADER, PREVIEW_PATH, previewFailureLocation } from './operator-proxy.mjs';
 import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
 import { isProxyUnreachableError, resolveOrgSlug } from '../lib/workspace-sync.mjs';
 
@@ -22,9 +22,11 @@ export function parsePreviewArgs(argv) {
 }
 
 export function previewSummary(body) {
-  const { previewId, ...rest } = body ?? {};
+  const { previewId, failureLocation, ...rest } = body ?? {};
+  const location = previewFailureLocation(failureLocation);
   return { status: 'unknown', attemptId: null, effectKinds: [],
-    ...operatorEffectOutput({ ...rest, attemptId: previewId }) };
+    ...operatorEffectOutput({ ...rest, attemptId: previewId }),
+    ...(location ? { failureLocation: location } : {}) };
 
 }
 

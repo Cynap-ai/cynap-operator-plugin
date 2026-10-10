@@ -229,6 +229,10 @@ test('resolveOrgSlug infers the org from the basename of cwd', () => {
   assert.equal(resolveOrgSlug({ cwd: '/Users/op/CynapOperator/cynap-e2e' }), 'cynap-e2e');
 });
 
+test('resolveOrgSlug lowercases a folder a case-insensitive filesystem returns as-cased', () => {
+  assert.equal(resolveOrgSlug({ cwd: '/Users/op/CynapOperator/Cynap' }), 'cynap');
+});
+
 test('resolveOrgSlug takes the nearest CynapOperator/<slug> ancestor, never a state file', () => {
   assert.equal(resolveOrgSlug({ cwd: '/Users/op/CynapOperator/acme/cynap-acme/sub' }), 'acme');
   const dir = scratchDir();
