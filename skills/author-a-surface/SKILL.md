@@ -199,10 +199,11 @@ the surface and the handler.
 | `surface_page_heading` | yes | Remove the page-level `<h1>`; the host header owns the page title. Name a record or section with `<h2>` or below. |
 | `query_state_key_invalid` | yes | Name a `useQueryState` key with a literal matching `^[a-z][a-zA-Z0-9_]{0,39}$`. |
 | `theme_value_unbounded` | yes | Give every `defineSurfaceTheme` token a literal value of its key class (a colour, a px/rem length, a family name, an integer `100`–`900` weight or a shadow); bind `fonts` only to a static `import x from './font.woff2'`, and `density`/`motion` only to a listed literal. |
+| `messaging_message_primitive` | yes | A surface that grants `conversation_read_thread` must draw messages with `Message` or `Transcript` from `@cynap/surface-sdk`: import one and render it as an element. |
 | `icon_name_unknown` | yes | Give `<Icon>` a string-literal `name` from the IconName list, never a variable, prop, map lookup or conditional; to vary the icon branch the whole element (`{busy ? <Icon name="refresh-cw" /> : <Icon name="truck" />}`); do not pass `Icon` around or spread its props. |
 | `raw_element` | yes (warning on `--rebuild`) | Use the kit component instead of the raw element: `Button`, `Input`/`Checkbox`/`Switch`, `Select`, `Textarea`, `Table`, or `Section` for a heading. |
 | `color_literal` | yes (warning on `--rebuild`) | Remove hex, `rgb()`, `hsl()` and `oklch()` literals: use a kit component, or declare the colour once in the file that calls `defineSurfaceTheme` and read it as a theme variable. |
-| `undeclared_tool` | yes | Declare every tool the surface calls in `tools.json`, including `automation_run_status` for a `useMutation`. |
+| `undeclared_tool` | yes | Declare every tool the surface calls in `tools.json`, including `automation_run_status` for a `useMutation` on an automation (a conversation command settles inline and needs none). |
 | `query_on_write_tool` | yes | Call a mediated write with `useMutation`, never `useQuery`. |
 | `mutation_on_read_tool` | yes | Read with `useQuery`; `useMutation` takes only a mediated write. |
 | `write_via_use_tool` | no (warning) | Prefer `useMutation` for a mediated write: it polls the run and settles from its terminal status. |
@@ -244,6 +245,23 @@ the surface and the handler.
 A warning (`write_via_use_tool`, `bundle_near_cap`, and `raw_element` / `color_literal` on a
 `--rebuild`) does not block the build; `/cynap-push` prints it under the commit line. A refusal
 prints one `file:line:column: message [rule]` per finding, naming the kit component to use.
+
+## Conversations: the Messaging primitives
+
+A surface that shows conversations composes the SDK's Messaging primitives (`ConversationList`,
+`Transcript`, `Message`, `Composer`, `OwnershipControls`, `ContactPanel`, `FollowUpControl`,
+`TemplatePicker`, `ChannelBadge`) and never draws its own inbox.
+
+- Read through the hooks. Each one is bound to one tool, which you declare in `tools.json`:
+  `useConversations` → `conversation_list_threads`, `useConversation` → `conversation_read_thread`,
+  `useContact` → `conversation_contact_read`, `useSavedViews` → `conversation_saved_view_list`.
+  `useFreshness` calls no tool.
+- Write with `useMutation('<conversation command>')`. A conversation command settles inline, so it
+  needs no `automation_run_status` in `tools.json`, and it takes no `automationIds`/`triggerActions`.
+  Pass the hook's `refusal` to the component that shows it.
+- `messaging_message_primitive`: a surface that grants `conversation_read_thread` must render its
+  messages with `Message` or `Transcript`, imported from `@cynap/surface-sdk`. Otherwise the build
+  is refused.
 
 ## Refusal codes
 
