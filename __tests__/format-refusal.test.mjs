@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE, unwrapToolEnvelope } from '../lib/format-refusal.mjs';
+import { formatPreviewFailure, formatRefusal, PLUGIN_OUTDATED_EXIT_CODE, unwrapToolEnvelope } from '../lib/format-refusal.mjs';
+import { operatorEffectOutput } from '../lib/effect-disclosure.mjs';
 
 test('plugin version refusal includes installed, minimum, update commands and optional message', () => {
   const text = formatRefusal({ ok: false, code: 'plugin_outdated', installed: '0.19.1', minimum: '0.19.2',
@@ -89,4 +90,50 @@ test('surface_approval_required names the portal approve path, not a generic fai
   assert.match(text, /^cynap-activate: surface_approval_required: /);
   assert.match(text, /Settings → Operators → Pending changes/);
   assert.doesNotMatch(text, /the activation request failed/);
+});
+
+// A preview failure prints the closed facts of the status read, never "withheld" and never error text.
+test('a capture_tool_failed verdict prints the code and whether the baseline failed too', () => {
+  const text = formatRefusal({ status: 'fail', failureCode: 'capture_tool_failed', baselineOutcome: 'failed',
+    error: 'GET https://openapi.writeupp.com/patients/123 -> 429', message: 'private body' }, { command: 'cynap-preview' });
+  assert.match(text, /^cynap-preview: capture_tool_failed: an effect-producing tool call failed during the preview/);
+  assert.match(text, /\n  baseline: failed too .*may not come from your commit/);
+  assert.doesNotMatch(text, /withheld|writeupp|patients|private body/);
+});
+
+test('a handler_runtime_error verdict prints the failure location and the baseline result', () => {
+  const text = formatPreviewFailure(operatorEffectOutput({ status: 'fail', failureCode: 'handler_runtime_error',
+    failureLocation: { errorName: 'TypeError', site: 'handler.js:4:9' }, baselineOutcome: 'succeeded' }));
+  assert.equal(text, [
+    'handler_runtime_error: the candidate handler threw; fix it at the location below and preview again',
+    '  failureLocation: TypeError at handler.js:4:9',
+    '  baseline: succeeded on its own copy, so look at what your commit changed',
+  ].join('\n'));
+});
+
+test('a first promotion says there was no baseline to compare with', () => {
+  assert.match(formatPreviewFailure({ failureCode: 'preview_timeout', baselineOutcome: 'not_dispatched' }),
+    /^preview_timeout\n  baseline: not run \(no accepted version/);
+});
+
+test('a hostile failure location or baseline value never reaches the printed facts', () => {
+  const safe = operatorEffectOutput({ status: 'fail', failureCode: 'handler_runtime_error', baselineOutcome: 'failed; patient Jo',
+    failureLocation: { errorName: 'TypeError: patient Jo', site: 'handler.js:4:9 patient Jo', message: 'patient Jo' } });
+  assert.equal(safe.failureLocation, undefined);
+  assert.equal(safe.baselineOutcome, undefined);
+  assert.doesNotMatch(formatPreviewFailure(safe), /patient Jo/);
+  const siteOnly = operatorEffectOutput({ failureLocation: { errorName: 'RangeError', site: 'handler.js:4:9 patient Jo' } });
+  assert.deepEqual(siteOnly.failureLocation, { errorName: 'RangeError' });
+});
+
+test('an activation result with a fail status is not formatted as a preview failure', () => {
+  const text = formatRefusal({ ok: false, status: 'fail', code: 'consent_denied' }, { command: 'cynap-activate' });
+  assert.match(text, /^cynap-activate: consent_denied: the activation was declined/);
+});
+
+test('preview_running without the running attempt\'s details still states the rule', () => {
+  assert.match(formatRefusal({ code: 'preview_running' }, { command: 'cynap-preview' }),
+    /^cynap-preview: preview_running: an org runs one preview at a time, and another preview is still running\./);
+  assert.match(formatRefusal({ code: 'preview_running', previewId: 'p1' }, { command: 'cynap-preview' }),
+    /attempt p1 is still running\. Wait for its verdict with \/cynap-preview status p1/);
 });

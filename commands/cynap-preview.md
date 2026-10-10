@@ -1,6 +1,6 @@
 ---
 description: Preview a code_execution handler at a committed workspace SHA on data copies.
-argument-hint: "<automation-id> <commit-sha>"
+argument-hint: "<automation-id> <commit-sha> | status <attempt-id>"
 ---
 
 # /cynap-preview
@@ -13,9 +13,19 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-preview.mjs" $ARGUMENTS
 ```
 
 The command prints `preview_running` with the attempt id while the backend runs, then polls
-status for a bounded time. On pass, re-read `workspace_status` and follow its activation
+status for a bounded time. A preview that outlives that wait is still running: the command
+prints `/cynap-preview status <attempt-id>`, and running it later reads that attempt's state
+and verdict once (`GET /preview/status/{previewId}`, the same `workspace:execute-preview`
+read). Do not start a second preview to find out: an org runs one preview at a time, so it is
+refused `preview_running`, and the refusal names the running attempt, its automation and
+when it started.
+`preview_not_found` means the attempt is not in this org or its verdict has expired. On pass, re-read `workspace_status` and follow its activation
 `next_action`. A pass reports counts and effect kinds only. A failure reports the
-typed verdict code and fixed operator text. Never print row data from a preview copy.
+typed verdict code and its closed facts: `failureLocation` (the error class and
+`handler.js` line where the candidate threw) and whether the baseline, the accepted
+code on its own copy, failed too. A baseline that failed too means the failure may
+not come from this commit. No error text or payload is ever shown. Never print row
+data from a preview copy.
 
 Browser handlers (`capabilities: ["browser"]`) preview like any other handler: the vendor session never enters the preview VM, page loads use it server-side, and every write is captured. Activation needs a pass. After a pass, run `/cynap-activate <commit-sha>`; any captured write is listed on the owner approval page.
 

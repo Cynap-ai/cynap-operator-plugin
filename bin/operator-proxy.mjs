@@ -306,6 +306,12 @@ export const ACTIVATE_PATH = '/activate';
 /** Nonce-gated preview control route. The operator token remains inside the proxy. */
 export const PREVIEW_PATH = '/preview';
 
+/** The closed preview failure facts the status read may carry. Anything else is dropped here. */
+const PREVIEW_BASELINE_OUTCOMES = new Set(['failed', 'succeeded', 'not_dispatched']);
+// A preview_running refusal names the running attempt's automation and start time.
+const PREVIEW_AUTOMATION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const PREVIEW_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+
 /** Error names a failing preview may report. Mirrors the server's list; anything else is dropped. */
 const PREVIEW_ERROR_NAMES = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError',
   'EvalError', 'AggregateError', 'AbortError', 'TimeoutError']);
@@ -356,6 +362,10 @@ export async function forwardPreviewRequest({ method, input, previewId, orgSlug,
     ...(typeof answer.failureCode === 'string' ? { failureCode: answer.failureCode } : {}),
     ...(typeof answer.operatorText === 'string' ? { operatorText: answer.operatorText } : {}),
     ...(previewFailureLocation(answer.failureLocation) ? { failureLocation: previewFailureLocation(answer.failureLocation) } : {}),
+    ...(PREVIEW_BASELINE_OUTCOMES.has(answer.baselineOutcome) ? { baselineOutcome: answer.baselineOutcome } : {}),
+    ...(answer.rule === 'one_preview_per_org' ? { rule: answer.rule } : {}),
+    ...(PREVIEW_AUTOMATION_ID.test(answer.automationId ?? '') ? { automationId: answer.automationId } : {}),
+    ...(PREVIEW_TIMESTAMP.test(answer.startedAt ?? '') ? { startedAt: answer.startedAt } : {}),
     ...(typeof answer.error === 'string' ? { error: answer.error } : {}),
     ...(typeof answer.retryAfterMs === 'number' ? { retryAfterMs: answer.retryAfterMs } : {}),
     ...(Array.isArray(answer.effectKinds) ? { effectKinds: answer.effectKinds.filter((item) =>

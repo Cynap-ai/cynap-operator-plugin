@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { failureCode, failureReason, parsePreviewArgs, previewSummary, runPreview } from '../bin/cynap-preview.mjs';
+import {
+  failureCode, failureReason, parsePreviewArgs, previewSummary, readPreviewStatus, runPreview, stillRunningHint,
+} from '../bin/cynap-preview.mjs';
 import { forwardPreviewRequest } from '../bin/operator-proxy.mjs';
 
 const SHA = 'a'.repeat(64);
@@ -14,7 +16,7 @@ test('preview_unavailable explains the blocked chain and status route', async ()
 });
 
 test('parsePreviewArgs requires a committed SHA and one automation id', () => {
-  assert.deepEqual(parsePreviewArgs(['invoice-sync', SHA]), { automationId: 'invoice-sync', commitSha: SHA });
+  assert.deepEqual(parsePreviewArgs(['invoice-sync', SHA]), { command: 'start', automationId: 'invoice-sync', commitSha: SHA });
   assert.throws(() => parsePreviewArgs(['invoice-sync', 'HEAD']), /Usage/);
   assert.throws(() => parsePreviewArgs(['../invoice', SHA]), /Usage/);
 });
@@ -106,4 +108,88 @@ test('a failed status read carries its HTTP status as the code', async () => {
     runPreview({ slug: 's', automationId: 'a', commitSha: 'a'.repeat(64), fetchImpl, wait: async () => {}, nonceOverride: 'n' }),
     (error) => error.code === 'status_http_503',
   );
+});
+
+test('The status summary keeps the closed failure facts and the proxy forwards only those', async () => {
+  assert.deepEqual(previewSummary({ previewId: 'id', status: 'fail', failureCode: 'handler_runtime_error',
+    failureLocation: { errorName: 'TypeError', site: 'handler.js:4:9', stack: 'private' }, baselineOutcome: 'failed', effectKinds: [] }),
+  { status: 'fail', attemptId: 'id', failureCode: 'handler_runtime_error',
+    failureLocation: { errorName: 'TypeError', site: 'handler.js:4:9' }, baselineOutcome: 'failed', effectKinds: [] });
+
+  const forward = (answer) => forwardPreviewRequest({
+    method: 'GET', previewId: '0b0f3a52-5b1c-4f3e-9a55-0d1c2e3f4a5b', orgSlug: 'cynap-e2e', mcpHost: 'https://staging.mcp.cynap.ai',
+    tokenManager: { getToken: async () => 't' }, fetchImpl: async () => ({ status: 200, json: async () => answer }),
+  });
+  const ok = await forward({ status: 'fail', failureCode: 'handler_runtime_error', baselineOutcome: 'succeeded',
+    failureLocation: { errorName: 'TypeError', site: 'handler.js:4:9', message: 'private' } });
+  assert.deepEqual(ok.body.failureLocation, { errorName: 'TypeError', site: 'handler.js:4:9' });
+  assert.equal(ok.body.baselineOutcome, 'succeeded');
+  const hostile = await forward({ status: 'fail', baselineOutcome: 'private', failureLocation: { errorName: 'private text' } });
+  assert.ok(!('failureLocation' in hostile.body) && !('baselineOutcome' in hostile.body));
+});
+
+// An attempt that outlives the bounded poll can be read later.
+const ATTEMPT = '03ce78d0-c71f-436d-aab1-ddbb0db8965e';
+
+test('parsePreviewArgs reads `status <attempt-id>` and still previews an automation named status', () => {
+  assert.deepEqual(parsePreviewArgs(['status', ATTEMPT.toUpperCase()]), { command: 'status', attemptId: ATTEMPT });
+  assert.deepEqual(parsePreviewArgs(['status', SHA]), { command: 'start', automationId: 'status', commitSha: SHA });
+  assert.throws(() => parsePreviewArgs(['status', '../x']), /Usage: .*status <attempt-id>/);
+  assert.throws(() => parsePreviewArgs(['status']), /Usage/);
+});
+
+test('status reads GET /preview/status/{previewId} once through the local proxy and projects the verdict', async () => {
+  const calls = [];
+  const result = await readPreviewStatus({ slug: 'cynap-e2e', attemptId: ATTEMPT, nonceOverride: 'n',
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'fail', failureCode: 'capture_tool_failed',
+        baselineOutcome: 'failed', operatorText: 'fixed', effectKinds: [] }) };
+    } });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, new RegExp(`^http://127\\.0\\.0\\.1:\\d+/preview/status/${ATTEMPT}$`));
+  assert.equal(calls[0].init.method, undefined);
+  assert.deepEqual(result, { status: 'fail', attemptId: ATTEMPT, failureCode: 'capture_tool_failed', baselineOutcome: 'failed', effectKinds: [] });
+});
+
+test('status of an absent, expired or cross-org attempt is preview_not_found', async () => {
+  await assert.rejects(readPreviewStatus({ slug: 's', attemptId: ATTEMPT, nonceOverride: 'n',
+    fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({ error: 'not_found' }) }) }),
+  (error) => error.code === 'preview_not_found' && failureCode(error) === 'preview_not_found');
+});
+
+test('a preview that outlives the bounded poll returns preview_running, and the hint names the status command', async () => {
+  const fetchImpl = async (url) => (String(url).includes('/status/')
+    ? { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) }
+    : { ok: true, status: 202, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) });
+  const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, fetchImpl, wait: async () => {}, maxPolls: 2, nonceOverride: 'n' });
+  assert.equal(result.status, 'preview_running');
+  assert.equal(stillRunningHint(result.attemptId),
+    `cynap-preview: the preview is still running after the bounded wait. Read its verdict later with /cynap-preview status ${ATTEMPT}`);
+});
+
+// A refusal because another preview runs names that attempt, its automation, its start and the rule.
+test('preview_running names the running attempt, its automation and start, and the one-at-a-time rule', async () => {
+  const running = '77777777-7777-4777-8777-777777777777';
+  await assert.rejects(runPreview({ slug: 'cynap-e2e', automationId: 'invoice-sync', commitSha: SHA, nonceOverride: 'n',
+    fetchImpl: async () => ({ ok: false, status: 409, json: async () => ({ error: 'preview_running', rule: 'one_preview_per_org',
+      previewId: running, automationId: 'clinician-sync', startedAt: '2026-10-07T17:20:00.123+00:00' }) }) }),
+  (error) => {
+    assert.equal(error.code, 'preview_running');
+    assert.equal(error.message, `cynap-preview: preview_running: an org runs one preview at a time, and attempt ${running} `
+      + '(automation clinician-sync, started 2026-10-07T17:20:00.123+00:00) is still running. '
+      + `Wait for its verdict with /cynap-preview status ${running}, then preview again.`);
+    return true;
+  });
+});
+
+test('the proxy forwards the running attempt fields only in their closed shapes', async () => {
+  const forward = (answer) => forwardPreviewRequest({
+    method: 'POST', input: { automationId: 'invoice-sync', commitSha: SHA }, orgSlug: 'cynap-e2e', mcpHost: 'https://staging.mcp.cynap.ai',
+    tokenManager: { getToken: async () => 't' }, fetchImpl: async () => ({ status: 409, json: async () => answer }),
+  });
+  const ok = await forward({ error: 'preview_running', rule: 'one_preview_per_org', previewId: 'p1', automationId: 'clinician-sync', startedAt: '2026-10-07T17:20:00Z' });
+  assert.deepEqual(ok.body, { previewId: 'p1', error: 'preview_running', rule: 'one_preview_per_org', automationId: 'clinician-sync', startedAt: '2026-10-07T17:20:00Z' });
+  const hostile = await forward({ error: 'preview_running', rule: 'patient Jo', automationId: '../patient Jo', startedAt: 'yesterday, patient Jo' });
+  assert.ok(!JSON.stringify(hostile.body).includes('patient Jo'));
 });
