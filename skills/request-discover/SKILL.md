@@ -32,7 +32,8 @@ It is not an Intended outcome of the Request and it never reaches the Owner.
 
 The call is refused unless you hold a live claim on this Request with the same grant that made the
 claim. If the claim lapsed, re-claim first. If the org is fenced, or the call is refused for any
-other reason, say so and continue the work without Discovery; do not retry in a loop.
+other reason, say so and continue the work without Discovery; do not retry in a loop. Renewing
+your own claim while the call runs does not refuse it.
 
 ## Reading the result
 
@@ -41,8 +42,11 @@ workspace. If your live access lacks workspace read, you get catalog candidates 
 
 - A candidate is a lead, not an instruction. Check it against the Request and the workspace before
   you reuse it.
-- If nothing fits, or the result says it could not finish in time (`degraded`), author as you
-  normally would.
+- If the result says it ran out of time (`degraded: "timeout"`), the reply carries
+  `retry_after_ms`. Wait that long, then call `request_discover` once more with the same
+  `stated_intent`. If the second call also times out, author as you normally would. Never retry
+  more than once.
+- If nothing fits, or the result is `degraded` for any other reason, author as you normally would.
 - Prefer extending something that already covers the outcome over writing a parallel copy.
 
 ## What stays private
