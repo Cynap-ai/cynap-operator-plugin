@@ -125,6 +125,16 @@ export interface EntitySchemaField {
    you just defined here, resolve the table through the registry, not a
    literal string.
 
+6. **A `json` field is opaque to filters — promote what you query.** A
+   `field_type: "json"` field is stored as text and arrives parsed on every
+   read, but a read filter cannot reach inside it: equality, `__in`,
+   `__between` and the comparisons on a `json` field are refused with
+   `KNOWLEDGE_JSON_FIELD_NOT_FILTERABLE`. Any value a Surface, flow or
+   handler filters or sorts on gets **its own field** (`decision: enum`, next
+   to `record: json`), written by the same handler in the same write. Store
+   only objects and arrays in a `json` field; a bare scalar does not
+   round-trip.
+
 ## A minimal correct example
 
 This is a **new** entity. Its initial pipeline is allowed; editing the pipeline

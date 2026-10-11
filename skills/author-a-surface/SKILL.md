@@ -176,6 +176,36 @@ only the fields it owns, and returns `rowsAffected` so the surface can tell
 applied from conflict. Keep the automation id and action equal in `tools.json`,
 the surface and the handler.
 
+## Reading entity rows: `json` fields
+
+A schema field with `field_type: "json"` arrives **parsed**. `useEntityQuery`
+rows (and every other entity read) carry it as the object or array that was
+stored, so read it directly and never `JSON.parse` it:
+
+```tsx
+const record = row.record as { decision?: string } | null;
+```
+
+Three things can still arrive instead of an object, so narrow before use:
+
+- `null`, when the field is unset.
+- a number or a string, when the writer stored a scalar. Only objects and
+  arrays round-trip; do not store a bare scalar in a `json` field.
+- the stored text itself, when it is not valid JSON.
+
+**A filter cannot reach inside a `json` field.** The filter grammar addresses
+fields, not paths. `eq`, `neq`, `in`, `between` and the comparisons on a `json`
+field are refused with `KNOWLEDGE_JSON_FIELD_NOT_FILTERABLE`, and `sort` on one
+orders by raw text. The rule: **promote any value you filter or sort on to its
+own schema field**, written by the same handler that writes the json (see
+`author-a-schema-change`), then filter on that field. Filtering rows in the
+bundle after the page loads is not a substitute: the matches may sit on a page
+the viewer never opens, and the list looks empty.
+
+`is_null` / `not_null` work on a `json` field. `contains` is a raw-text match
+against however the writer serialized the value; treat it as a stopgap until
+the value is promoted, never as a contract.
+
 ## Build findings and fixes
 
 <!-- generated:surface-lint-rules — do not edit; run scripts/build-surface-contract.mjs -->
