@@ -14,7 +14,8 @@ instead of working around it.
 |---|---|---|
 | `workspace:read` | Read the org's workspace: state, files, history and drift | `workspace_status`, `workspace_tree`, `workspace_get_file`, `workspace_get_commit`, `workspace_diff`, `workspace_log`, `workspace_receipts`, `workspace_drift` |
 | `workspace:execute-preview` | Validate a change, commit it, report check verdicts, discard a commit | `workspace_validate`, `workspace_commit`, `checks_verdict_report`, `workspace_discard_commit` |
-| `workspace:file-activate` | Activate an accepted commit | `workspace_prepare_commit_proof`, `workspace_activate_commit`, `handler_upload` |
+| `workspace:file-activate` | Activate an accepted commit | `workspace_activate_commit`, `handler_upload` |
+| `workspace:file-activate` | Prepare the proof a Request proposal needs. Not on your tool list: run `/cynap-propose` | `workspace_prepare_commit_proof` |
 | `workspace:file-activate` | Rehearse a lifecycle and start a manual run | `cynap_simulated_lifecycle`, `automation_run_trigger` |
 | `workspace:commit` | Commit only: validate and commit, with no reads | `workspace_validate`, `workspace_commit` |
 | `workspace:read-ops` | Diagnose runs (see `debug-a-run`) | `runs_query`, `journal_describe`, `journal_query`, `journal_count`, `run_evidence_get`, `customer_ai_readiness_get` |
@@ -31,3 +32,10 @@ Scope families:
 
 The usual operating seat holds `workspace:file-activate` together with
 `workspace:read-ops`.
+
+Two tools in the table are never called directly, whatever your scope. The plugin
+mints a short-lived credential for each, uses it once and discards it:
+
+- `workspace_activate_commit`: run `/cynap-activate <commit-sha>`.
+- `workspace_prepare_commit_proof`: run `/cynap-propose <commit-sha> --request <number>`.
+  It prepares the proof and proposes the commit on a claimed Request in one step.

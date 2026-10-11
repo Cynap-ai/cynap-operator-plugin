@@ -189,6 +189,8 @@ For Request linkage, a Request-bound commit goes through native `workspace_commi
 The ordinary `/cynap-push` CLI supplies no `request_id` and has no Request flag. Proposal proof, exact
 Owner approval and activation remain separate gates; inspect their callable contracts
 and do not infer them from an Owner-Operator persona or a successful claim.
+To propose an accepted Request-bound commit, run `/cynap-propose <commit-sha> --request <number>`:
+it prepares the proof and proposes in one step.
 
 Same-org owner-operator, non-owner internal Operator and granted external Operator share
 this scoped read/claim entrance, not an identical fulfillment lane. The owner-operator

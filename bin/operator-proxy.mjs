@@ -303,6 +303,8 @@ export const CONTEXT_PATH = '/context';
 
 /** Owner-only, nonce-gated local control route used by /cynap-activate. */
 export const ACTIVATE_PATH = '/activate';
+/** Nonce-gated local control route used by /cynap-propose. The proof credential stays inside the proxy. */
+export const PREPARE_PROOF_PATH = '/prepare-proof';
 /** Nonce-gated preview control route. The operator token remains inside the proxy. */
 export const PREVIEW_PATH = '/preview';
 
@@ -2708,6 +2710,133 @@ export function summarizeToolAnswer(httpStatus, text) {
   return { httpStatus, refused, code };
 }
 
+/** A proof-preparation failure the CLI can render: identifiers only, never upstream prose. */
+export class PrepareProofError extends Error {
+  constructor(code, message, failureCode) {
+    super(message);
+    this.code = code;
+    if (failureCode) this.failureCode = failureCode;
+  }
+}
+
+const PREPARE_PROOF_FIELDS = ['request_id', 'expected_state_version', 'commit_sha'];
+/** The mint profiles tried in order: the Owner member's, then an admitted external commit grant's. */
+const PROOF_MINT_SCOPES = ['workspace:operate', 'workspace:commit'];
+/** The /cynap-propose wait for /prepare-proof: both mints, the one tool call, and a margin. */
+export const PREPARE_PROOF_RESPONSE_BUDGET_MS =
+  PROOF_MINT_SCOPES.length * TOKEN_EXCHANGE_TIMEOUT_MS + ACTIVATION_CALL_TIMEOUT_MS + ACTIVATION_OUTCOME_MARGIN_MS;
+
+/** Strict body check for POST /prepare-proof. Throws before anything is minted. */
+export function parsePrepareProofRequest(payload) {
+  const invalid = (message) => new PrepareProofError('invalid_request', message);
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+      Object.keys(payload).some((key) => !PREPARE_PROOF_FIELDS.includes(key))) {
+    throw invalid(`body must be exactly {${PREPARE_PROOF_FIELDS.join(', ')}}`);
+  }
+  const { request_id: requestId, expected_state_version: version, commit_sha: commitSha } = payload;
+  if (typeof requestId !== 'string' || requestId.trim().length === 0 || requestId.length > 200) {
+    throw invalid('request_id must be a non-empty string');
+  }
+  if (!Number.isSafeInteger(version) || version < 0) {
+    throw invalid('expected_state_version must be a non-negative integer');
+  }
+  if (typeof commitSha !== 'string' || !/^[a-f0-9]{64}$/i.test(commitSha)) {
+    throw invalid('commit_sha must be a 64-character commit sha');
+  }
+  return { request_id: requestId, expected_state_version: version, commit_sha: commitSha };
+}
+
+/** The mint route's `invalid_grant` refusal: this caller does not hold the requested profile. */
+function isInvalidGrantMint(error) {
+  return error?.status === 403 && /"error":"invalid_grant"/.test(String(error?.message ?? ''));
+}
+
+/** One uncached workspace-family token able to prepare a proof. No browser consent. */
+async function mintProofToken({ mintHost, targetOrgId, getAuthHeaders, pluginVersion, fetchImpl }) {
+  for (const requestedScope of PROOF_MINT_SCOPES) {
+    const manager = createTokenManager({
+      mintHost, targetOrgId, allowedOrgId: targetOrgId, getAuthHeaders, family: 'workspace', requestedScope,
+      pluginVersion, fetchImpl,
+    });
+    try {
+      return await manager.getToken({ allowConsent: false });
+    } catch (error) {
+      if (isInvalidGrantMint(error)) continue;
+      throw new PrepareProofError(
+        'proof_credential_failed',
+        `proof credential mint failed${typeof error?.status === 'number' ? `: ${error.status}` : ''}`,
+        typeof error?.status === 'number' ? `http_${error.status}` : undefined
+      );
+    }
+  }
+  throw new PrepareProofError('proof_credential_refused', 'no proof-capable scope is granted to this operator', 'invalid_grant');
+}
+
+const TOOL_NOT_AVAILABLE_RE = /^Tool '[^']+' is not available on this connection/;
+
+/** The typed result of a workspace_prepare_commit_proof answer: the receipt, or the server's refusal. */
+export function classifyProofAnswer(text, commitSha) {
+  const { message, result, structured } = structuredToolAnswer(text);
+  const receipt = structured?.proof?.receipt;
+  if (structured?.ok === true && structured.commit_sha === commitSha && typeof receipt === 'string' && receipt.length > 0) {
+    return { ok: true, commit_sha: commitSha, receipt };
+  }
+  const denial = result?.isError === true ? result.content?.find?.((c) => c.type === 'text')?.text : null;
+  const code = typeof structured?.code === 'string' ? structured.code
+    : TOOL_NOT_AVAILABLE_RE.test(denial ?? '') ? 'tool_not_available'
+    : message?.error ? 'rpc_error'
+    : 'prepare_proof_unreadable';
+  const reason = typeof structured?.message === 'string'
+    ? structured.message.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300)
+    : '';
+  return { ok: false, code, ...(reason ? { message: reason } : {}) };
+}
+
+/**
+ * Prepare the exact-tree proof a Request proposal needs. The proof-capable token is minted here,
+ * lives only in this function (never the long-lived token cache, a file or a log), and is used
+ * for exactly one `workspace_prepare_commit_proof` call.
+ */
+export async function prepareCommitProof({
+  mintHost,
+  mcpHost,
+  mcpPath,
+  targetOrgId,
+  request,
+  getAuthHeaders,
+  pluginVersion,
+  fetchImpl = fetch,
+  callTimeoutMs = ACTIVATION_CALL_TIMEOUT_MS,
+}) {
+  const args = parsePrepareProofRequest(request);
+  const token = await mintProofToken({ mintHost, targetOrgId, getAuthHeaders, pluginVersion, fetchImpl });
+  let response;
+  try {
+    response = await fetchImpl(`${mcpHost}${mcpPath}`, {
+      method: 'POST',
+      headers: upstreamHeaders(pluginVersion, {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${token}`,
+      }),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'cynap-operator-prepare-proof',
+        method: 'tools/call',
+        params: { name: 'workspace_prepare_commit_proof', arguments: args },
+      }),
+      signal: AbortSignal.timeout(callTimeoutMs),
+    });
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    throw new PrepareProofError('prepare_proof_failed', 'proof preparation call did not complete', timedOut ? 'call_timeout' : 'network_error');
+  }
+  if (!response.ok) {
+    throw new PrepareProofError('prepare_proof_failed', `proof preparation failed: ${response.status}`, `http_${response.status}`);
+  }
+  return classifyProofAnswer(await readUpstreamResponseText(response), args.commit_sha);
+}
+
 /**
  * Device-code login (RFC 8628 fallback, headless). Prints the user_code + verification URL,
  * then polls until the operator approves in a browser. Returns { credential, orgId, expiresAt }.
@@ -3419,6 +3548,38 @@ export function createProxyServer({
           ...(failureCode ? { failureCode } : {}),
           message,
         }));
+      }
+      return;
+    }
+
+    // /cynap-propose's proof source. Nonce-gated like /activate. The reply carries the receipt or
+    // the server's refusal — never the proof-capable token, which no MCP caller can reach.
+    if (req.method === 'POST' && req.url === PREPARE_PROOF_PATH) {
+      const reply = (status, payload) => {
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(payload));
+      };
+      if (!controlNonce || req.headers[CONTROL_HEADER] !== controlNonce) {
+        reply(403, { error: 'invalid_local_control_nonce' });
+        return;
+      }
+      if (typeof getAuthHeaders !== 'function' || !mintHost || !orgId) {
+        reply(503, { error: 'prepare_proof_unavailable' });
+        return;
+      }
+      try {
+        let request;
+        try { request = JSON.parse((await readBody(req)).toString('utf8')); } catch {
+          throw new PrepareProofError('invalid_request', 'body must be JSON');
+        }
+        reply(200, await prepareCommitProof({
+          mintHost, mcpHost, mcpPath, targetOrgId: orgId, request, getAuthHeaders, pluginVersion, fetchImpl,
+        }));
+      } catch (error) {
+        const code = error instanceof PrepareProofError ? error.code : 'prepare_proof_failed';
+        const failureCode = error instanceof PrepareProofError ? error.failureCode : undefined;
+        process.stderr.write(`[operator-proxy] proof preparation refused: ${code}${failureCode ? ` (${failureCode})` : ''}\n`);
+        reply(400, { error: code, ...(failureCode ? { failureCode } : {}) });
       }
       return;
     }
