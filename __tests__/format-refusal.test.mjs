@@ -88,7 +88,7 @@ test('surface_approval_required names the portal approve path, not a generic fai
   const text = formatRefusal({ ok: false, code: 'surface_approval_required', failureCode: 'surface_approval_required' },
     { command: 'cynap-activate', commitSha: 'a'.repeat(64) });
   assert.match(text, /^cynap-activate: surface_approval_required: /);
-  assert.match(text, /Settings → Operators → Pending changes/);
+  assert.match(text, /from the portal: Changes/);
   assert.doesNotMatch(text, /the activation request failed/);
 });
 
