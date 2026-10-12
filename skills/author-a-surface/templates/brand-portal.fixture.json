@@ -1,0 +1,85 @@
+{
+  "context": {
+    "viewer": {
+      "role": "owner",
+      "displayName": "Synthetic reviewer"
+    },
+    "accent": "175 70% 35%",
+    "locale": "en",
+    "direction": "ltr"
+  },
+  "states": {
+    "populated": [
+      {
+        "tool": "query_metrics",
+        "response": {
+          "data": {
+            "rows": [
+              {
+                "id": "fixture-record",
+                "name": "Invented sample record",
+                "stage": "REPLACE_WITH_FIRST_STAGE",
+                "updated_at": "2026-10-11T12:00:00Z",
+                "notes": "# Invented notes\n\nA synthetic example for layout review.",
+                "value": 42,
+                "group": "Sample",
+                "x": "Sample",
+                "y": "Sample",
+                "REPLACE_WITH_GROUP_FIELD": "Sample",
+                "count": 3
+              }
+            ],
+            "columns": [
+              "group",
+              "value"
+            ],
+            "kind": "observed",
+            "trust": "fixture",
+            "data_as_of": "2026-10-11T12:00:00Z",
+            "sample_n": 1
+          }
+        }
+      }
+    ],
+    "empty": [
+      {
+        "tool": "query_metrics",
+        "response": {
+          "data": {
+            "rows": [],
+            "columns": [
+              "group",
+              "value"
+            ],
+            "kind": "observed",
+            "trust": "fixture",
+            "data_as_of": "2026-10-11T12:00:00Z",
+            "sample_n": 1,
+            "meta": {
+              "total": 0
+            }
+          }
+        }
+      }
+    ],
+    "loading": [
+      {
+        "tool": "query_metrics",
+        "response": {
+          "pending": true
+        }
+      }
+    ],
+    "error": [
+      {
+        "tool": "query_metrics",
+        "response": {
+          "error": {
+            "code": "fixture_error",
+            "message": "Invented fixture error"
+          }
+        }
+      }
+    ]
+  }
+}

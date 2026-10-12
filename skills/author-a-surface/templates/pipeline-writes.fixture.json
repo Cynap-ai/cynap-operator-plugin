@@ -1,0 +1,139 @@
+{
+  "context": {
+    "viewer": {
+      "role": "owner",
+      "displayName": "Synthetic reviewer"
+    },
+    "accent": "175 70% 35%",
+    "locale": "en",
+    "direction": "ltr"
+  },
+  "states": {
+    "populated": [
+      {
+        "tool": "knowledge_query_data:knowledge_aggregate",
+        "response": {
+          "data": {
+            "rows": [
+              {
+                "stage": "REPLACE_WITH_FIRST_STAGE",
+                "count": 3
+              }
+            ]
+          }
+        }
+      },
+      {
+        "tool": "knowledge_query_data:knowledge_advanced_query",
+        "response": {
+          "data": {
+            "rows": [
+              {
+                "id": "fixture-record",
+                "name": "Invented sample record",
+                "stage": "REPLACE_WITH_FIRST_STAGE",
+                "updated_at": "2026-10-11T12:00:00Z",
+                "notes": "# Invented notes\n\nA synthetic example for layout review.",
+                "value": 42,
+                "group": "Sample",
+                "x": "Sample",
+                "y": "Sample",
+                "REPLACE_WITH_GROUP_FIELD": "Sample",
+                "count": 3
+              }
+            ],
+            "meta": {
+              "total": 1
+            }
+          }
+        }
+      },
+      {
+        "tool": "automation_run_manual",
+        "response": {
+          "write": "success",
+          "message": "Synthetic write; nothing was written."
+        }
+      }
+    ],
+    "empty": [
+      {
+        "tool": "knowledge_query_data:knowledge_aggregate",
+        "response": {
+          "data": {
+            "rows": [],
+            "meta": {
+              "total": 0
+            }
+          }
+        }
+      },
+      {
+        "tool": "knowledge_query_data:knowledge_advanced_query",
+        "response": {
+          "data": {
+            "rows": [],
+            "meta": {
+              "total": 0
+            }
+          }
+        }
+      },
+      {
+        "tool": "automation_run_manual",
+        "response": {
+          "write": "success",
+          "message": "Synthetic write; nothing was written."
+        }
+      }
+    ],
+    "loading": [
+      {
+        "tool": "knowledge_query_data:knowledge_aggregate",
+        "response": {
+          "pending": true
+        }
+      },
+      {
+        "tool": "knowledge_query_data:knowledge_advanced_query",
+        "response": {
+          "pending": true
+        }
+      },
+      {
+        "tool": "automation_run_manual",
+        "response": {
+          "write": "success",
+          "message": "Synthetic write; nothing was written."
+        }
+      }
+    ],
+    "error": [
+      {
+        "tool": "knowledge_query_data:knowledge_aggregate",
+        "response": {
+          "error": {
+            "code": "fixture_error",
+            "message": "Invented fixture error"
+          }
+        }
+      },
+      {
+        "tool": "knowledge_query_data:knowledge_advanced_query",
+        "response": {
+          "error": {
+            "code": "fixture_error",
+            "message": "Invented fixture error"
+          }
+        }
+      },
+      {
+        "tool": "automation_run_manual",
+        "response": {
+          "write": "success",
+          "message": "Synthetic write; nothing was written."
+        }
+      }
+    ]
+  }
+}

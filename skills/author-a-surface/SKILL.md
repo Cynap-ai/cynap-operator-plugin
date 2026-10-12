@@ -72,8 +72,10 @@ using the same type scale, spacing and controls. Org branding changes theme toke
    Never put a raw `onClick` on a `div`. The `click_on_non_interactive` guard cannot see
    `onClick` in spread props or a wrapper that attaches it internally; it is not a proof.
 8. Before pushing, check all four states, long content, mobile layout and keyboard actions.
-   After pushing in this release, open the candidate URL as the Owner/Admin, or ask the Owner
-   to open it. It reads live data and permits reads only. Local fixture rendering ships later.
+   Before pushing, run `/cynap-render` in populated, empty, loading and error states, light
+   and dark, wide (1280 px) and narrow (375 px). Follow the `fixture-render` skill: inspect each
+   visible render and screenshot only settled markers. Then push and give the Owner the
+   Surface candidate URL on real data. Use invented fixture data only; fixtures never push.
 
 <!-- generated:surface-patterns — do not edit; run scripts/build-surface-contract.mjs -->
 ### work-queue
