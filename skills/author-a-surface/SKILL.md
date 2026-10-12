@@ -33,6 +33,16 @@ bundle-relative `path` and lowercase `view`; optional `label`, `icon`,
 non-empty path.** An org Surface mounts under `data` beside the Default Surface,
 which already owns the empty path, `query` and `entities/:id`; reusing one is
 refused as `surface_route_collision`.
+
+**The panel lists pages only.** A route with a `label` becomes a row in the App's
+nav panel. Give a `label` only to a route that is its own page. A saved view or a
+filter of another route's list (Mine, Unassigned, Open) is not a page: give it no
+`label` and no `navOrder`, keep its `path`, `view` and `title` so its URL still
+resolves, and offer it as an in-page switcher on the list's own page. A `navOrder`
+of 100 or more places a row below the panel's divider, in the setup range, so put
+settings and configuration pages there. An installed App is its own Area in the
+sidebar, and its pages appear under no other Area. Nothing in the build checks this
+yet; the rule is yours to keep.
 `tools.json` requires a `tools` array of at most 64 grants. **An empty array is
 valid when the surface calls no tools**; declare every tool the code does call.
 Each grant names an app-visible `tool`; mediated writes also need bounded
@@ -199,6 +209,10 @@ placeholder `replace-with-landing-path`: replace it with a lowercase slug of
 your own (the `overview` template also uses it in `MOUNT_PATH`). Give the route a `label` that
 names the page, never "Home": the portal already has a Home, so a Surface labelled
 "Home" reads as "Data > Home". Every template is checked against the current builder; keep the compiled bundle below its size warning line.
+
+A route's `icon` must be a key the host can draw (the portal's icon registry, for
+example `mail`, `user-plus`, `file-text`). Any other key draws a lettermark on the
+rail, not the icon you named. Pick an icon no platform Area already uses.
 
 Use kit components; the build refuses raw interactive and heading elements and colour
 literals. A bare `<button>`, `<input>`, `<select>`, `<textarea>`, `<table>` or `<h2>`–`<h6>` is
