@@ -10,6 +10,16 @@ Work through the steps in order and stop at the first one that answers the
 question. Every value you read here is a closed code or a counter: free text
 from the customer's systems is withheld, so never ask the human to paste it.
 
+## 0. Check workspace health and MCP calls
+
+Call `workspace_health` first. For MCP call diagnostics, member operators (tiers 1–2)
+may then call `mcp_call_query` with `since`, `tool`, `outcome`, `correlation_id` or
+`preview_attempt_id`. Follow `next_cursor` with the same filters. Read the coverage
+header: no plane means unknown, an empty page does not prove no calls, and worker
+successes are approximate hourly counters excluded from this read. Each read and
+refusal is journaled. External operators (tier 3) get `ledger_read_not_admitted`;
+use the existing preview status projection instead.
+
 ## 1. Find the failing runs — `runs_query`
 
 Call `runs_query` with a `since` bound (and `automation_id` when you know it).
@@ -95,6 +105,5 @@ started yet. That read is pending: until it ships, treat "no run row exists" as
 
 ## Do not
 
-- Do not call `automation_runs_list` or `workspace_health` for this. The three
-  reads above are the diagnosis path.
+- Do not call `automation_runs_list` for this. Use the diagnosis path above.
 - Do not retry a run whose actor is the Owner or Cynap.

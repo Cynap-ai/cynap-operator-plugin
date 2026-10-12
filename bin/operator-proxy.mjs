@@ -96,6 +96,7 @@ export const IDEMPOTENT_TOOL_NAMES = new Set([
   'workspace_drift',
   'journal_describe',
   'journal_query',
+  'mcp_call_query',
   'runs_query',
   'journal_count',
   'customer_ai_readiness_get',
