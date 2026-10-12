@@ -6,7 +6,10 @@
     },
     "accent": "175 70% 35%",
     "locale": "en",
-    "direction": "ltr"
+    "direction": "ltr",
+    "query": {
+      "id": "fixture-record"
+    }
   },
   "states": {
     "populated": [
@@ -16,10 +19,26 @@
           "data": {
             "rows": [
               {
-                "name": "REPLACE_WITH_FIELD",
-                "display_name": "Sample field",
+                "name": "name",
+                "display_name": "Work item",
                 "type": "text",
-                "required": false
+                "required": true
+              },
+              {
+                "name": "stage",
+                "display_name": "Stage",
+                "type": "enum",
+                "enum_values": [
+                  "Queued",
+                  "In review",
+                  "Ready"
+                ],
+                "required": true
+              },
+              {
+                "name": "notes",
+                "display_name": "Review notes",
+                "type": "text"
               }
             ]
           }
@@ -33,10 +52,13 @@
               {
                 "id": "fixture-record",
                 "properties": {
-                  "REPLACE_WITH_FIELD": "Invented value"
+                  "name": "Velvet Comet workshop",
+                  "stage": "In review",
+                  "notes": "Confirm the brief before the delivery handoff."
                 }
               }
-            ]
+            ],
+            "relations": []
           }
         }
       },
@@ -46,21 +68,71 @@
           "data": {
             "rows": [
               {
-                "id": "fixture-record",
-                "name": "Invented sample record",
-                "stage": "REPLACE_WITH_FIRST_STAGE",
-                "updated_at": "2026-10-11T12:00:00Z",
-                "notes": "# Invented notes\n\nA synthetic example for layout review.",
-                "value": 42,
-                "group": "Sample",
-                "x": "Sample",
-                "y": "Sample",
-                "REPLACE_WITH_GROUP_FIELD": "Sample",
-                "count": 3
+                "id": "fixture-history-0",
+                "kind": "updated",
+                "summary": "Updated the brief",
+                "occurred_at": "2026-10-12T10:30:00Z",
+                "actor_type": "human"
+              },
+              {
+                "id": "fixture-history-1",
+                "kind": "updated",
+                "summary": "Confirmed the review stage",
+                "occurred_at": "2026-10-11T10:30:00Z",
+                "actor_type": "automation"
+              },
+              {
+                "id": "fixture-history-2",
+                "kind": "updated",
+                "summary": "Scheduled the handoff",
+                "occurred_at": "2026-10-10T10:30:00Z",
+                "actor_type": "system"
+              },
+              {
+                "id": "fixture-history-3",
+                "kind": "updated",
+                "summary": "Updated the brief",
+                "occurred_at": "2026-10-09T10:30:00Z",
+                "actor_type": "human"
+              },
+              {
+                "id": "fixture-history-4",
+                "kind": "updated",
+                "summary": "Confirmed the review stage",
+                "occurred_at": "2026-10-08T10:30:00Z",
+                "actor_type": "automation"
+              },
+              {
+                "id": "fixture-history-5",
+                "kind": "updated",
+                "summary": "Scheduled the handoff",
+                "occurred_at": "2026-10-07T10:30:00Z",
+                "actor_type": "system"
+              },
+              {
+                "id": "fixture-history-6",
+                "kind": "updated",
+                "summary": "Updated the brief",
+                "occurred_at": "2026-10-06T10:30:00Z",
+                "actor_type": "human"
+              },
+              {
+                "id": "fixture-history-7",
+                "kind": "created",
+                "summary": "Confirmed the review stage",
+                "occurred_at": "2026-10-05T10:30:00Z",
+                "actor_type": "automation"
               }
             ],
             "meta": {
-              "total": 1
+              "next_cursor": null,
+              "coverage": {
+                "lossy_sources": [],
+                "unrecorded_writers": [
+                  "direct_automation"
+                ],
+                "absent_sources": []
+              }
             }
           }
         }

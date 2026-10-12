@@ -141,7 +141,7 @@ From `templates/work-queue.template.json`; variables and imports are defined in 
 ```tsx
 <SplitView items={rows} queryKey="selected" renderItem={nameOf}
         renderDetail={(record, { clear, inFilter }) => <Stack id="split-detail" config={{ gap: 16 }}>
-          {!inFilter && <Badge tone="warning">Not in the current filter</Badge>}
+          {!inFilter && <Badge tone="warning" label="Not in the current filter" />}
           <Detail record={record} clear={clear} />
         </Stack>}
         empty={<EmptyState title="Choose a record" description="Its notes and actions open here." />} />
@@ -180,7 +180,7 @@ From `templates/work-queue.template.json`; variables and imports are defined in 
 
 ```tsx
 <Section title="Record notes" description="Long text stays in a reading container.">
-        <Badge tone="info">{String(record.stage ?? 'Unassigned')}</Badge>
+        <Badge tone="info" label={String(record.stage ?? 'Unassigned')} />
         <Prose markdown={String(record.notes ?? 'No notes on this record yet.')} />
         <Button variant="outline" onClick={clear}>Back to the queue</Button>
       </Section>

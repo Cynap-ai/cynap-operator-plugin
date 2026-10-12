@@ -18,6 +18,8 @@ Surface when choosing a different id. Fill placeholders with invented data, neve
 Fixtures are excluded from both build input and push payloads.
 
 Open each URL in a **visible** browser tab and read its `data-render-state` marker.
+`hidden` means the tab has not painted; bring it to the foreground. Wait through
+`initializing`, `answering` and `painting` before taking a screenshot.
 Only `settled` and `pending-by-fixture` permit a screenshot. `stalled`, `host-error`,
 `protocol-mismatch`, or a labelled missing-fixture panel require a fix first.
 A protocol mismatch names both versions and asks for a plugin update.

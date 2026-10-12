@@ -40,11 +40,14 @@ fixture to show those cases. Rows end unless the fixture supplies a next cursor.
 
 Open the printed local URL in a **visible** tab. Inspect the outer document's
 `data-render-state`: screenshot only `settled` or `pending-by-fixture`.
+`hidden` means the tab has not painted; bring it to the foreground. Wait through
+`initializing`, `answering` and `painting` before taking a screenshot.
 Do not screenshot `stalled` (no initialized tool call within 5 seconds), `host-error`
 or `protocol-mismatch`. Check the labelled missing-fixture panels even when settled.
 The host cannot set URL query state; the SDK falls back to memory. Initial query
-values may be appended to the URL: the record-form template needs `&id=fixture-record`;
-overview's records route needs `&route=records&group=Sample`. Fixtures answer tool calls per route.
+values may be set in the optional `context.query` string map or appended to the URL
+(URL values win). The record-form fixture defaults to `id=fixture-record`;
+overview's records route needs `&route=records&group=Intake`. Fixtures answer tool calls per route.
 
 For each of populated, empty, loading and error, open light and dark (`theme=light`
 or `theme=dark`), wide and narrow (`width=1280` or `width=375`). Set the browser viewport

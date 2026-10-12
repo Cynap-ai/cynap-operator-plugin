@@ -16,27 +16,38 @@
           "data": {
             "rows": [
               {
-                "id": "fixture-record",
-                "name": "Invented sample record",
-                "stage": "REPLACE_WITH_FIRST_STAGE",
-                "updated_at": "2026-10-11T12:00:00Z",
-                "notes": "# Invented notes\n\nA synthetic example for layout review.",
-                "value": 42,
-                "group": "Sample",
-                "x": "Sample",
-                "y": "Sample",
-                "REPLACE_WITH_GROUP_FIELD": "Sample",
-                "count": 3
+                "label": "Intake",
+                "value": 24
+              },
+              {
+                "label": "Review",
+                "value": 18
+              },
+              {
+                "label": "Delivery",
+                "value": 32
+              },
+              {
+                "label": "Planning",
+                "value": 15
+              },
+              {
+                "label": "Support",
+                "value": 21
+              },
+              {
+                "label": "Follow-up",
+                "value": 12
               }
             ],
             "columns": [
-              "group",
+              "label",
               "value"
             ],
             "kind": "observed",
             "trust": "fixture",
-            "data_as_of": "2026-10-11T12:00:00Z",
-            "sample_n": 1
+            "data_as_of": "2026-10-12T10:30:00Z",
+            "sample_n": 48
           }
         }
       },
@@ -47,20 +58,71 @@
             "rows": [
               {
                 "id": "fixture-record",
-                "name": "Invented sample record",
-                "stage": "REPLACE_WITH_FIRST_STAGE",
-                "updated_at": "2026-10-11T12:00:00Z",
-                "notes": "# Invented notes\n\nA synthetic example for layout review.",
-                "value": 42,
-                "group": "Sample",
-                "x": "Sample",
-                "y": "Sample",
-                "REPLACE_WITH_GROUP_FIELD": "Sample",
-                "count": 3
+                "name": "Velvet Comet workshop",
+                "stage": "Queued",
+                "updated_at": "2026-10-12T10:30:00Z",
+                "notes": "## Velvet Comet workshop\n\nConfirm the requested scope and prepare the next handoff.\n\n- Review the supporting brief\n- Record the next action",
+                "team": "Intake"
+              },
+              {
+                "id": "fixture-record-2",
+                "name": "Amber Kite dispatch",
+                "stage": "In review",
+                "updated_at": "2026-10-11T10:30:00Z",
+                "notes": "## Amber Kite dispatch\n\nConfirm the requested scope and prepare the next handoff.\n\n- Review the supporting brief\n- Record the next action",
+                "team": "Review"
+              },
+              {
+                "id": "fixture-record-3",
+                "name": "Moss Lantern renewal",
+                "stage": "Ready",
+                "updated_at": "2026-10-10T10:30:00Z",
+                "notes": "## Moss Lantern renewal\n\nConfirm the requested scope and prepare the next handoff.\n\n- Review the supporting brief\n- Record the next action",
+                "team": "Delivery"
+              },
+              {
+                "id": "fixture-record-4",
+                "name": "Silver Sprout intake",
+                "stage": "Queued",
+                "updated_at": "2026-10-09T10:30:00Z",
+                "notes": "## Silver Sprout intake\n\nConfirm the requested scope and prepare the next handoff.\n\n- Review the supporting brief\n- Record the next action",
+                "team": "Intake"
+              },
+              {
+                "id": "fixture-record-5",
+                "name": "Coral Orbit review",
+                "stage": "In review",
+                "updated_at": "2026-10-08T10:30:00Z",
+                "notes": "## Coral Orbit review\n\nConfirm the requested scope and prepare the next handoff.\n\n- Review the supporting brief\n- Record the next action",
+                "team": "Review"
+              },
+              {
+                "id": "fixture-record-6",
+                "name": "Indigo Finch shipment",
+                "stage": "Ready",
+                "updated_at": "2026-10-07T10:30:00Z",
+                "notes": "## Indigo Finch shipment\n\nConfirm the requested scope and prepare the next handoff.\n\n- Review the supporting brief\n- Record the next action",
+                "team": "Delivery"
+              },
+              {
+                "id": "fixture-record-7",
+                "name": "Copper Petal schedule",
+                "stage": "Queued",
+                "updated_at": "2026-10-06T10:30:00Z",
+                "notes": "## Copper Petal schedule\n\nConfirm the requested scope and prepare the next handoff.\n\n- Review the supporting brief\n- Record the next action",
+                "team": "Intake"
+              },
+              {
+                "id": "fixture-record-8",
+                "name": "Jade Pebble delivery",
+                "stage": "In review",
+                "updated_at": "2026-10-05T10:30:00Z",
+                "notes": "## Jade Pebble delivery\n\nConfirm the requested scope and prepare the next handoff.\n\n- Review the supporting brief\n- Record the next action",
+                "team": "Review"
               }
             ],
             "meta": {
-              "total": 1
+              "total": 8
             }
           }
         }
@@ -72,9 +134,59 @@
             "rows": [
               {
                 "type": "updated",
-                "name": "Invented record",
-                "content": "Synthetic change",
-                "created_at": "2026-10-11T12:00:00Z"
+                "name": "Velvet Comet workshop",
+                "content": "Brief reviewed",
+                "created_at": "2026-10-12T10:30:00Z",
+                "entity_type": "work_item"
+              },
+              {
+                "type": "updated",
+                "name": "Amber Kite dispatch",
+                "content": "Handoff prepared",
+                "created_at": "2026-10-11T10:30:00Z",
+                "entity_type": "work_item"
+              },
+              {
+                "type": "updated",
+                "name": "Moss Lantern renewal",
+                "content": "Delivery scheduled",
+                "created_at": "2026-10-10T10:30:00Z",
+                "entity_type": "work_item"
+              },
+              {
+                "type": "updated",
+                "name": "Silver Sprout intake",
+                "content": "Brief reviewed",
+                "created_at": "2026-10-09T10:30:00Z",
+                "entity_type": "work_item"
+              },
+              {
+                "type": "updated",
+                "name": "Coral Orbit review",
+                "content": "Handoff prepared",
+                "created_at": "2026-10-08T10:30:00Z",
+                "entity_type": "work_item"
+              },
+              {
+                "type": "updated",
+                "name": "Indigo Finch shipment",
+                "content": "Delivery scheduled",
+                "created_at": "2026-10-07T10:30:00Z",
+                "entity_type": "work_item"
+              },
+              {
+                "type": "updated",
+                "name": "Copper Petal schedule",
+                "content": "Brief reviewed",
+                "created_at": "2026-10-06T10:30:00Z",
+                "entity_type": "work_item"
+              },
+              {
+                "type": "created",
+                "name": "Jade Pebble delivery",
+                "content": "Handoff prepared",
+                "created_at": "2026-10-05T10:30:00Z",
+                "entity_type": "work_item"
               }
             ]
           }

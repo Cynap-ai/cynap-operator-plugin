@@ -6,7 +6,8 @@ import { request } from 'node:http';
 import { join } from 'node:path';
 import { render, parseRenderArgs, scaffoldFixture } from '../bin/cynap-render.mjs';
 import { push } from '../bin/cynap-push.mjs';
-import { FixtureSchema } from '../lib/fixture-schema.generated.mjs';
+import { createFixturePaint, FIXTURE_RENDER_STATES } from '../lib/fixture-paint.mjs';
+import { FixtureSchema, FixtureRenderStateSchema } from '../lib/fixture-schema.generated.mjs';
 import { createFixtureBroker, partialMatch } from '../lib/fixture-broker.mjs';
 import { fixtureDocument, inertJson } from '../lib/fixture-document.mjs';
 import { parseFixtureJson } from '../lib/fixture-json.mjs';
@@ -68,6 +69,8 @@ test('strict fixtures reject extra keys and missing states; JSON rejects duplica
   assert(FixtureSchema.safeParse(fixture).success);
   assert(!FixtureSchema.safeParse({ ...fixture, extra: 1 }).success);
   assert(!FixtureSchema.safeParse({ ...fixture, context: { ...fixture.context, extra: 1 } }).success);
+  assert(FixtureSchema.safeParse({ ...fixture, context: { ...fixture.context, query: { id: 'fixture-record' } } }).success);
+  assert(!FixtureSchema.safeParse({ ...fixture, context: { ...fixture.context, query: { id: 42 } } }).success);
   assert(!FixtureSchema.safeParse({ ...fixture, states: {} }).success);
   assert(!FixtureSchema.safeParse({ ...fixture, states: { ...fixture.states, empty: [{ tool: 'x', response: { data: {}, extra: 1 } }] } }).success);
   assert.throws(() => parseFixtureJson('{"x":1,"x":2}'), /Duplicate/);
@@ -155,4 +158,54 @@ test('default writes log success, explicit refusal reconciles zero rows, and con
   assert.deepEqual((await broker({ tool: 'conversation_refuse', arguments: {} })).structuredContent, { outcome: 'refused', reason: 'not_owner' });
   assert.deepEqual((await broker({ tool: 'conversation_apply', arguments: {} })).structuredContent, { outcome: 'applied' });
   assert.equal(writes[0][1].write, 'success');
+});
+
+// Templates keep their REPLACE_WITH_ placeholders; a fixture may name one only to match a call.
+test('reference fixtures populate rendered fields without placeholder page text', () => {
+  const root = new URL('../skills/author-a-surface/templates/', import.meta.url);
+  for (const name of readdirSync(root).filter(n => n.endsWith('.template.json'))) {
+    const template = JSON.parse(readFileSync(new URL(name, root)));
+    const fixture = FixtureSchema.parse(JSON.parse(readFileSync(new URL(name.replace('.template.json', '.fixture.json'), root))));
+    assert(!JSON.stringify(fixture, (key, value) => (key === 'match' ? undefined : value)).match(/REPLACE/i), name);
+    if (name === 'record-form.template.json') assert.equal(fixture.context.query.id, fixture.states.populated.find(e => e.tool === 'knowledge_query').response.data.entities[0].id);
+    for (const [path, source] of Object.entries(template.files).filter(([path]) => path.endsWith('.tsx'))) {
+      const executable = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      assert(!/<Badge[^>]*>[\s\S]*?<\/Badge>/.test(executable), 'Badge labels must use the label prop');
+    }
+    for (const entry of fixture.states.populated) {
+      const data = entry.response.data;
+      if (!data?.rows) continue;
+      if (entry.tool !== 'knowledge_entity_schema' && entry.match?.name !== 'REPLACE_WITH_TARGET_METRIC') assert(data.rows.length > 1, name + ': ' + entry.tool);
+      for (const row of data.rows) {
+        if (entry.tool === 'query_metrics') { assert.equal(typeof row.label, 'string'); assert(row.label.length > 0); assert.equal(typeof row.value, 'number'); }
+        if (entry.tool.endsWith('knowledge_advanced_query')) for (const field of ['name', 'stage', 'updated_at']) assert(row[field], name + ': ' + field);
+        if (entry.tool.endsWith('knowledge_aggregate')) { assert(row.group); assert(row.count > 0); }
+        if (entry.tool.endsWith('entity_history')) for (const field of ['kind', 'summary', 'occurred_at', 'actor_type']) assert(row[field], name + ': ' + field);
+      }
+    }
+  }
+});
+test('fixture host frames the Surface with the portal shell page padding', () => {
+  const html = fixtureDocument({ html: '' });
+  assert(html.includes('padding:calc(var(--spacing) * 6) calc(var(--spacing) * 8) calc(var(--spacing) * 12)'));
+});
+test('hidden renders cannot settle until visible paint frames, including pending fixtures', () => {
+  let listener; let nextId = 0;
+  const callbacks = new Map(); const states = [];
+  const document = { hidden: true, addEventListener(_name, fn) { listener = fn; }, removeEventListener(_name, fn) { assert.equal(listener, fn); listener = null; } };
+  const view = { requestAnimationFrame(fn) { const id = ++nextId; callbacks.set(id, fn); return id; }, cancelAnimationFrame(id) { callbacks.delete(id); } };
+  const tick = () => { const work = [...callbacks.values()]; callbacks.clear(); work.forEach(fn => fn()); };
+  const paint = createFixturePaint(document, view, state => states.push(FixtureRenderStateSchema.parse(state)));
+  for (const state of ['settled', 'pending-by-fixture']) {
+    paint.update(state); assert.equal(states.at(-1), 'hidden'); assert.equal(callbacks.size, 0);
+    document.hidden = false; listener(); assert.equal(states.at(-1), 'painting');
+    tick(); assert.equal(states.at(-1), 'painting'); tick(); assert.equal(states.at(-1), state);
+    document.hidden = true; listener(); assert.equal(states.at(-1), 'hidden');
+  }
+  document.hidden = false; listener(); tick();
+  paint.update('answering'); tick(); assert.equal(states.at(-1), 'answering');
+  paint.update('settled'); tick(); document.hidden = true; listener(); tick(); assert.equal(states.at(-1), 'hidden');
+  paint.update('host-error'); assert.equal(states.at(-1), 'host-error');
+  paint.dispose(); assert.equal(listener, null); assert.equal(callbacks.size, 0);
+  for (const state of FIXTURE_RENDER_STATES) assert(FixtureRenderStateSchema.safeParse(state).success);
 });
