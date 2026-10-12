@@ -35,6 +35,11 @@ claim. If the claim lapsed, re-claim first. If the org is fenced, or the call is
 other reason, say so and continue the work without Discovery; do not retry in a loop. Renewing
 your own claim while the call runs does not refuse it.
 
+If the reply is `{ "ok": false, "code": "discovery_rate_limited" }`, the call was not run and
+nothing was recorded: too many Discovery calls were made on this Request or this org in the last
+minute. Wait `retry_after_ms`, then call once more with the same arguments. If that is limited too,
+continue the work without Discovery.
+
 ## Reading the result
 
 The result lists ranked candidates: Cynap Apps from the catalog and units from this org's own

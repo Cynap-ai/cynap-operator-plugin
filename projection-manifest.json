@@ -1,14 +1,14 @@
 {
   "notice": "GENERATED MIRROR — do not edit directly. Produced by the mirror publisher.",
-  "sourceSha": "2a314f6488ddb9b4206988fbdde5a89f2aa490da",
+  "sourceSha": "9cc4ac325e6a28aa165eebd2ab0baaffcccb4084",
   "transformVersion": 1,
   "generatedBy": "publish-public-mirror.mjs",
   "files": {
     ".claude-plugin/compat.json": "8bf60d9c53e1610f04c8c1ebdc857d81ad263b01919aee85b752a618c8e9c131",
-    ".claude-plugin/marketplace.json": "503b53887687d32f6873b5a1b7185d0d2d4d69102d51d5a024ae802016daec4a",
-    ".claude-plugin/plugin.json": "a8d23050de2c2553086c816ba7e6164fe24c1717f98ecf863ac76c1c9e6977fa",
-    ".codex-plugin/plugin.json": "db9a871508fb17ff47b077f312408a38418ae7408cbb1fc601d3f3864cdf40b5",
-    "README.md": "0f75347bee55906fdf75524c075da3e8df550aa4bc7e1dbe20b05177223fa0d0",
+    ".claude-plugin/marketplace.json": "af780e547fa22c72fb232a8455c0b6dcd24f04de5e7c0300393abc7082a1ad02",
+    ".claude-plugin/plugin.json": "b6e666a39633e373bc2538428e373de8fd8603dbecd6429493a32cfba5b306d9",
+    ".codex-plugin/plugin.json": "17efd3e4b06e4b547261624e2d02adc4cd2f08ef52f6e92f52fabb24ee4c242a",
+    "README.md": "2500086483f86f2be9e5868cf6e7b609029d29349574557aa70ef8ddd6f69817",
     "__tests__/autonomy-lifecycle.test.mjs": "16099053a0f57e87a9bdf3b06c7af394a47e661a5dc47f87ac99115293776e0b",
     "__tests__/checks-no-dev-ai.test.mjs": "278c8c7e15915c941c4695862c787853c7ba86245606622b3ecf60be832bf3d1",
     "__tests__/connect-any-org.test.mjs": "66b056a803d43db1a3e8b4ef0cf2621f2034d6835042338a02f1c212a98cfe8a",
@@ -140,7 +140,7 @@
     "skills/install-website-chat/SKILL.md": "1fb6ab64fd7888949481d5bf645c76748961429ec5ecc832f43ae260c4b65c51",
     "skills/platform-invariants/LEARNINGS.md": "a27ef31ad91d67048983b708be1977de367948432f2dd3539e556c7423e28cea",
     "skills/platform-invariants/SKILL.md": "76dcf7caf987204832e2a0b391fb48d4c42ef9e026c21c615a2c29d87643621a",
-    "skills/request-discover/SKILL.md": "9137461cabc57fed6bfb92f91f36c83efaa87e7b636870387204bcd570a219d3",
+    "skills/request-discover/SKILL.md": "a9cb73ba634a8a925c7eb0386b84e5c4a8a6e9d998e8110e8ed73b101feb5f6b",
     "skills/scope-to-workflow/SKILL.md": "6e21139d20f5eaaefd95b7b1599c70f0857d4cc69e59e8c1078cbd148f600122",
     "skills/summarize-your-change/LEARNINGS.md": "76cc6d2a058bc8c5ab8f7b36c700ca324b9b5c149a91debea886f163160ce8b5",
     "skills/summarize-your-change/SKILL.md": "4d0d5be328af1ec3808cdbb9791146c65ba2e224e48d035d1962b2e7b76dfbb0"
