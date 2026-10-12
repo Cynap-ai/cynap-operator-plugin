@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { stablePortForSlug } from '../lib/connect.mjs';
+import { candidateUrl } from '../lib/candidate-url.generated.mjs';
 import { encodeContent } from '../lib/content-codec.mjs';
 import { classifyPath, collectFingerprintPaths, effectForKind, evaluateChecks } from './cynap-checks-core.mjs';
 import { buildPushPlan } from '../lib/workspace-diff.mjs';
@@ -106,11 +107,6 @@ async function readMintHost(proxyUrl, fetchImpl) {
   } catch {
     return null; // No origin: the candidate line prints the portal path alone.
   }
-}
-
-/** `<mintHost>/<org>/_surface-candidate/<commit_sha>/<surfaceId>/` (Owner/Admin, read tools only). */
-export function candidateUrl(mintHost, org, commitSha, surfaceId) {
-  return `${mintHost ?? ''}/${org}/_surface-candidate/${commitSha}/${surfaceId}/`;
 }
 
 export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, onPhase = () => {} } = {}) {
@@ -303,7 +299,11 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
     position: readBack?.ok === false ? null : readBack?.position ?? null,
     activation: committed.activation ?? null,
     nextAction: committed.activation?.next_action ?? committed.next_action ?? readBack?.next_action ?? null,
-    candidateUrls: surfaces.map((id) => candidateUrl(mintHost, org, commitSha, id)),
+    candidateUrls: surfaces.map((id) => {
+      // The commit read names the route a page with no landing view opens on.
+      const entry = readBack?.surface_entry_paths?.[id];
+      return candidateUrl(mintHost, org, commitSha, id, typeof entry === 'string' ? entry : '');
+    }),
     surfaceWarnings: Array.isArray(committed.surface_warnings) ? committed.surface_warnings : [],
     customerAiConfigMissing: automationsMissingCustomerAiConfig(dir, [...local.keys()]),
   };

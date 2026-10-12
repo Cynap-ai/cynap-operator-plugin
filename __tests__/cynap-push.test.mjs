@@ -505,7 +505,7 @@ function withHealth(fetchImpl, mintHost) {
       : fetchImpl(url, init);
 }
 
-function surfacePushFixture(dir, extraCommit = {}) {
+function surfacePushFixture(dir, extraCommit = {}, extraRead = {}) {
   mkdirSync(join(dir, 'surfaces', 'ops-board'), { recursive: true });
   writeFileSync(join(dir, 'surfaces', 'ops-board', 'index.tsx'), 'export default () => null;');
   mkdirSync(join(dir, 'automations'), { recursive: true });
@@ -520,7 +520,7 @@ function surfacePushFixture(dir, extraCommit = {}) {
         commit: { commit_sha: NEW_SHA, parent_commit_sha: 'b'.repeat(64), created_at: 'now' },
         ...extraCommit,
       }),
-      workspace_get_commit: () => ({ ok: true, commit: {}, state: 'pending', position: 1, operations: [] }),
+      workspace_get_commit: () => ({ ok: true, commit: {}, state: 'pending', position: 1, operations: [], ...extraRead }),
     }),
     'https://staging.cynap.ai'
   );
@@ -535,6 +535,18 @@ test('push: a surface commit returns one candidate URL per built surface and the
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.deepEqual(result.candidateUrls, [`https://staging.cynap.ai/cynap-e2e/_surface-candidate/${NEW_SHA}/ops-board/`]);
     assert.deepEqual(result.surfaceWarnings, [warning]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push: a page with no landing view gets a candidate URL on its entry route', async () => {
+  const dir = scratchDir();
+  try {
+    const fetchImpl = surfacePushFixture(dir, {}, { surface_entry_paths: { 'ops-board': 'board' } });
+    const result = await push({ cwd: '/tmp/op/cynap-e2e', argv: ['--dir', dir, '-m', 'surface'], fetchImpl });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(result.candidateUrls, [`https://staging.cynap.ai/cynap-e2e/_surface-candidate/${NEW_SHA}/ops-board/board`]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

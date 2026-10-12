@@ -13,11 +13,11 @@ instead of working around it.
 | Scope | Workflow | Tools |
 |---|---|---|
 | `workspace:read` | Read the org's workspace: state, files, history and drift | `workspace_status`, `workspace_tree`, `workspace_get_file`, `workspace_get_commit`, `workspace_diff`, `workspace_log`, `workspace_receipts`, `workspace_drift` |
-| `workspace:execute-preview` | Validate a change, commit it, report check verdicts, discard a commit | `workspace_validate`, `workspace_commit`, `checks_verdict_report`, `workspace_discard_commit` |
+| `workspace:execute-preview` | Validate a change, build a Fixture render, commit, report check verdicts, discard a commit | `workspace_validate`, `workspace_surface_render_build`, `workspace_commit`, `checks_verdict_report`, `workspace_discard_commit` |
 | `workspace:file-activate` | Activate an accepted commit | `workspace_activate_commit`, `handler_upload` |
 | `workspace:file-activate` | Prepare the proof a Request proposal needs. Not on your tool list: run `/cynap-propose` | `workspace_prepare_commit_proof` |
 | `workspace:file-activate` | Rehearse a lifecycle and start a manual run | `cynap_simulated_lifecycle`, `automation_run_trigger` |
-| `workspace:commit` | Commit only: validate and commit, with no reads | `workspace_validate`, `workspace_commit` |
+| `workspace:commit` | Commit only: validate, build a Fixture render and commit, with no reads | `workspace_validate`, `workspace_surface_render_build`, `workspace_commit` |
 | `workspace:read-ops` | Diagnose runs (see `debug-a-run`) | `runs_query`, `journal_describe`, `journal_query`, `journal_count`, `run_evidence_get`, `customer_ai_readiness_get` |
 | `workspace:read-ops` | Read release evidence, one run's attempted writes, recent runs, org health and saved-query aggregates | `release_evidence_get`, `automation_run_writes`, `automation_runs_list`, `workspace_health`, `operator_saved_query_run` |
 | `workspace:propose` | Propose a suggestion, escalate to Cynap, reconcile or start a run | `suggestion_propose`, `escalation_raise`, `automation_run_reconcile`, `automation_run_trigger` |
