@@ -47,6 +47,18 @@ test('fresh workspace scaffolds four renders; only one Surface source is sent; n
     for (const page of output.pages) assert(readFileSync(join(output.scratch, page.file), 'utf8').includes('Fixture render, nothing was written'));
   } finally { rmSync(dir, { recursive: true, force: true }); if (output?.scratch) rmSync(output.scratch, { recursive: true, force: true }); }
 });
+test('a binary asset is sent as base64 and text files keep their plain shape', async () => {
+  const dir = scratch(); const calls = []; let output;
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+  writeFileSync(join(dir, 'surfaces/work-queue/logo.png'), png);
+  try {
+    output = await render({ cwd, argv: ['work-queue', '--dir', dir], fetchImpl: fetcher(calls) });
+    assert.equal(output.ok, true);
+    const sent = calls.findLast(c => c.name === 'workspace_surface_render_build').args.files;
+    assert.deepEqual(sent.find(f => f.path === 'logo.png'), { path: 'logo.png', encoding: 'base64', content: png.toString('base64') });
+    assert(sent.filter(f => f.path !== 'logo.png').every(f => !('encoding' in f)));
+  } finally { rmSync(dir, { recursive: true, force: true }); if (output?.scratch) rmSync(output.scratch, { recursive: true, force: true }); }
+});
 test('push skips fixture subtree before classification, including fixture symlinks', async () => {
   const dir = scratch(); const calls = [];
   try {

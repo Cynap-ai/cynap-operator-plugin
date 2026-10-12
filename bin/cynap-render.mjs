@@ -9,8 +9,15 @@ import { parseFixtureJson } from '../lib/fixture-json.mjs';
 import { fixtureDocument } from '../lib/fixture-document.mjs';
 import { serveFixtures } from '../lib/fixture-server.mjs';
 import { stablePortForSlug } from '../lib/connect.mjs';
+import { encodeContent } from '../lib/content-codec.mjs';
 import { assertConnectedOrg, listLocalFiles, mcpCall, readState, resolveOrgSlug, resolveWorkspaceDir, sha256Hex } from '../lib/workspace-sync.mjs';
 import { push } from './cynap-push.mjs';
+
+/** Text travels as-is; a binary asset (image, font) is marked base64, as on the commit path. */
+function renderFile(path, bytes) {
+  const encoded = encodeContent(bytes);
+  return encoded.encoding === 'base64' ? { path, encoding: 'base64', content: encoded.content } : { path, content: encoded.content };
+}
 
 export function parseRenderArgs(argv) {
   const args = { surfaceId: argv[0], dir: null, state: null };
@@ -41,7 +48,7 @@ export async function render({ cwd = process.cwd(), argv = [], fetchImpl = fetch
   assertConnectedOrg(state, org, dir);
   const paths = listLocalFiles(dir); // shared push walk refuses symlinks, excludes fixtures
   const prefix = `surfaces/${args.surfaceId}/`;
-  const files = paths.filter((path) => path.startsWith(prefix)).map((path) => ({ path: path.slice(prefix.length), content: new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(join(dir, path))) }));
+  const files = paths.filter((path) => path.startsWith(prefix)).map((path) => renderFile(path.slice(prefix.length), readFileSync(join(dir, path))));
   if (!files.length) throw new Error(`Surface directory is empty: ${args.surfaceId}`);
   const fixtureDir = join(dir, prefix, '__fixtures__');
   if (existsSync(fixtureDir) && (lstatSync(fixtureDir).isSymbolicLink() || !lstatSync(fixtureDir).isDirectory())) throw new Error('Fixture directory must be a real directory');
