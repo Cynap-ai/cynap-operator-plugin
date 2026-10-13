@@ -1,6 +1,6 @@
 ---
 name: fixture-render
-description: Inspect a Surface with /cynap-render on synthetic fixtures before pushing it.
+description: See what a Surface looks like before pushing it. Use whenever you author, restyle or change a Surface, or the human asks to see, preview or screenshot a page — /cynap-render builds it on the platform, writes nothing, and serves it locally on invented sample data in populated, empty, loading and error states, light and dark.
 ---
 
 # Fixture render

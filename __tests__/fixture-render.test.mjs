@@ -201,6 +201,20 @@ test('fixture host frames the Surface with the portal shell page padding', () =>
   const html = fixtureDocument({ html: '' });
   assert(html.includes('padding:calc(var(--spacing) * 6) calc(var(--spacing) * 8) calc(var(--spacing) * 12)'));
 });
+test('fixture host page draws with platform tokens and no colour literal of its own', () => {
+  const style = fixtureDocument({ html: '' }).match(/<style>([\s\S]*?)<\/style>/)[1];
+  for (const token of ['--color-background-primary', '--color-text-primary', '--color-text-secondary', '--color-border-secondary', '--color-text-danger']) assert(style.includes(`var(${token})`), token);
+  assert(!/#[0-9a-f]{3,8}\b|\b(?:rgb|hsl|oklch)a?\(/i.test(style));
+});
+// An operator agent learns of /cynap-render from the context it already loads.
+test('every operator entry point for Surface work names Fixture render', () => {
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+  for (const path of ['skills/author-a-surface/SKILL.md', 'skills/platform-invariants/SKILL.md', 'skills/scope-to-workflow/SKILL.md', 'commands/cynap-render.md', 'README.md']) assert(read(path).includes('cynap-render') || read(path).includes('Fixture render'), path);
+  assert(read('skills/choose-the-right-mode/SKILL.md').includes('`fixture-render`'));
+  const description = (path) => read(path).match(/^description: (.*)$/m)[1];
+  assert(description('skills/author-a-surface/SKILL.md').includes('/cynap-render'));
+  for (const trigger of ['/cynap-render', 'preview', 'before pushing']) assert(description('skills/fixture-render/SKILL.md').includes(trigger), trigger);
+});
 test('hidden renders cannot settle until visible paint frames, including pending fixtures', () => {
   let listener; let nextId = 0;
   const callbacks = new Map(); const states = [];

@@ -154,6 +154,7 @@ when the next action reports `baseline_required` for unstamped live files.
 - Fixed-step scheduled sync/reconciler/ETL → `author-a-deterministic-automation`
 - Schema/entity changes (any mode) → `author-a-schema-change`
 - Surface UI and manifests → `author-a-surface`
+- Seeing a Surface before pushing it → `fixture-render` (`/cynap-render`)
 - Shared cross-mode constraints → `platform-invariants`
 - Any AI call or model selection → `configure-customer-ai`
 

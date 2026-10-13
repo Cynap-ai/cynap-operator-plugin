@@ -1,6 +1,6 @@
 ---
 name: author-a-surface
-description: Author a customer surface with its route and tool manifests, then build it through the operator commit gate.
+description: Author a customer surface with its route and tool manifests, look at it with /cynap-render before pushing, then build it through the operator commit gate.
 ---
 
 # author-a-surface — Surface authoring

@@ -23,6 +23,7 @@ language; keep internal references in private engineering records.
 
 Everything before activation is a draft. Run it automatically and never ask the human in chat:
 `/cynap-connect`, pull, editing workspace files, `/cynap-checks`, `/cynap-test`,
+`/cynap-render` (a Fixture render of a Surface on invented sample data; it writes nothing),
 `/cynap-push --dry-run`, `/cynap-push` (a push commits to the org's accepted chain; it is a draft,
 not a deploy, and nothing reaches customers until activation), `/cynap-preview`, `/cynap-status`,
 plugin update and reload (installed automatically at session start; never ask the human to approve either), and any read-only MCP call. When a step refuses, fix the cause and retry
