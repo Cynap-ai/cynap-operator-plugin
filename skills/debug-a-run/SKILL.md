@@ -118,6 +118,10 @@ The table below is parity-tested against the SDK's closed admission vocabulary.
 | `policy_not_enabled` | platform | the platform checks the current policy state. |
 | `expiry_pending` | platform | the platform drains due reservation expiry before repairing the projection. |
 | `outstanding_financial_admission` | platform | the platform drains outstanding financial admissions before completing erasure. |
+| `provider_identity_missing` | platform | the platform reconciles the provider identity before finalizing the call. |
+| `erasure` | platform | continue the frozen erasure operation. |
+| `operator` | operator | inspect the operation before starting a new logical call. |
+| `removed` | platform | no action is required. |
 | `unknown` | platform | the platform investigates the admission signal. |
 <!-- customer-ai-admission:end -->
 
