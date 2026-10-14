@@ -90,6 +90,34 @@ The table below is parity-tested against the SDK's closed admission vocabulary.
 | `provider_unavailable` | platform | the platform checks the provider limit or binding. |
 | `platform_gateway_exhausted` | platform | the platform restores gateway capacity. |
 | `own_provider_exhausted` | owner | the Owner tops up their provider account. |
+| `semantically_unusable` | operator | the Operator checks the output contract before starting a new logical call. |
+| `replay` | none | return the stored result without dispatching again. |
+| `RESULT_UNAVAILABLE` | operator | the Operator handles the unavailable result without redispatching this logical call. |
+| `call_in_doubt` | platform | the platform reconciles the existing call without dispatching it again. |
+| `deadline_expired` | operator | the Operator starts a new logical call with a valid deadline if work is still required. |
+| `period_changed` | operator | the Operator starts a new logical call bound to the current period. |
+| `committed_authority_changed` | operator | the Operator resolves the current committed authority before starting a new logical call. |
+| `preview_authority_changed` | operator | the Operator obtains fresh preview authority before starting a new logical call. |
+| `execution_sealed` | operator | the Operator starts a new execution if more work is required. |
+| `model_unpriced` | platform | the platform supplies a qualified price row before admitting the model. |
+| `route_not_qualified` | platform | the platform qualifies the route and its admitted upstream. |
+| `projection_incomplete` | platform | the platform restores complete financial evidence before admission. |
+| `budget_exhausted` | owner | the Owner reviews spend and the live allowance; unresolved liability remains reserved. |
+| `authority_changed` | operator | the Operator resolves fresh authority before starting a new logical call. |
+| `owner_suspended` | owner | the Owner reviews the suspension before enabling new calls. |
+| `credential_changed` | owner | the Owner restores the intended credential before starting a new logical call. |
+| `adapter_unavailable` | platform | the platform restores the qualified adapter before a new logical call. |
+| `request_incompatible` | operator | the Operator fixes message, tool or schema compatibility before a new logical call. |
+| `dispatch_admission_refused` | platform | the platform checks the dispatch admission fence before a new logical call. |
+| `provider_rejected` | platform | the platform checks the provider rejection without redispatching this logical call. |
+| `provider_failed` | platform | the platform checks the provider failure without redispatching this logical call. |
+| `org_not_found` | platform | the platform checks the organization identity and erasure state. |
+| `projection_drift` | platform | the platform reconciles and repairs the projection before reopening admission. |
+| `expiry_incomplete` | platform | the platform drains due reservation expiry before admission. |
+| `drift_evidence_changed` | platform | the platform reads fresh projection evidence before attempting to fence. |
+| `policy_not_enabled` | platform | the platform checks the current policy state. |
+| `expiry_pending` | platform | the platform drains due reservation expiry before repairing the projection. |
+| `outstanding_financial_admission` | platform | the platform drains outstanding financial admissions before completing erasure. |
 | `unknown` | platform | the platform investigates the admission signal. |
 <!-- customer-ai-admission:end -->
 
