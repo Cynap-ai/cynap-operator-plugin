@@ -84,7 +84,7 @@ The table below is parity-tested against the SDK's closed admission vocabulary.
 | `operation_limit` | retry | retry after the operation window. |
 | `daily_limit` | retry | retry after the daily window. |
 | `window_limit` | retry | retry after the call window. |
-| `credits_exhausted` | owner | the Owner tops up Cynap credits. |
+| `credits_exhausted` | owner | the Owner reviews Billing; top-ups and optional auto-recharge require an active paid subscription. |
 | `billing_unhealthy` | owner | the Owner resolves the billing issue. |
 | `org_fenced` | platform | the platform checks the org admission fence. |
 | `provider_unavailable` | platform | the platform checks the provider limit or binding. |
