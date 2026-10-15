@@ -7,13 +7,15 @@ argument-hint: "<commit-sha>"
 
 Runs the org's `checks/` suite — the per-org config-as-code invariants —
 **locally, against your LOCAL working-dir pending bytes**, and reports the
-terminal verdict (bound to the committed content) so the platform can gate activation on it.
+terminal verdict (bound to the committed content) for diagnostics.
 
-This is the fast, preventive half of the org-checks gate: your local run produces an
-**attestation** the backend trusts and binds to the exact committed content (the commit hash
-⋈ a resultant-content fingerprint). The backend recomputes that fingerprint server-side and
-refuses activation on a mismatch — so a stale or dishonest attestation can never gate untested
-content. (The detective half — the platform-CI backstop — lands in W2.)
+Local reports are diagnostics. The platform reconstructs the pending bytes and runs the same
+closed interpreter itself before activation. A local pass grants no approval or activation authority.
+
+Each assertion may declare `proves: ["criterion-id"]` (up to 12 unique Scope acceptance-criterion
+IDs). Read the IDs from the Request's bound Scope. Unknown IDs are inert. `allow_absent` bypasses
+are shown as uncovered, even alongside a real pass. An uncovered criterion adds no activation veto;
+all failed assertions still refuse activation. The server's criterion report is the proof.
 
 ## When to run it
 

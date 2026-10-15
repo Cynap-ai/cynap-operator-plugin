@@ -108,3 +108,18 @@ in a check before pushing. Deleting a managed path counts as changing it. To ret
 a file (for example a handler's `config.json`), keep or add a check assertion naming
 it with `"allow_absent": true` — the assertion passes once the file is gone — then
 delete the file in a later commit. Delete the check last, if at all.
+
+## Criterion report
+
+Read the acceptance-criterion IDs from the Request Scope view. Add optional `proves: ["c1", "c2"]`
+to existing checks assertions; several assertions can map to one criterion. Keep IDs for unchanged
+meanings. A changed or retired criterion needs a new ID. Unknown or unrelated IDs are inert.
+Prepare platform proof before proposing. The receipt binds the exact Scope, commit, resultant
+bytes and criterion-report digest; consume recomputes them before mutation. A pre-trace proposal
+requires fresh preparation and Owner approval. Local reports remain diagnostics.
+
+Describe this as an activation check the operator mapped to the criterion. Say “Check passed”;
+never claim that a configuration check proves a realized business outcome. Uncovered criteria
+remain prominently incomplete and do not veto activation. `allow_absent` bypasses are uncovered.
+Do not put operator-authored criterion statuses into `change_overview`; Intended outcomes continue
+to cite Scope outcome lines. Use the server-derived `criterion_report`.
