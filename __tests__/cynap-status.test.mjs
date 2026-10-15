@@ -38,6 +38,7 @@ test('status reads the chain through MCP, shows degraded cause and stale local b
     assert.match(output, new RegExp(`tip ${TIP}: accepted, not activated`));
     assert.match(output, /blocked by a{64}/);
     assert.match(output, /chain frozen: recovery currently needs a platform admin/);
+    assert.match(output, /next: read-only diagnosis.*Frozen handler activation: decision tree.*workspace-activation-incomplete runbook/);
     assert.match(output, /pull before editing/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

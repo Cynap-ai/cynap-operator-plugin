@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describeReady, readinessOf } from '../lib/activation-readiness.mjs';
 import { probeProxyHealth, stablePortForSlug } from '../lib/connect.mjs';
-import { formatNextAction, formatRefusal, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
+import { formatNextAction, formatRefusal, FROZEN_CHAIN_NEXT_STEP, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
 import { assertConnectedOrg, mcpCall, readState, resolveOrgSlug, resolveWorkspaceDir, STATE_REL_PATH } from '../lib/workspace-sync.mjs';
 
 export function parseStatusArgs(argv) {
@@ -64,7 +64,7 @@ export function formatStatus(result) {
   lines.push(`config digest: ${s.live_digest ?? 'none'} (config files only; handler code is not in it)`);
   if (s.deployment_state === 'degraded') lines.push('live deployment identity could not be read reliably; inspect the platform before activation');
   if (s.last_failure) lines.push(`last failure: ${s.last_failure.code ?? s.last_failure.reason ?? JSON.stringify(s.last_failure)}`);
-  if (s.frozen) lines.push('chain frozen: recovery currently needs a platform admin.');
+  if (s.frozen) lines.push(`chain frozen: recovery currently needs a platform admin.\n  next: ${FROZEN_CHAIN_NEXT_STEP}`);
   const chain = Array.isArray(s.chain) ? s.chain : [];
   lines.push(`pending chain: ${chain.length}`);
   for (const commit of chain) {

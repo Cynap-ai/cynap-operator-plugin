@@ -137,3 +137,10 @@ test('preview_running without the running attempt\'s details still states the ru
   assert.match(formatRefusal({ code: 'preview_running', previewId: 'p1' }, { command: 'cynap-preview' }),
     /attempt p1 is still running\. Wait for its verdict with \/cynap-preview status p1/);
 });
+
+test('a frozen workspace refusal points the agent at the runbook decision tree', () => {
+  const text = formatRefusal({ ok: false, code: 'workspace_writes_frozen' }, { command: 'cynap-push' });
+  assert.match(text, /Next step \(Cynap\):/);
+  assert.match(text, /next: read-only diagnosis, then draft the platform-admin request from the "Frozen handler activation: decision tree" section of the workspace-activation-incomplete runbook/);
+  assert.match(text, /do not retry or re-activate/);
+});
