@@ -513,6 +513,7 @@ Children: accepted. Standard DOM props: accepted.
 | `onCloseAutoFocus` | `((event: Event) => void)` | no |
 | `side` | `'bottom' \| 'left' \| 'right' \| 'top'` | no |
 | `closeLabel` | `string` | no |
+| `portalContainer` | `HTMLElement \| null` | no |
 Children: accepted. Standard DOM props: accepted.
 
 ### SheetHeader
