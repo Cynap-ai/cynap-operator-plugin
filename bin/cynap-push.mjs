@@ -11,10 +11,10 @@ import { pathToFileURL } from 'node:url';
 import { stablePortForSlug } from '../lib/connect.mjs';
 import { candidateUrl } from '../lib/candidate-url.generated.mjs';
 import { encodeContent } from '../lib/content-codec.mjs';
-import { classifyPath, collectFingerprintPaths, effectForKind, evaluateChecks } from './cynap-checks-core.mjs';
+import { checkCommitEffectSpan, classifyPath, collectFingerprintPaths, effectForKind, evaluateChecks } from './cynap-checks-core.mjs';
 import { buildPushPlan } from '../lib/workspace-diff.mjs';
 import { automationsMissingCustomerAiConfig, formatCustomerAiConfigWarning } from '../lib/customer-ai-config-warning.mjs';
-import { checkPushEffects, classifyForPush } from '../lib/workspace-kinds.mjs';
+import { classifyForPush } from '../lib/workspace-kinds.mjs';
 import { runChecksPreflight } from '../lib/workspace-checks-preflight.mjs';
 import { formatRefusal, refusalErrors, refusalRunId, SURFACE_REFUSAL_MESSAGES, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
 import {
@@ -132,11 +132,13 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
 
   // Step 1: refuse locally on a non-activatable path, naming each path's entrance (spec §4.3/§7.3).
   const touched = [...plan.creates, ...plan.updates, ...plan.deletes];
-  const effects = checkPushEffects(touched, classifyPath, effectForKind, plan.deletes);
-  if (effects) {
-    return { ok: false, reason: 'commit_spans_irreversible_effects', effects,
+  // The SDK's one commit-effect rule, the backend's own: the local tree is the post-change tree.
+  const deleted = new Set(plan.deletes);
+  const span = checkCommitEffectSpan(touched.map((path) => ({ path, deleted: deleted.has(path) })), (path) => local.has(path));
+  if (span) {
+    return { ok: false, reason: 'commit_spans_irreversible_effects', effects: span.effects,
       paths: touched.map((path) => ({ path, class: effectForKind(classifyPath(path)) })),
-      message: 'Commit each irreversible effect separately, with only permitted riders. Deleted handler sources may be committed only with inert files.' };
+      message: span.message };
   }
   const refusals = touched.map((path) => classifyForPush(path, classifyPath)).filter(Boolean);
   if (refusals.length > 0) {

@@ -5,29 +5,53 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifyPath, effectForKind } from '../bin/cynap-checks-core.mjs';
-import { checkPushEffects, classifyForPush, entranceForKind, COMMIT_GATED_KINDS, COMMIT_ONLY_KINDS, DEFERRED_ACTIVATION_KINDS, OWN_ENTRANCE_KINDS } from '../lib/workspace-kinds.mjs';
+import { checkCommitEffectSpan, classifyPath } from '../bin/cynap-checks-core.mjs';
+import { classifyForPush, entranceForKind, COMMIT_GATED_KINDS, COMMIT_ONLY_KINDS, DEFERRED_ACTIVATION_KINDS, OWN_ENTRANCE_KINDS } from '../lib/workspace-kinds.mjs';
 
 test('classifyPath is reachable from the bundled checks core (not tree-shaken away)', () => {
   assert.equal(typeof classifyPath, 'function');
   assert.equal(classifyPath('automations/foo.json'), 'automation');
 });
 
+// The commit-effect rule is the SDK's own (`checkCommitEffectSpan`), bundled into the checks core;
+// the backend runs the same function, so these pin the bundle, not a second copy.
+const span = (paths, deletes = [], tree = []) => {
+  const deleted = new Set(deletes);
+  const post = new Set(tree);
+  return checkCommitEffectSpan(paths.map((path) => ({ path, deleted: deleted.has(path) })), (path) => post.has(path))?.effects ?? null;
+};
+
 test('effect pre-check follows the bundled SDK kind registry', () => {
-  assert.deepEqual(checkPushEffects(['context/schema.json', 'automations/sync.json'], classifyPath, effectForKind), ['schema']);
-  assert.equal(checkPushEffects(['context/schema.json', 'context/notes.md'], classifyPath, effectForKind), null);
-  assert.equal(checkPushEffects(['automations/handlers/x/handler.ts', 'automations/handlers/x/config.json'], classifyPath, effectForKind), null);
-  assert.deepEqual(checkPushEffects(['automations/handlers/x/handler.ts', 'automations/handlers/y/config.json'], classifyPath, effectForKind), ['handler:x']);
+  assert.deepEqual(span(['context/schema.json', 'automations/sync.json']), ['schema']);
+  assert.equal(span(['context/schema.json', 'context/notes.md']), null);
+  assert.equal(span(['automations/handlers/x/handler.ts', 'automations/handlers/x/config.json']), null);
+  assert.deepEqual(span(['automations/handlers/x/handler.ts', 'automations/handlers/y/config.json']), ['handler:x']);
 });
 
 test('deleted handler sources are no handler effect and ride only with inert files', () => {
-  const check = (paths, deletes) => checkPushEffects(paths, classifyPath, effectForKind, deletes);
-  assert.equal(check(['automations/a.ts', 'automations/handlers/b/handler.ts', 'context/notes.md'], ['automations/a.ts', 'automations/handlers/b/handler.ts']), null);
-  assert.deepEqual(check(['automations/a.ts', 'automations/handlers/x/handler.ts', 'automations/handlers/x/config.json'], ['automations/a.ts']), ['handler:a', 'handler:x']);
-  assert.deepEqual(check(['automations/a.ts', 'context/schema.json'], ['automations/a.ts']), ['handler:a', 'schema']);
-  assert.deepEqual(check(['automations/a.ts', 'automations/a.json'], ['automations/a.ts', 'automations/a.json']), ['handler:a']);
+  assert.equal(span(['automations/a.ts', 'automations/handlers/b/handler.ts', 'context/notes.md'], ['automations/a.ts', 'automations/handlers/b/handler.ts']), null);
+  assert.deepEqual(span(['automations/a.ts', 'automations/handlers/x/handler.ts', 'automations/handlers/x/config.json'], ['automations/a.ts']), ['handler:a', 'handler:x']);
+  assert.deepEqual(span(['automations/a.ts', 'context/schema.json'], ['automations/a.ts']), ['handler:a', 'schema']);
+  assert.deepEqual(span(['automations/a.ts', 'automations/a.json'], ['automations/a.ts', 'automations/a.json']), ['handler:a']);
   // Without the deletion set, two handler sources stay two effects.
-  assert.deepEqual(check(['automations/a.ts', 'automations/handlers/b/handler.ts']), ['handler:a', 'handler:b']);
+  assert.deepEqual(span(['automations/a.ts', 'automations/handlers/b/handler.ts']), ['handler:a', 'handler:b']);
+});
+
+test('a flat pair deleted while its nested twin stays completes the relocation', () => {
+  const id = 'writeupp-appointment-sync';
+  const flat = [`automations/${id}.json`, `automations/${id}.ts`];
+  const twin = [`automations/handlers/${id}/handler.ts`, `automations/handlers/${id}/config.json`];
+  const touched = [...flat, '__tests__/total-billed-consumers.test.js'];
+  const post = ['__tests__/total-billed-consumers.test.js', ...twin];
+  assert.equal(span(touched, flat, post), null);
+  // No twin, half a twin, another id's twin, or a twin written in the same push: refused as before.
+  assert.deepEqual(span(touched, flat, ['__tests__/total-billed-consumers.test.js']), [`handler:${id}`]);
+  assert.deepEqual(span(touched, flat, [twin[1]]), [`handler:${id}`]);
+  assert.deepEqual(span(touched, flat, ['automations/handlers/other/handler.ts', 'automations/handlers/other/config.json']), [`handler:${id}`]);
+  assert.deepEqual(span([...touched, ...twin], flat, post), [`handler:${id}`]);
+  // A relocation rides with inert files only.
+  assert.deepEqual(span([...touched, 'context/schema.json'], flat, [...post, 'context/schema.json']), [`handler:${id}`, 'schema']);
+  assert.deepEqual(span([...touched, 'automations/sync.json'], flat, [...post, 'automations/sync.json']), [`handler:${id}`]);
 });
 
 test('classifyForPush refuses a generated path', () => {
