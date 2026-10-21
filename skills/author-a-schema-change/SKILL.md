@@ -5,6 +5,8 @@ description: Add an entity or admitted additive fields and annotations in a cust
 
 # author-a-schema-change — Entity Schema Authoring
 
+**Build Facts:** on a claimed Request, call `build_facts_query` only after `request_discover` has recorded Stated intent (with no claimed Request, call it any time), and apply the facts it returns. When a platform mechanic you needed was missing, vote `missing_context` through `build_facts_query` instead of writing a note.
+
 You are adding or changing an **entity type** for one customer org — the
 shape of the business knowledge the org's database holds. This is
 orthogonal to the 3-mode router (`choose-the-right-mode`): any mode's

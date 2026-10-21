@@ -12,7 +12,7 @@ instead of working around it.
 
 | Scope | Workflow | Tools |
 |---|---|---|
-| `workspace:read` | Read the org's workspace: state, files, history and drift | `workspace_status`, `workspace_tree`, `workspace_get_file`, `workspace_get_commit`, `workspace_diff`, `workspace_log`, `workspace_receipts`, `workspace_drift` |
+| `workspace:read` | Read the org's workspace: state, files, history and drift, and pull Build Facts | `workspace_status`, `workspace_tree`, `workspace_get_file`, `workspace_get_commit`, `workspace_diff`, `workspace_log`, `workspace_receipts`, `workspace_drift`, `build_facts_query` |
 | `workspace:execute-preview` | Validate a change, build a Fixture render, commit, report check verdicts, discard a commit | `workspace_validate`, `workspace_surface_render_build`, `workspace_commit`, `checks_verdict_report`, `workspace_discard_commit` |
 | `workspace:file-activate` | Activate an accepted commit | `workspace_activate_commit`, `handler_upload` |
 | `workspace:file-activate` | Prepare the proof a Request proposal needs. Not on your tool list: run `/cynap-propose` | `workspace_prepare_commit_proof` |

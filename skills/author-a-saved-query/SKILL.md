@@ -5,6 +5,8 @@ description: Author an aggregate saved query (analytics/saved-queries/*.sql) tha
 
 # author-a-saved-query — An Aggregate an Operator Can Read
 
+**Build Facts:** on a claimed Request, call `build_facts_query` only after `request_discover` has recorded Stated intent (with no claimed Request, call it any time), and apply the facts it returns. When a platform mechanic you needed was missing, vote `missing_context` through `build_facts_query` instead of writing a note.
+
 A saved query is org SQL under `analytics/saved-queries/<name>.sql`. An
 operator reads its result with `operator_saved_query_run`, and that read
 returns only an **aggregate**. Read `platform-invariants` first if you have

@@ -5,6 +5,8 @@ description: Author a fixed-step scheduled sync, reconciler, or ETL automation w
 
 # author-a-deterministic-automation — Deterministic-Mode Authoring
 
+**Build Facts:** on a claimed Request, call `build_facts_query` only after `request_discover` has recorded Stated intent (with no claimed Request, call it any time), and apply the facts it returns. When a platform mechanic you needed was missing, vote `missing_context` through `build_facts_query` instead of writing a note.
+
 You are authoring a **fixed-step, non-agentic** automation for one customer
 org — scheduled syncs, reconcilers, ETL, optionally with a bounded `llm`
 tool step. This is the **cheapest runtime** mode; it

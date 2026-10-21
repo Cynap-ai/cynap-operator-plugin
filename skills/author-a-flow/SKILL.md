@@ -5,6 +5,8 @@ description: Author a conversational bot (WhatsApp/Slack/Roam DM) as a Flow-Runn
 
 # author-a-flow — Flow-Runner Authoring
 
+**Build Facts:** on a claimed Request, call `build_facts_query` only after `request_discover` has recorded Stated intent (with no claimed Request, call it any time), and apply the facts it returns. When a platform mechanic you needed was missing, vote `missing_context` through `build_facts_query` instead of writing a note.
+
 You are authoring a **conversational bot** for one customer org. This is a
 platform-runtime config with customer AI consumption on each model round-trip.
 If you haven't confirmed this is the right mode, go read

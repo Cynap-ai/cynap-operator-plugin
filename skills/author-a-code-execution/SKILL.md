@@ -5,6 +5,8 @@ description: Author a mode:code_execution automation — a single-file TypeScrip
 
 # author-a-code-execution — Code-Execution-Mode Authoring
 
+**Build Facts:** on a claimed Request, call `build_facts_query` only after `request_discover` has recorded Stated intent (with no claimed Request, call it any time), and apply the facts it returns. When a platform mechanic you needed was missing, vote `missing_context` through `build_facts_query` instead of writing a note.
+
 Check `choose-the-right-mode`'s workspace capability matrix for each path
 and operation. Customer-read descriptions, Markdown, and SQL comments must
 not expose internal ticket or document identifiers, invariant codes, vendor

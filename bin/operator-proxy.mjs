@@ -84,8 +84,13 @@ export const REMINT_SKEW_SECONDS = 60;
  * the accepted chain) — a pure read, same drift shape as above.
  * `workspace_discard_commit` is deliberately NOT here: it is destructive, and a
  * blind retry after a discard that succeeded but lost its response answers
- * `commit_orphaned` — a refusal reported for an operation that happened. */
+ * `commit_orphaned` — a refusal reported for an operation that happened.
+ * The backend parity test (`proxy-idempotent-parity.test.ts`) compares this
+ * set with WORKSPACE_READ_TOOLS ∪ OPS_READ_TOOLS; a name in one and not the other must
+ * be a named exclusion there. `build_facts_query` is safe to retry: a vote carries a
+ * caller `vote_id`, so a duplicated vote line is deduped by the report. */
 export const IDEMPOTENT_TOOL_NAMES = new Set([
+  'build_facts_query',
   'workspace_status',
   'workspace_tree',
   'workspace_get_file',
@@ -101,6 +106,8 @@ export const IDEMPOTENT_TOOL_NAMES = new Set([
   'journal_count',
   'customer_ai_readiness_get',
   'run_evidence_get',
+  'release_evidence_get',
+  'workspace_health',
   'automation_runs_list',
   'automation_run_writes',
   'operator_saved_query_run',

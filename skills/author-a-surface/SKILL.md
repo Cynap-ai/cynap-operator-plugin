@@ -5,6 +5,8 @@ description: Author a customer surface with its route and tool manifests, look a
 
 # author-a-surface — Surface authoring
 
+**Build Facts:** on a claimed Request, call `build_facts_query` only after `request_discover` has recorded Stated intent (with no claimed Request, call it any time), and apply the facts it returns. When a platform mechanic you needed was missing, vote `missing_context` through `build_facts_query` instead of writing a note.
+
 Read `platform-invariants` and the workspace capability matrix in
 `choose-the-right-mode` first. Pull the accepted org tree before editing.
 
