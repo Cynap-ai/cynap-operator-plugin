@@ -111,6 +111,28 @@ test('a handler_runtime_error verdict prints the failure location and the baseli
   ].join('\n'));
 });
 
+test('a rejected tool call prints its fault, then the Build Facts matched to it, after the code', () => {
+  const text = formatPreviewFailure(operatorEffectOutput({ status: 'fail', failureCode: 'handler_runtime_error',
+    failureLocation: { errorName: 'Error', site: 'handler.js:7:3',
+      fault: { reason: 'tool_error', callIndex: 0, tool: 'knowledge.advancedQuery', rejectionCode: 'READ_TOO_LARGE' } },
+    buildFacts: [{ id: 'fact:advanced-query-page-by-row-width', rule: 'Both ceilings reject it as READ_TOO_LARGE.', remedy: 'Page with a smaller explicit limit.' }] }));
+  assert.equal(text, [
+    'handler_runtime_error: the candidate handler threw; fix it at the location below and preview again',
+    '  failureLocation: Error at handler.js:7:3',
+    '  fault: tool_error in knowledge.advancedQuery (READ_TOO_LARGE)',
+    '  build fact [fact:advanced-query-page-by-row-width]: Both ceilings reject it as READ_TOO_LARGE.',
+    '    fix: Page with a smaller explicit limit.',
+  ].join('\n'));
+});
+
+test('a fault rejection code outside the closed set, and a fact without a valid id, are dropped', () => {
+  const safe = operatorEffectOutput({ status: 'fail', failureCode: 'handler_runtime_error',
+    failureLocation: { errorName: 'Error', fault: { reason: 'tool_error', rejectionCode: 'PATIENT_JO' } },
+    buildFacts: [{ id: 'patient Jo', rule: 'x' }, { id: 'fact:ok', rule: 'line\u0007one', remedy: null }] });
+  assert.deepEqual(safe.failureLocation, { errorName: 'Error', fault: { reason: 'tool_error' } });
+  assert.deepEqual(safe.buildFacts, [{ id: 'fact:ok', rule: 'line one', remedy: null }]);
+});
+
 test('a first promotion says there was no baseline to compare with', () => {
   assert.match(formatPreviewFailure({ failureCode: 'preview_timeout', baselineOutcome: 'not_dispatched' }),
     /^preview_timeout\n  baseline: not run \(no accepted version/);

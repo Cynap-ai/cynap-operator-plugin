@@ -322,19 +322,55 @@ const PREVIEW_BASELINE_OUTCOMES = new Set(['failed', 'succeeded', 'not_dispatche
 const PREVIEW_AUTOMATION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const PREVIEW_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 
-/** Error names a failing preview may report. Mirrors the server's list; anything else is dropped. */
-const PREVIEW_ERROR_NAMES = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError',
-  'EvalError', 'AggregateError', 'AbortError', 'TimeoutError']);
-const PREVIEW_HANDLER_SITE = /^handler\.js:[1-9]\d{0,5}:[1-9]\d{0,4}$/;
+/**
+ * The closed preview failure contract the proxy re-validates. This file is copied verbatim into the
+ * plugin and imports nothing outside node:, so it cannot import the generated contract module; the
+ * plugin's parity test pins every value here to that module (and so to the server's owners).
+ */
+export const PREVIEW_CONTRACT = Object.freeze({
+  errorNames: ['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError',
+    'EvalError', 'AggregateError', 'AbortError', 'TimeoutError'],
+  handlerSite: /^handler\.js:[1-9]\d{0,5}:[1-9]\d{0,4}$/,
+  faultReasons: ['handler_throw', 'denied', 'budget_stopped', 'invalid_args', 'tool_error', 'dispatch_error',
+    'call_timeout', 'call_aborted', 'response_too_large', 'reassembly_failed', 'malformed_response'],
+  maxFaultCallIndex: 1_000_000,
+  faultTool: /^[a-z][a-z0-9_]{0,47}\.[A-Za-z][A-Za-z0-9_]{0,47}$/,
+  rejectionCodes: ['READ_TOO_LARGE', 'BATCH_TOO_LARGE'],
+  factId: /^fact:[a-z0-9]+(?:-[a-z0-9]+)*$/u,
+});
+const PREVIEW_ERROR_NAMES = new Set(PREVIEW_CONTRACT.errorNames);
+
+/** Why the handler's await rejected: a closed reason, the call index, the tool and a closed rejection code. */
+function previewFault(value) {
+  if (typeof value !== 'object' || value === null || !PREVIEW_CONTRACT.faultReasons.includes(value.reason)) return undefined;
+  const { callIndex, tool, rejectionCode } = value;
+  return { reason: value.reason,
+    ...(Number.isInteger(callIndex) && callIndex >= 0 && callIndex <= PREVIEW_CONTRACT.maxFaultCallIndex ? { callIndex } : {}),
+    ...(typeof tool === 'string' && PREVIEW_CONTRACT.faultTool.test(tool) ? { tool } : {}),
+    ...(PREVIEW_CONTRACT.rejectionCodes.includes(rejectionCode) ? { rejectionCode } : {}) };
+}
 
 /**
- * Where a failing preview's handler threw: an error name and an optional `handler.js:line:col`.
- * Re-validated here because nothing else from the handler may leave the preview.
+ * Where a failing preview's handler threw: an error name, an optional `handler.js:line:col` and the
+ * typed fault. Re-validated here because nothing else from the handler may leave the preview.
  */
 export function previewFailureLocation(value) {
   if (typeof value !== 'object' || value === null || !PREVIEW_ERROR_NAMES.has(value.errorName)) return undefined;
+  const fault = previewFault(value.fault);
   return { errorName: value.errorName,
-    ...(typeof value.site === 'string' && PREVIEW_HANDLER_SITE.test(value.site) ? { site: value.site } : {}) };
+    ...(typeof value.site === 'string' && PREVIEW_CONTRACT.handlerSite.test(value.site) ? { site: value.site } : {}),
+    ...(fault ? { fault } : {}) };
+}
+
+/** The Build Facts the server pushed for a failed preview: registry text, never handler output. Bounded. */
+export function previewBuildFacts(value) {
+  if (!Array.isArray(value)) return [];
+  const text = (field) => (typeof field === 'string' ? field.slice(0, 600) : null);
+  return value.slice(0, 16).flatMap((fact) =>
+    typeof fact?.id === 'string' && PREVIEW_CONTRACT.factId.test(fact.id) && typeof fact.rule === 'string'
+      ? [{ id: fact.id, rule: text(fact.rule), remedy: text(fact.remedy),
+        ...(typeof fact.enforced_by === 'string' ? { enforced_by: text(fact.enforced_by) } : {}) }]
+      : []);
 }
 
 /** The local preview route's upstream leg; exported so its auth/body contract is tested without a socket. */
@@ -372,6 +408,7 @@ export async function forwardPreviewRequest({ method, input, previewId, orgSlug,
     ...(typeof answer.failureCode === 'string' ? { failureCode: answer.failureCode } : {}),
     ...(typeof answer.operatorText === 'string' ? { operatorText: answer.operatorText } : {}),
     ...(previewFailureLocation(answer.failureLocation) ? { failureLocation: previewFailureLocation(answer.failureLocation) } : {}),
+    ...(previewBuildFacts(answer.buildFacts).length > 0 ? { buildFacts: previewBuildFacts(answer.buildFacts) } : {}),
     ...(PREVIEW_BASELINE_OUTCOMES.has(answer.baselineOutcome) ? { baselineOutcome: answer.baselineOutcome } : {}),
     ...(answer.rule === 'one_preview_per_org' ? { rule: answer.rule } : {}),
     ...(PREVIEW_AUTOMATION_ID.test(answer.automationId ?? '') ? { automationId: answer.automationId } : {}),

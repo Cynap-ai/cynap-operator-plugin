@@ -581,6 +581,61 @@ test('push: prints the candidate line and warnings, and candidate_urls in --json
   process.exitCode = 0;
 });
 
+// A Build Fact matched to the push is advice, printed after the commit and after a dry
+// run's validation line, naming the fact id; it never refuses the push.
+const FACT_WARNING = {
+  source: 'build_fact', rule: 'build_fact_advisory', fact_id: 'fact:advanced-query-page-by-row-width',
+  file: 'automations/handlers/h/handler.ts', message: 'Both ceilings reject it as READ_TOO_LARGE.', suggested_fix: 'Page with a smaller explicit limit.',
+};
+const captureStdout = async (body) => {
+  const writes = [];
+  const original = { out: process.stdout.write, err: process.stderr.write };
+  process.stdout.write = (chunk) => (writes.push(String(chunk)), true);
+  process.stderr.write = () => true;
+  try { await body(); } finally { process.stdout.write = original.out; process.stderr.write = original.err; }
+  return writes.join('');
+};
+const FACT_LINE = 'build fact [fact:advanced-query-page-by-row-width] automations/handlers/h/handler.ts: Both ceilings reject it as READ_TOO_LARGE.\n  fix: Page with a smaller explicit limit.\n';
+
+test('push: a Build Fact warning on the commit is printed as advice with its fact id', async () => {
+  const dir = scratchDir();
+  try {
+    const out = await captureStdout(() => main(['--dir', dir, '-m', 'surface'], {
+      cwd: '/tmp/op/cynap-e2e', fetchImpl: surfacePushFixture(dir, { surface_warnings: [FACT_WARNING] }),
+    }));
+    assert.match(out, new RegExp(`^committed ${NEW_SHA}`, 'm'));
+    assert.ok(out.includes(FACT_LINE), out);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    process.exitCode = 0;
+  }
+});
+
+test('push: --dry-run prints the Build Fact advice of the validation run', async () => {
+  const dir = scratchDir();
+  try {
+    mkdirSync(join(dir, 'automations'), { recursive: true });
+    writeFileSync(join(dir, 'automations', 'a.json'), '{"x":1}');
+    writeStateAtomic(dir, { org: 'cynap-e2e', base: 'b'.repeat(64), files: {} });
+    const fetchImpl = fakeFetch({
+      ...noChecksOnLive(),
+      workspace_validate: () => ({
+        ok: true, status: 'passed',
+        warnings: [{
+          severity: 'warning', code: 'build_fact_advisory', fact_id: FACT_WARNING.fact_id, path: FACT_WARNING.file,
+          message: FACT_WARNING.message, suggested_fix: FACT_WARNING.suggested_fix,
+        }],
+      }),
+    });
+    const out = await captureStdout(() => main(['--dir', dir, '--dry-run'], { cwd: '/tmp/op/cynap-e2e', fetchImpl }));
+    assert.ok(out.includes('validation: passed'), out);
+    assert.ok(out.includes(FACT_LINE), out);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    process.exitCode = 0;
+  }
+});
+
 test('push: a non-surface push builds nothing and carries no candidate URL', async () => {
   const dir = scratchDir();
   try {

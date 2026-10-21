@@ -311,9 +311,28 @@ export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, 
   };
 }
 
+/**
+ * One commit warning. A `build_fact` warning is advice matched to this push (a Build Fact),
+ * never a refusal; it names the fact id so the agent can vote on it with build_facts_query.
+ */
 function formatSurfaceWarning(warning) {
   const at = warning.file ? `${warning.file}${warning.line ? `:${warning.line}` : ''}: ` : '';
+  if (warning.source === 'build_fact') {
+    return `build fact [${warning.fact_id}] ${at}${warning.message}${warning.suggested_fix ? `\n  fix: ${warning.suggested_fix}` : ''}`;
+  }
   return `warning: [${warning.rule}] ${at}${warning.message}`;
+}
+
+/** The Build Fact advice on a validation run, in the commit's warning shape. */
+function buildFactWarnings(validated) {
+  const warnings = Array.isArray(validated?.warnings) ? validated.warnings : [];
+  return warnings
+    .filter((finding) => finding?.code === 'build_fact_advisory' && typeof finding.fact_id === 'string')
+    .map((finding) => ({
+      source: 'build_fact', rule: 'build_fact_advisory', fact_id: finding.fact_id,
+      ...(finding.path ? { file: finding.path } : {}), message: finding.message,
+      ...(finding.suggested_fix ? { suggested_fix: finding.suggested_fix } : {}),
+    }));
 }
 
 function printRefusal(result) {
@@ -357,6 +376,7 @@ export async function main(argv = process.argv.slice(2), { cwd, fetchImpl } = {}
       process.stdout.write(`checks (live suite + this push's check files @${result.checkBase ?? 'empty'}): ${checks.filter(({ assertion }) => assertion.passed).length} passed\n`);
       for (const { suite, assertion } of checks) process.stdout.write(`  ${suite.id ?? suite.file ?? 'suite'}: ${assertion.op ?? assertion.name ?? 'check'}\n`);
       process.stdout.write(`validation: ${result.validated?.status ?? 'passed'}${result.validated?.id ? ` (run ${result.validated.id})` : ''}\n`);
+      for (const warning of buildFactWarnings(result.validated)) process.stdout.write(`${formatSurfaceWarning(warning)}\n`);
     }
     return result;
   }
