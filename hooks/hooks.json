@@ -61,6 +61,30 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse-build-facts.mjs",
+            "async": false,
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse-build-facts.mjs",
+            "async": false,
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
