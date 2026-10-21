@@ -20,6 +20,7 @@ import {
   INJECTED_REL_PATH,
   isPushCommand,
   planHook,
+  readHandlerContext,
   runBuildFactsHook,
 } from '../lib/build-facts-hook.mjs';
 
@@ -56,9 +57,9 @@ function makeWorkspace({ port = 41234, connected = true, tools = ['knowledge.adv
   mkdirSync(root, { recursive: true });
   if (connected) write(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { 'cynap-operator': { type: 'http', url: `http://127.0.0.1:${port}/mcp` } } }));
   write(join(root, '.cynap', 'state.json'), JSON.stringify({ org: 'acme', base: null, files: {} }));
-  write(join(root, 'automations', 'handlers', 'invoice-sync', 'config.json'), JSON.stringify({ mode: 'code_execution', execution: { allowed_tools: tools } }));
+  write(join(root, 'automations', 'handlers', 'invoice-sync', 'config.json'), JSON.stringify({ execution: { mode: 'code_execution', allowed_tools: tools } }));
   write(join(root, 'automations', 'handlers', 'invoice-sync', 'handler.ts'), 'export default async () => {};\n');
-  write(join(root, 'automations', 'nightly.json'), JSON.stringify({ mode: 'deterministic' }));
+  write(join(root, 'automations', 'nightly.json'), JSON.stringify({ execution: { mode: 'deterministic' } }));
   return { home, operatorRoot, root };
 }
 
@@ -130,6 +131,14 @@ test('planHook: no plan outside an operator workspace, without .mcp.json, or for
   assert.equal(planHook({ ...writeEvent(root), tool_name: 'Read' }, { operatorRoot }), null);
   const offline = makeWorkspace({ connected: false });
   assert.equal(planHook(writeEvent(offline.root), { operatorRoot: offline.operatorRoot }), null);
+});
+
+test('readHandlerContext reads execution.mode; a top-level mode is not a mode', () => {
+  const root = mkdtempSync(join(tmpdir(), 'bf-hook-mode-'));
+  write(join(root, 'automations', 'handlers', 'h', 'config.json'), JSON.stringify({ mode: 'code_execution', execution: { allowed_tools: ['knowledge.advancedQuery'] } }));
+  assert.deepEqual(readHandlerContext(root, 'h'), { tools: ['knowledge.advancedQuery'] });
+  write(join(root, 'automations', 'handlers', 'h', 'config.json'), JSON.stringify({ execution: { mode: 'code_execution', allowed_tools: ['knowledge.advancedQuery'] } }));
+  assert.deepEqual(readHandlerContext(root, 'h'), { mode: 'code_execution', tools: ['knowledge.advancedQuery'] });
 });
 
 test('planHook: a cynap-push reads every handler config, one context per mode', () => {
