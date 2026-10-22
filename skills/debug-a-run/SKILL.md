@@ -94,6 +94,8 @@ The table below is parity-tested against the SDK's closed admission vocabulary.
 | `replay` | none | return the stored result without dispatching again. |
 | `RESULT_UNAVAILABLE` | operator | the Operator handles the unavailable result without redispatching this logical call. |
 | `call_in_doubt` | platform | the platform reconciles the existing call without dispatching it again. |
+| `dedupe_cancelled` | operator | handle the stored cancellation without redispatching this logical call. |
+| `dedupe_claim_fenced` | platform | resolve the same key again; never dispatch using the fenced logical call id. |
 | `deadline_expired` | operator | the Operator starts a new logical call with a valid deadline if work is still required. |
 | `period_changed` | operator | the Operator starts a new logical call bound to the current period. |
 | `committed_authority_changed` | operator | the Operator resolves the current committed authority before starting a new logical call. |
