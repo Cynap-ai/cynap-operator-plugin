@@ -316,8 +316,6 @@ export const PREPARE_PROOF_PATH = '/prepare-proof';
 /** Nonce-gated preview control route. The operator token remains inside the proxy. */
 export const PREVIEW_PATH = '/preview';
 
-/** The closed preview failure facts the status read may carry. Anything else is dropped here. */
-const PREVIEW_BASELINE_OUTCOMES = new Set(['failed', 'succeeded', 'not_dispatched']);
 // A preview_running refusal names the running attempt's automation and start time.
 const PREVIEW_AUTOMATION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const PREVIEW_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -337,7 +335,10 @@ export const PREVIEW_CONTRACT = Object.freeze({
   faultTool: /^[a-z][a-z0-9_]{0,47}\.[A-Za-z][A-Za-z0-9_]{0,47}$/,
   rejectionCodes: ['READ_TOO_LARGE', 'BATCH_TOO_LARGE'],
   factId: /^fact:[a-z0-9]+(?:-[a-z0-9]+)*$/u,
+  baselineOutcomes: ['failed', 'succeeded', 'diff_unavailable', 'not_dispatched'],
 });
+/** The closed baseline outcomes the status read may carry. Anything else is dropped here. */
+const PREVIEW_BASELINE_OUTCOMES = new Set(PREVIEW_CONTRACT.baselineOutcomes);
 const PREVIEW_ERROR_NAMES = new Set(PREVIEW_CONTRACT.errorNames);
 
 /** Why the handler's await rejected: a closed reason, the call index, the tool and a closed rejection code. */

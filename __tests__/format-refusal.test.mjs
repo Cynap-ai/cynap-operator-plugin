@@ -101,6 +101,13 @@ test('a capture_tool_failed verdict prints the code and whether the baseline fai
   assert.doesNotMatch(text, /withheld|writeupp|patients|private body/);
 });
 
+// A baseline run that succeeded with an unusable effect record is never "failed too".
+test('a diff_unavailable baseline prints that it succeeded, never that it failed too', () => {
+  const text = formatPreviewFailure(operatorEffectOutput({ status: 'fail', failureCode: 'capture_tool_failed', baselineOutcome: 'diff_unavailable' }));
+  assert.match(text, /\n  baseline: succeeded on its own copy, but its effects could not be compared with yours/);
+  assert.doesNotMatch(text, /failed too/);
+});
+
 test('a handler_runtime_error verdict prints the failure location and the baseline result', () => {
   const text = formatPreviewFailure(operatorEffectOutput({ status: 'fail', failureCode: 'handler_runtime_error',
     failureLocation: { errorName: 'TypeError', site: 'handler.js:4:9' }, baselineOutcome: 'succeeded' }));

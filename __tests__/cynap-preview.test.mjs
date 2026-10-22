@@ -124,6 +124,7 @@ test('The status summary keeps the closed failure facts and the proxy forwards o
     failureLocation: { errorName: 'TypeError', site: 'handler.js:4:9', message: 'private' } });
   assert.deepEqual(ok.body.failureLocation, { errorName: 'TypeError', site: 'handler.js:4:9' });
   assert.equal(ok.body.baselineOutcome, 'succeeded');
+  assert.equal((await forward({ status: 'fail', baselineOutcome: 'diff_unavailable' })).body.baselineOutcome, 'diff_unavailable');
   const hostile = await forward({ status: 'fail', baselineOutcome: 'private', failureLocation: { errorName: 'private text' } });
   assert.ok(!('failureLocation' in hostile.body) && !('baselineOutcome' in hostile.body));
 });
