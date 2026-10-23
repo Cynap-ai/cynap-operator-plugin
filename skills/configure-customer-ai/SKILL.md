@@ -84,3 +84,20 @@ Use this boundary for every AI-capable entrance: flows, deterministic `llm`
 steps, `ctx.tools.llm` from code execution, operations, and Actors. The platform
 owns admission, credentials, routing, holds, usage reconciliation, and debit;
 the workspace owns business intent.
+
+## One logical call across runs: `dedupe_key`
+
+`ctx.tools.llm.complete(prompt, { dedupe_key: 'job-217124:summary' })` makes the provider call
+at most once for that key across runs of the same automation. A later run gets the stored
+result. Keyed calls are `complete` only: `extract`, `classify` and `evaluate` refuse a key.
+Keyed calls run only for orgs Cynap has enabled; others get `dedupe_not_enabled`.
+
+- One key names one logical call. A changed prompt or options needs a new key, and reusing a
+  key for different content is a permanent `IDEMPOTENCY_CONFLICT` by design.
+- The key is 1–200 characters of `A-Za-z0-9._:/-`, case-sensitive, and must carry no personal data.
+- `dedupe_in_flight`: another attempt is running or was claimed under 30 minutes ago. Retry
+  with the same key and capped backoff (30 s, 2 min, 10 min), then surface the failure.
+- `call_in_doubt` and `dedupe_terminal_failure`: the first attempt's outcome is unknown or it
+  ended without a result. Do not work around it with a new key, no key, a renamed automation or
+  by waiting: each can re-spend. Escalate; the platform resolves it.
+- `dedupe_unavailable`: the keyed ledger could not be read; nothing was dispatched. Retry later.
