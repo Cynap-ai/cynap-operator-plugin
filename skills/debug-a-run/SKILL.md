@@ -93,6 +93,7 @@ The table below is parity-tested against the SDK's closed admission vocabulary.
 | `semantically_unusable` | operator | the Operator checks the output contract before starting a new logical call. |
 | `replay` | none | return the stored result without dispatching again. |
 | `RESULT_UNAVAILABLE` | operator | the Operator handles the unavailable result without redispatching this logical call. |
+| `IDEMPOTENCY_CONFLICT` | operator | use a new dedupe_key for changed content, or send the original request. |
 | `call_in_doubt` | platform | the platform reconciles the existing call without dispatching it again. |
 | `dedupe_cancelled` | operator | handle the stored cancellation without redispatching this logical call. |
 | `dedupe_claim_fenced` | platform | resolve the same key again; never dispatch using the fenced logical call id. |
