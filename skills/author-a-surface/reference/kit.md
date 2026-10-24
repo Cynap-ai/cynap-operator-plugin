@@ -612,6 +612,8 @@ Children: accepted. Standard DOM props: accepted.
 | `onInteractOutside` | `((event: PointerDownOutsideEvent \| FocusOutsideEvent) => void)` | no |
 | `onOpenAutoFocus` | `((event: Event) => void)` | no |
 | `onCloseAutoFocus` | `((event: Event) => void)` | no |
+| `portalled` | `boolean` | no |
+| `motion` | `'fade' \| 'slide'` | no |
 Children: accepted. Standard DOM props: accepted.
 
 Composes with: `Button`.
@@ -871,6 +873,7 @@ Children: accepted. Standard DOM props: accepted.
 | `description` | `string` | no |
 | `className` | `string` | no |
 | `showCloseButton` | `boolean` | no |
+| `onCloseAutoFocus` | `((event: Event) => void)` | no |
 Children: accepted. Standard DOM props: not accepted.
 
 ### CommandInput
