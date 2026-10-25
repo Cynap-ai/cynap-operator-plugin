@@ -127,6 +127,28 @@ test('a failed run stops the loop with the error, and no further run is triggere
   assert.equal(exitCodeFor('failed'), EXIT_FAILED);
 });
 
+test('a degraded run that reports its backlog continues the drain; only a failure stops it', async () => {
+  const { call, calls } = fakePlatform([
+    [bundle('degraded', { rows_deferred: 30 })], [bundle('degraded', { rows_deferred: 12 })], [bundle('success', { rows_deferred: 0 })],
+  ]);
+  const { now, wait } = clock();
+  const result = await runAutomation({ args: args(), call, now, wait });
+  assert.equal(result.outcome, 'drained');
+  assert.deepEqual(result.iterations.map((i) => i.status), ['degraded', 'degraded', 'success']);
+  assert.equal(calls.filter((c) => c.name === 'automation_run_trigger').length, 3);
+});
+
+test('a degraded run with no backlog count, or outside a drain, still stops as failed', async () => {
+  const { now, wait } = clock();
+  const uncounted = fakePlatform([[bundle('degraded', { rows_hydrated: 5 })], [bundle('success', { rows_deferred: 0 })]]);
+  const drain = await runAutomation({ args: args(), call: uncounted.call, now, wait });
+  assert.equal(drain.outcome, 'failed');
+  assert.equal(uncounted.calls.filter((c) => c.name === 'automation_run_trigger').length, 1);
+  const single = fakePlatform([[bundle('degraded', { rows_deferred: 30 })]]);
+  const once = await runAutomation({ args: parseRunArgs(['sync', '--wait']), call: single.call, now, wait });
+  assert.equal(once.outcome, 'failed');
+});
+
 test('two re-triggers that do not shrink the backlog stop as no_progress', async () => {
   const { call } = fakePlatform([[bundle('success', { rows_deferred: 50 })], [bundle('success', { rows_deferred: 50 })], [bundle('success', { rows_deferred: 60 })], [bundle('success', { rows_deferred: 1 })]]);
   const { now, wait } = clock();

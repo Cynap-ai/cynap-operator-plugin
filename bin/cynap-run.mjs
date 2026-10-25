@@ -144,7 +144,9 @@ export async function runAutomation({ args, call, wait = sleep, now = Date.now, 
     log(`iteration ${n}/${args.untilDrained ? args.maxIterations : 1}: run ${runId} ${summary.status}` +
       `${record.deferred === null ? ', no deferred count in the result' : `, ${record.deferred} deferred (${record.deferredKey})`}` +
       `${summary.error ? `, error ${summary.error}` : ''}`);
-    if (!summary.ok) return { outcome: 'failed', iterations, runId };
+    // A degraded run that still names its backlog made partial progress: a drain continues past it.
+    const continues = args.untilDrained && summary.status === 'degraded' && record.deferred !== null;
+    if (!summary.ok && !continues) return { outcome: 'failed', iterations, runId };
     if (!args.untilDrained) return { outcome: 'finished', iterations, runId };
     if (record.deferred === null) return { outcome: 'no_deferred_count', iterations, runId };
     if (record.deferred === 0) return { outcome: 'drained', iterations, runId };
