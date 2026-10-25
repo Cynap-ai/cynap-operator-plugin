@@ -9,6 +9,7 @@ import { describeReady, readinessOf } from '../lib/activation-readiness.mjs';
 import { probeProxyHealth, stablePortForSlug } from '../lib/connect.mjs';
 import { formatNextAction, formatRefusal, FROZEN_CHAIN_NEXT_STEP, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
 import { assertConnectedOrg, mcpCall, readState, resolveOrgSlug, resolveWorkspaceDir, STATE_REL_PATH } from '../lib/workspace-sync.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 export function parseStatusArgs(argv) {
   if (argv.length === 0) return { dir: null, json: false };
@@ -87,5 +88,6 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main().catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
 }

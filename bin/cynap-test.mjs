@@ -29,6 +29,7 @@ import { installTestingContext, testingContextIsCurrent } from '../lib/testing-c
 
 import { createDevAiBroker, bindDevAiBroker } from '../lib/dev-ai-broker.mjs';
 import { warnCustomerAiReadiness } from '../lib/customer-ai-readiness-warning.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 export const ORG_TEST_FILE_RE = /\.test\.(?:ts|mts|js|mjs|cjs)$/;
 export const UNSUPPORTED_EXIT_CODE = 2;
@@ -217,5 +218,6 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main();
 }

@@ -8,6 +8,7 @@ import { resolveWorkingDir, stablePortForSlug } from '../lib/connect.mjs';
 import { CONTROL_FILE, CONTROL_HEADER, PREPARE_PROOF_PATH, PREPARE_PROOF_RESPONSE_BUDGET_MS } from './operator-proxy.mjs';
 import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
 import { isProxyUnreachableError, mcpCall, resolveOrgSlug } from '../lib/workspace-sync.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 const USAGE = 'Usage: cynap-propose.mjs <64-character-commit-sha> --request <number> [--json]';
 
@@ -126,6 +127,7 @@ export async function main(argv = process.argv.slice(2), { run = runProposeFlow,
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main().catch((error) => {
     process.stderr.write(describeProposeCrash(error));
     process.exitCode = error?.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;

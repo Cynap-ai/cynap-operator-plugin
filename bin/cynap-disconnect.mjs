@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { runOperatorDisconnect } from '../lib/operator-disconnect.mjs';
 import { probeProxyHealth, stablePortForSlug } from '../lib/connect.mjs';
 import { resolveWorkspace } from '../lib/workspace-sync.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 export function parseDisconnectArgs(argv) {
   if (argv.length > 1 || (argv.length === 1 && (!argv[0]?.trim() || argv[0].startsWith('--')))) {
@@ -47,6 +48,7 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

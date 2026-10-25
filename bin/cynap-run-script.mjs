@@ -28,6 +28,7 @@ import { assertConnectedOrg, hasSymlinkOnPath, readState, resolveOrgSlug, resolv
 import { assertNetworkGated, assertSupportedNode, SANDBOX_ENV, sandboxExecArgv } from '../lib/sandboxed-node.mjs';
 import { CONTROL_FILE, CONTROL_HEADER, SCRIPT_TOKEN_PATH, upstreamHeaders } from './operator-proxy.mjs';
 import { readPluginVersion } from './operator-proxy-launcher.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 const HOST_PATH = join(dirname(fileURLToPath(import.meta.url)), 'cynap-script-host.mjs');
 export const SCRIPTS_PREFIX = 'operator/scripts/';
@@ -276,5 +277,6 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main();
 }

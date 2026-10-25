@@ -13,6 +13,7 @@ import { runPreview } from './cynap-preview.mjs';
 import { describeReady, readinessOf } from '../lib/activation-readiness.mjs';
 import { formatRefusal, PLUGIN_OUTDATED_EXIT_CODE, unwrapToolEnvelope } from '../lib/format-refusal.mjs';
 import { isProxyUnreachableError, mcpCall, resolveOrgSlug } from '../lib/workspace-sync.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 const USAGE = 'Usage: cynap-activate.mjs <64-character-commit-sha> [--reconcile] [--json]';
 
@@ -223,6 +224,7 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main().catch((error) => {
     process.stderr.write(describeActivateCrash(error));
     process.exitCode = error?.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;

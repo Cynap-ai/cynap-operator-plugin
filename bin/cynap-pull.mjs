@@ -29,6 +29,7 @@ import {
 } from '../lib/workspace-sync.mjs';
 import { threeWayDiff } from '../lib/workspace-diff.mjs';
 import { installTestingContext } from '../lib/testing-context.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 export function parsePullArgs(argv) {
   const args = { dir: null, takeRemote: [], proxyUrl: null };
@@ -193,5 +194,6 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main();
 }

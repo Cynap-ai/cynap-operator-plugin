@@ -12,6 +12,7 @@ import { stablePortForSlug } from '../lib/connect.mjs';
 import { encodeContent } from '../lib/content-codec.mjs';
 import { assertConnectedOrg, listLocalFiles, mcpCall, readState, resolveOrgSlug, resolveWorkspaceDir, sha256Hex } from '../lib/workspace-sync.mjs';
 import { push } from './cynap-push.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 /** Text travels as-is; a binary asset (image, font) is marked base64, as on the commit path. */
 function renderFile(path, bytes) {
@@ -112,4 +113,7 @@ export async function main(argv = process.argv.slice(2)) {
   for (const finding of result.findings ?? []) console.log(JSON.stringify(finding));
   console.log('Missing reads are listed in each page’s labelled error panel. Check the visible page before taking screenshots.');
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
+  main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+}

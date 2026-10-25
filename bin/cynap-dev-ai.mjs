@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
 import { MAX_CALLS, MAX_TOKENS, saveDevAiConfig } from '../lib/dev-ai-config.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 export function parseDevAiArgs(argv) {
   let args = { allowedModels: [], maxTokens: MAX_TOKENS, callCap: MAX_CALLS };
@@ -32,4 +33,7 @@ export function main(argv = process.argv.slice(2)) {
     process.exitCode = 1;
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
+  main();
+}

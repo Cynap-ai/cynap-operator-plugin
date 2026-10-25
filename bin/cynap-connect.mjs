@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 
 import { runOperatorConnect } from '../lib/operator-connect.mjs';
 import { readPluginVersion } from './operator-proxy-launcher.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 /** The org a workspace directory belongs to: `~/CynapOperator/<slug>` names its own
  * slug, so a connect run from inside it needs no argument. Anything else is null. */
@@ -96,6 +97,7 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

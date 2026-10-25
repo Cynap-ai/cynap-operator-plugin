@@ -8,7 +8,8 @@ import { pathToFileURL } from 'node:url';
 import { resolveWorkingDir, stablePortForSlug } from '../lib/connect.mjs';
 import { CONTROL_FILE, CONTROL_HEADER, PREVIEW_PATH } from './operator-proxy.mjs';
 import { formatPreviewFailure, formatRefusal, PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
-import { isProxyUnreachableError, resolveOrgSlug } from '../lib/workspace-sync.mjs';
+import { isProxyUnreachableError, mcpCall, resolveOrgSlug } from '../lib/workspace-sync.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 const SHA = /^[a-f0-9]{40,64}$/;
 const AUTOMATION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -32,7 +33,18 @@ export function parsePreviewArgs(argv) {
 
 /** What to run once the bounded poll gives up on an attempt that is still running. */
 export function stillRunningHint(attemptId) {
-  return `cynap-preview: the preview is still running after the bounded wait. Read its verdict later with /cynap-preview status ${attemptId}`;
+  return `cynap-preview: the poll budget ran out before the verdict was ready (the preview has not hung; its verdict can wait on the baseline run). Resume with /cynap-preview status ${attemptId}`;
+}
+
+/** A pass the chain already honours while the attempt's own status read still says `pending`. Effect kinds are not known from here. */
+function lagInferredPass(attemptId) {
+  return { status: 'pass', attemptId, effectKinds: [], verdictSource: 'workspace_status' };
+}
+
+export function lagInferredNote(result) {
+  return result?.verdictSource === 'workspace_status'
+    ? `cynap-preview: a pass verdict already covers this commit; the attempt's own status read is still catching up, so its effect kinds are not shown. Read them with /cynap-preview status ${result.attemptId}\n`
+    : '';
 }
 
 export function previewSummary(body) {
@@ -68,7 +80,30 @@ export async function readPreviewStatus({ slug, attemptId, fetchImpl = fetch, no
   return previewSummary(await readStatus({ base, nonce, previewId: attemptId, fetchImpl }));
 }
 
-export async function runPreview({ slug, automationId, commitSha, fetchImpl = fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPolls = MAX_STATUS_POLLS, onStart = () => {}, nonceOverride = null }) {
+/** The attempt's status read can lag its verdict (a recorded `pass` still read as `pending` for minutes). */
+export const VERDICT_PROBE_EVERY_POLLS = 3;
+
+/**
+ * The second source for "does a verdict exist": the chain's own next action for this commit.
+ * `workspace_status` stops asking for a preview of a handler once a pass verdict covers it, the
+ * same read `/cynap-activate` acts on. True only when the commit is pending and no longer needs
+ * this handler previewed; any read trouble, or a commit not on the chain, is "unknown" (false).
+ */
+export async function passVerdictCleared({ slug, automationId, commitSha, fetchImpl = fetch }) {
+  try {
+    const status = await mcpCall(`http://127.0.0.1:${stablePortForSlug(slug)}/mcp`, 'workspace_status', {}, { fetchImpl });
+    const entry = Array.isArray(status?.pending) ? status.pending.find((item) => item?.commit_sha === commitSha) : null;
+    const action = entry?.next_action;
+    if (!action) return false;
+    if (action.kind !== 'handler_preview_required') return true;
+    return Array.isArray(action.handlers) && !action.handlers.some((handler) => handler?.automation_id === automationId);
+  } catch {
+    return false;
+  }
+}
+
+export async function runPreview({ slug, automationId, commitSha, fetchImpl = fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPolls = MAX_STATUS_POLLS, onStart = () => {}, nonceOverride = null,
+  probeVerdict = (probe) => passVerdictCleared({ ...probe, fetchImpl }) }) {
   const { nonce, base } = previewRoute(slug, nonceOverride);
   const headers = { 'Content-Type': 'application/json', [CONTROL_HEADER]: nonce };
   const start = await fetchImpl(base, {
@@ -88,9 +123,15 @@ export async function runPreview({ slug, automationId, commitSha, fetchImpl = fe
   for (let poll = 0; poll < maxPolls; poll += 1) {
     await wait(Math.min(2000 * (poll + 1), 10_000));
     const body = await readStatus({ base, nonce, previewId, fetchImpl });
-    if (body.status === 'pending' || body.status === 'preview_running') continue;
-    return previewSummary(body);
+    if (body.status !== 'pending' && body.status !== 'preview_running') return previewSummary(body);
+    if (poll % VERDICT_PROBE_EVERY_POLLS === VERDICT_PROBE_EVERY_POLLS - 1 && await probeVerdict({ slug, automationId, commitSha })) {
+      return lagInferredPass(previewId);
+    }
   }
+  // One last read of both sources before calling a long wait "still running".
+  const last = await readStatus({ base, nonce, previewId, fetchImpl });
+  if (last.status !== 'pending' && last.status !== 'preview_running') return previewSummary(last);
+  if (await probeVerdict({ slug, automationId, commitSha })) return lagInferredPass(previewId);
   return initial;
 }
 
@@ -103,6 +144,7 @@ export async function main(argv = process.argv.slice(2)) {
       onStart: (started) => process.stdout.write(`${JSON.stringify(operatorEffectOutput(started))}\n`),
     });
   process.stdout.write(`${JSON.stringify(operatorEffectOutput(result))}\n`);
+  process.stdout.write(lagInferredNote(result));
   if (result.status === 'fail') process.stdout.write(`cynap-preview: ${formatPreviewFailure(result)}\n`);
   if (result.status === 'pending' || result.status === 'preview_running') process.stdout.write(`${stillRunningHint(result.attemptId)}\n`);
   return result;
@@ -126,6 +168,7 @@ export function failureCode(error) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main().catch((error) => {
     process.stderr.write(`cynap-preview: failed (${failureCode(error)})${failureReason(error)}\n`);
     process.exitCode = error?.code === 'plugin_outdated' ? PLUGIN_OUTDATED_EXIT_CODE : 1;

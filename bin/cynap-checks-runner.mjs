@@ -29,6 +29,7 @@ import {
 // them.
 import { mcpCall } from '../lib/workspace-sync.mjs';
 import { reportTypecheck } from '../lib/handler-typecheck.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 const DEFAULT_PROXY_URL = process.env.CYNAP_OPERATOR_MCP_URL ?? 'http://127.0.0.1:8790/mcp';
 
@@ -131,4 +132,5 @@ async function main() {
   process.exit(run.status !== 'pass' ? 2 : typecheck.status === 'fail' ? 3 : 0);
 }
 
+applyGlobalFlags(import.meta.url);
 main().catch((error) => die(error instanceof Error ? error.message : String(error)));

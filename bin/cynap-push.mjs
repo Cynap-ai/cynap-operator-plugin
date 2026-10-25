@@ -28,6 +28,7 @@ import {
   sha256Hex,
   writeStateAtomic,
 } from '../lib/workspace-sync.mjs';
+import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 const VALID_INTENTS = new Set(['edit', 'repair', 'revert', 'provision', 'migration', 'drift_repair']);
 const SURFACE_ID_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
@@ -409,5 +410,6 @@ export async function main(argv = process.argv.slice(2), { cwd, fetchImpl } = {}
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  applyGlobalFlags(import.meta.url);
   main();
 }
