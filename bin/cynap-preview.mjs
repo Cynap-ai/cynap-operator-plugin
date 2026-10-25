@@ -102,6 +102,11 @@ export async function passVerdictCleared({ slug, automationId, commitSha, fetchI
   }
 }
 
+/** printed under a pass whose write-capable handler recorded no write. */
+export const WROTE_NOTHING_NOTE = 'cynap-preview: warning preview_wrote_nothing — this handler can write (executeSql, knowledge.store or a send tool) '
+  + 'but its preview recorded no write. A dry_run input or a branch the fixture never reaches proves nothing about the write path; '
+  + 'preview with input that exercises it. The owner sees this warning on the effect review.';
+
 export async function runPreview({ slug, automationId, commitSha, fetchImpl = fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPolls = MAX_STATUS_POLLS, onStart = () => {}, nonceOverride = null,
   probeVerdict = (probe) => passVerdictCleared({ ...probe, fetchImpl }) }) {
   const { nonce, base } = previewRoute(slug, nonceOverride);
@@ -146,6 +151,7 @@ export async function main(argv = process.argv.slice(2)) {
   process.stdout.write(`${JSON.stringify(operatorEffectOutput(result))}\n`);
   process.stdout.write(lagInferredNote(result));
   if (result.status === 'fail') process.stdout.write(`cynap-preview: ${formatPreviewFailure(result)}\n`);
+  if (result.warnings?.includes('preview_wrote_nothing')) process.stdout.write(`${WROTE_NOTHING_NOTE}\n`);
   if (result.status === 'pending' || result.status === 'preview_running') process.stdout.write(`${stillRunningHint(result.attemptId)}\n`);
   return result;
 }

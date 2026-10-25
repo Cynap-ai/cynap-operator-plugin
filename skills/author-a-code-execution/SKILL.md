@@ -25,6 +25,23 @@ Handler code must not use raw network APIs such as `fetch` or `node:https`. Call
 
 Commit the handler source and its matching config through `workspace_commit`. Run the checks and obtain a passing handler preview for that exact bundle. The organization owner then reviews the server-read commit and handler diff in the approval page; approval freezes the commit, bundle hash and live generation. The owner activates that approved commit through `workspace_activate_commit`. Do not use `handler_upload` or paste source into an approval form.
 
+Push refuses what would only fail live, and names the file and line:
+
+| Refusal | Fix |
+|---|---|
+| `llm.complete` asks for a class keyword (`fast`) and the org has `config/ai.json` | Use the exact id the message suggests and list it in `allowedModels`. |
+| `llm.complete` uses a model `config/ai.json` does not list, or one with no price | Add it to `allowedModels`, or use a listed model. |
+| `executeSql` sets or inserts a literal outside the column's `enum_values` | Fix the literal, or add the value to `enum_values` in `context/schema.json`. |
+| `validation_incomplete` | The check ran out of time. Nothing was committed; push again. |
+
+These checks re-run on every handler when `config/ai.json` or a schema enum changes, and report only
+what your change introduces. `WHERE` literals are never checked. A model or SQL built at run time is a
+warning, not a refusal.
+
+A pass whose handler can write (`executeSql`, `knowledge.store`, a send tool) but recorded no write
+carries `preview_wrote_nothing`, and the owner sees it. Preview with input that reaches the write;
+a `dry_run` input proves nothing about the write path.
+
 If activation returns `handler_unproven`, run `/cynap-preview <automation-id> <commit-sha>` and obtain a passing preview for the exact bundle. If it returns `preview_unavailable`, preview admission is closed and this commit blocks the ordered chain; stop and report it instead of retrying activation. `bundle_hash_mismatch` means the checked bundle differs from the approved one. `handler_base_moved` means the live generation advanced; make a new commit against the new base and request a fresh approval. `handler_effect_absent` means recovery fenced an effect that never committed; inspect the receipt and retry through the new commit path. A bad handler is repaired forward with a new commit, approval and activation. Do not roll back an older pointer over a newer generation.
 
 You are authoring a **`mode:code_execution` automation** for one customer

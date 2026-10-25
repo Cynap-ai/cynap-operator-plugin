@@ -44,7 +44,11 @@ Readiness reports `config.file.present: false` and `/cynap-push` warns. Start fr
 }
 ```
 
-List every model a handler passes as `model`. Add a `checks/` assertion naming
+List every model a handler passes as `model`. Push enforces it: a push that leaves a handler's
+static model unlisted, or uses a class keyword such as `fast` while this file exists, is refused
+with the handler and line. That includes pushing this file itself: creating it, or dropping a
+model, re-checks every handler. `allowedModels` and task `defaultModel`s must be exact, priced ids,
+never a class keyword. Add a `checks/` assertion naming
 `config/ai.json`, then activate it like any other workspace change. `nativeRoute`
 and per-task `tasks` entries are optional.
 

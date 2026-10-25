@@ -234,3 +234,10 @@ test('another handler needing a preview does not clear this one; a verdict landi
   const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, fetchImpl, wait: async () => {}, maxPolls: 2, nonceOverride: 'n' });
   assert.equal(result.status, 'fail', 'the final read before giving up caught the verdict');
 });
+
+// the closed warning set survives the summary; anything else is dropped.
+test('previewSummary keeps preview_wrote_nothing and drops unknown warnings', () => {
+  const summary = previewSummary({ previewId: 'p-1', status: 'pass', effectKinds: [], warnings: ['preview_wrote_nothing', 'made_up'] });
+  assert.deepEqual(summary.warnings, ['preview_wrote_nothing']);
+  assert.equal(previewSummary({ previewId: 'p-1', status: 'pass', effectKinds: [] }).warnings, undefined);
+});

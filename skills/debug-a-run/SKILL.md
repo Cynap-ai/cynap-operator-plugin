@@ -132,6 +132,10 @@ The table below is parity-tested against the SDK's closed admission vocabulary.
 | `unknown` | platform | the platform investigates the admission signal. |
 <!-- customer-ai-admission:end -->
 
+`model_not_allowed` correction: when the refused model is a class keyword such as `fast`, do not add the
+keyword to `allowedModels` (push refuses that too). Change the handler to an exact id that
+`config/ai.json` lists. Push now refuses both cases before a run, naming the handler and line.
+
 Use the reason returned by the platform; table order does not select admission. A reason
 whose actor is the Owner is an expected state, not a fault: tell the Owner
 exactly what to do and stop.
