@@ -272,6 +272,27 @@ export default async function handler(ctx: CynapContext): Promise<Record<string,
    write was attempted). Set `execution.rerun_safe: true` only if
    re-running from the start is safe.
 
+## Recipes for "the platform has no way to do this"
+
+These use only the tools above. Try the recipe before reporting a missing platform feature.
+
+- **Skip work done in an earlier run.** Store each result under its business id (for example
+  `name: 'job:<id>'`) and read the stored ids before doing the work. An item already stored is
+  never processed or paid for again.
+- **Skip duplicates within one run.** Keep a `Set` of the ids handled in this run and skip a
+  repeat before any tool call.
+- **Claim an item so overlapping runs cannot both take it.** Give the entity type an id field
+  with `unique_index: true` (see `author-a-schema-change`), then claim with
+  `ctx.tools.knowledge.executeSql('INSERT OR IGNORE INTO <table> (id, name, type, <id field>, ...) VALUES (?, ?, ?, ?, ...)', [...])`.
+  `rowsAffected === 1` means this run owns the item; `0` means another run claimed it first, so
+  skip it. Declare `knowledge.executeSql` in `allowed_tools`.
+- **Retry safely after a failure.** Store the result only after the work succeeded. A failed item
+  stays unstored, so the next scheduled run retries it. Fail the run loudly
+  (`result.success === false`) when an item fails, rather than skipping it silently.
+- **Avoid a repeat AI call for one item.** Use the stored-result check above. The `dedupe_key`
+  option in `configure-customer-ai` adds a cross-run guarantee, but only for orgs Cynap has
+  enabled; without it, ship with the stored-result check.
+
 ## A minimal correct example
 
 `config.json`:

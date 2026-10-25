@@ -96,6 +96,12 @@ at most once for that key across runs of the same automation. A later run gets t
 result. Keyed calls are `complete` only: `extract`, `classify` and `evaluate` refuse a key.
 Keyed calls run only for orgs Cynap has enabled; others get `dedupe_not_enabled`.
 
+The key is optional. Do not pass one until the org is enabled: a handler that always passes a
+key fails every call with `dedupe_not_enabled`, and the change cannot ship. Without a key, avoid
+paying twice for one item the usual way: store each result under its business id (for example
+`job:<id>`) and skip ids that are already stored before calling the model. Adding the key later
+is a one-line change, so ship without it now. `dedupe_not_enabled` is not a blocker.
+
 - One key names one logical call. A changed prompt or options needs a new key, and reusing a
   key for different content is a permanent `IDEMPOTENCY_CONFLICT` by design.
 - The key is 1–200 characters of `A-Za-z0-9._:/-`, case-sensitive, and must carry no personal data.
@@ -103,5 +109,6 @@ Keyed calls run only for orgs Cynap has enabled; others get `dedupe_not_enabled`
   with the same key and capped backoff (30 s, 2 min, 10 min), then surface the failure.
 - `call_in_doubt` and `dedupe_terminal_failure`: the first attempt's outcome is unknown or it
   ended without a result. Do not work around it with a new key, no key, a renamed automation or
-  by waiting: each can re-spend. Escalate; the platform resolves it.
+  by waiting: each can re-spend. Raise it with `escalation_raise`, naming the key and the run id;
+  the platform resolves it. That one item waits. Keep shipping the rest of the change.
 - `dedupe_unavailable`: the keyed ledger could not be read; nothing was dispatched. Retry later.

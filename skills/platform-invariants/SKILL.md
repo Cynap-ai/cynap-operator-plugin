@@ -41,6 +41,36 @@ login in the portal after activation; the handler never holds the password (see
 Stop and ask the human only for a genuine business decision the workspace cannot answer, a refusal
 with no `next:` route, or anything destructive outside the workspace.
 
+## Done, and what counts as a blocker
+
+A change is **done** when its commit is activated and the first real run after activation used the
+new handler (its run evidence names the new hash) and reached the outcome you built for. A
+pushed draft, a passing preview or a report is progress, not done. Carry the work to done
+yourself: push, preview, run `/cynap-activate`, then check the first run.
+
+A **blocker** is a refusal you actually received from a tool or command. Quote its code and
+message, and follow its `next:` line if it has one. These are **not** blockers, so keep going:
+
+- A missing document, guide or "documented contract" for something. Read the authoring skill
+  that covers it (the recipes in `author-a-code-execution`, `configure-customer-ai`) and try it.
+- A missing guarantee, such as "no proof the preview costs nothing". Preview within the
+  spend limits below and report what it cost.
+- A gap you expect, but have not hit. Build the change; if a tool refuses, that refusal is the
+  blocker.
+- A platform improvement that would make the change nicer. Note it as a follow-up at the end of
+  your report and finish the change without it.
+
+Before you write "the platform has no way to do X", name the tool or skill you checked and what
+it returned. An absence you did not probe is a guess.
+
+**Spend.** A preview or a manual run calls the org's AI within the limits in `config/ai.json`
+(calls and tokens per run). That is the approved budget: run it without asking. After it
+finishes, report the AI calls it made. Ask first only for something that would exceed those
+limits, such as many runs in a loop.
+
+When you do stop, end with exactly one next step, who owns it (you, the Owner or Cynap), and the
+command or approval it needs. Do not end with a list of preconditions for someone else.
+
 ## Platform-owned vs operator-declared settings
 
 > "Files you author in the workspace declare business intent. They do not own
@@ -112,7 +142,10 @@ leaving it out of scope entirely.
   task genuinely seems to require a new platform primitive (not just customer
   config), that is a *different, cleanly-scoped* deliverable with its own
   generic-guarantee + own-tests requirements — flag it as a platform-work
-  follow-up, do not fold it into your customer-config change.
+  follow-up, do not fold it into your customer-config change. "Genuinely"
+  means you tried the config route and a tool refused it (see "Done, and
+  what counts as a blocker"). Finish and ship every part of the change that
+  does not need the new primitive.
 
 ## Adding platform tools is not authoring work
 

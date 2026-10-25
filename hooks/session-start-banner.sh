@@ -37,7 +37,9 @@
 #   - NO-OP (prints nothing) unless this project dir is a /cynap-connect
 #     working dir (a `.mcp.json` naming the `cynap-operator` server) — it
 #     fires for every SessionStart source, so the cwd gate is what keeps it
-#     silent everywhere else.
+#     silent everywhere else. One exception: a dir whose direct children are
+#     connected org dirs gets one line naming them, because operator tools
+#     never load in the parent.
 #   - Reads ONLY what /health and /context already expose — carries no
 #     token/cookie/credential itself; the nonce it sends to /context is read
 #     from the proxy's own `.operator-control` file (0600, written by the
@@ -83,7 +85,22 @@ main() {
   [ -z "$CWD" ] && return 0
 
   MCP_JSON="${CWD}/.mcp.json"
-  [ -f "$MCP_JSON" ] || return 0 # not a /cynap-connect directory — nothing to report
+  if [ ! -f "$MCP_JSON" ]; then
+    # A session opened in the folder that HOLDS connected org dirs (e.g. ~/CynapOperator) gets no
+    # operator tools, because those load only inside the org dir. Name the dirs so the session
+    # restarts in the right one instead of reporting "no operator tools" as a blocker.
+    CHILDREN=""
+    for child_mcp in "$CWD"/*/.mcp.json; do
+      [ -f "$child_mcp" ] || continue
+      grep -q 'cynap-operator' "$child_mcp" 2>/dev/null || continue
+      child_dir="$(dirname "$child_mcp")"
+      CHILDREN="${CHILDREN:+${CHILDREN}, }${child_dir##*/}"
+    done
+    if [ -n "$CHILDREN" ]; then
+      echo "Cynap operator plane: this folder is not a connected org dir, so no operator tools load here. Start the session inside one of: ${CHILDREN}."
+    fi
+    return 0 # not a /cynap-connect directory — nothing else to report
+  fi
 
   # Cheap, jq-free gate: confirms this dir names the operator server before
   # anything below decides whether jq itself is even available.
@@ -222,6 +239,9 @@ main() {
   else
     HEALTH_LINE="Cynap operator plane: this session is ATTACHED to org \`${ORG}\` (${ENV}, proxy v${VERSION}).${EXP_NOTE} MCP tools from \`cynap-operator\` are live. Run \`/cynap-status\` for the full fleet view."
   fi
+  # The done-and-blocker contract, in one line, so it reaches the session before any brief does.
+  # The full text is platform-invariants § "Done, and what counts as a blocker".
+  CONTRACT_LINE="Work is done when its commit is activated and the first run used it. Push, preview and /cynap-activate need no chat approval. A blocker is a refusal you received, quoted, not a missing doc or guarantee. If no \`cynap-operator\` tools are callable, run /reload-plugins, then start a new session in this folder."
 
   if [ -n "$BRIEF_AGE_MS" ] && [ "$BRIEF_AGE_MS" -ge 0 ] 2>/dev/null; then
     AGE_S=$((BRIEF_AGE_MS / 1000))
@@ -234,7 +254,7 @@ main() {
     FRESHNESS_LINE="Org brief age unknown (this proxy build sends no freshness headers)."
   fi
 
-  PREFIX="${HEALTH_LINE}"$'\n'"${FRESHNESS_LINE}"$'\n\n'
+  PREFIX="${HEALTH_LINE}"$'\n'"${FRESHNESS_LINE}"$'\n'"${CONTRACT_LINE}"$'\n\n'
   PREFIX_BYTES="$(printf '%s' "$PREFIX" | wc -c | tr -d ' ')"
   BRIEF_BYTES="$(printf '%s\n' "$BRIEF_TEXT" | wc -c | tr -d ' ')"
   if [ $((PREFIX_BYTES + BRIEF_BYTES)) -gt "$MAX_OUTPUT_BYTES" ]; then
