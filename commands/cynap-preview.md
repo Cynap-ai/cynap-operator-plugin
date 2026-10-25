@@ -25,7 +25,11 @@ typed verdict code and its closed facts: `failureLocation` (the error class and
 `handler.js` line where the candidate threw) and whether the baseline, the accepted
 code on its own copy, failed too. A baseline that failed too means the failure may
 not come from this commit. A baseline that succeeded but whose effects could not be
-compared (`diff_unavailable`) did not fail: look at what this commit changed. No error text or payload is ever shown. Never print row
+compared (`diff_unavailable`) did not fail: look at what this commit changed. A
+`capture_tool_failed` verdict also lists `faults`: `tool_error:<tool>:<thrown|result_error>`,
+plus `<rejection_code>:<tool>` (e.g. `batch_too_large:knowledge_store_batch`) when the tool
+refused the request for a fixable reason, and says when the same tool failed on the baseline
+too. No error text or payload is ever shown. Never print row
 data from a preview copy.
 
 Browser handlers (`capabilities: ["browser"]`) preview like any other handler: the vendor session never enters the preview VM, page loads use it server-side, and every write is captured. Activation needs a pass. After a pass, run `/cynap-activate <commit-sha>`; any captured write is listed on the owner approval page.

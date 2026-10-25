@@ -41,7 +41,7 @@ import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -336,6 +336,8 @@ export const PREVIEW_CONTRACT = Object.freeze({
   rejectionCodes: ['READ_TOO_LARGE', 'BATCH_TOO_LARGE'],
   factId: /^fact:[a-z0-9]+(?:-[a-z0-9]+)*$/u,
   baselineOutcomes: ['failed', 'succeeded', 'diff_unavailable', 'not_dispatched'],
+  faultCode: /^[a-z0-9][a-z0-9_.:-]{0,63}$/,
+  maxToolFaults: 2,
 });
 /** The closed baseline outcomes the status read may carry. Anything else is dropped here. */
 const PREVIEW_BASELINE_OUTCOMES = new Set(PREVIEW_CONTRACT.baselineOutcomes);
@@ -361,6 +363,13 @@ export function previewFailureLocation(value) {
   return { errorName: value.errorName,
     ...(typeof value.site === 'string' && PREVIEW_CONTRACT.handlerSite.test(value.site) ? { site: value.site } : {}),
     ...(fault ? { fault } : {}) };
+}
+
+/** Why a preview's deciding tool call failed: HandlerFault codes only, bounded. */
+export function previewToolFaults(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, PREVIEW_CONTRACT.maxToolFaults).flatMap((fault) =>
+    typeof fault?.code === 'string' && PREVIEW_CONTRACT.faultCode.test(fault.code) ? [{ code: fault.code }] : []);
 }
 
 /** The Build Facts the server pushed for a failed preview: registry text, never handler output. Bounded. */
@@ -411,6 +420,8 @@ export async function forwardPreviewRequest({ method, input, previewId, orgSlug,
     ...(previewFailureLocation(answer.failureLocation) ? { failureLocation: previewFailureLocation(answer.failureLocation) } : {}),
     ...(previewBuildFacts(answer.buildFacts).length > 0 ? { buildFacts: previewBuildFacts(answer.buildFacts) } : {}),
     ...(PREVIEW_BASELINE_OUTCOMES.has(answer.baselineOutcome) ? { baselineOutcome: answer.baselineOutcome } : {}),
+    ...(previewToolFaults(answer.candidateFaults).length > 0 ? { candidateFaults: previewToolFaults(answer.candidateFaults) } : {}),
+    ...(answer.baselineAlsoFailed === true ? { baselineAlsoFailed: true } : {}),
     ...(answer.rule === 'one_preview_per_org' ? { rule: answer.rule } : {}),
     ...(PREVIEW_AUTOMATION_ID.test(answer.automationId ?? '') ? { automationId: answer.automationId } : {}),
     ...(PREVIEW_TIMESTAMP.test(answer.startedAt ?? '') ? { startedAt: answer.startedAt } : {}),
@@ -1656,11 +1667,13 @@ export function deleteMarker(slug, sessionId, baseDir) {
 //     unanswered must read as "consent timed out", never as a hung command.
 // ---------------------------------------------------------------------------
 
-/** How long automatic consent waits for the operator to finish in the browser
- * before giving up and saying so. Matches pkceLoopbackLogin's own default —
- * the browser leg is the same leg, so a shorter bound here would abandon a
- * consent the login is still legitimately waiting on. */
-export const AUTO_CONSENT_TIMEOUT_MS = 5 * 60 * 1000;
+/** How long a browser consent waits for the owner before giving up and saying so.
+ * The one consent deadline: pkceLoopbackLogin's default, the consent gate and
+ * `ACTIVATE_RESPONSE_BUDGET_MS` all derive from it, so no leg abandons a consent another is still
+ * waiting on. Only this pre-approval wait is 15 minutes: the portal mints the PKCE code at approval
+ * with its own 5-minute TTL, and the purpose credential keeps its 5 minutes. The loopback
+ * listener stays bound for the whole wait. */
+export const AUTO_CONSENT_TIMEOUT_MS = 15 * 60 * 1000;
 
 // Every hop after consent has an explicit bound, and the CLI's wait for /activate is
 // computed from them (`ACTIVATE_RESPONSE_BUDGET_MS`), so the proxy's typed outcome always arrives
@@ -2470,6 +2483,7 @@ export async function pkceLoopbackLogin({
   timeoutMs = AUTO_CONSENT_TIMEOUT_MS,
   requestKind = 'login',
   commitSha,
+  noticeId,
 }) {
   if (requestKind === 'activation' && !/^[a-f0-9]{64}$/i.test(commitSha ?? '')) {
     throw new Error('activation PKCE requires a 64-character commit sha');
@@ -2489,6 +2503,8 @@ export async function pkceLoopbackLogin({
   if (requestKind === 'activation') {
     authUrl.searchParams.set('request_kind', 'activation');
     authUrl.searchParams.set('commit_sha', commitSha);
+    // The owner step-up notice this consent retracts when it is answered.
+    if (typeof noticeId === 'string' && NOTICE_ID.test(noticeId)) authUrl.searchParams.set('notice_id', noticeId);
   }
 
   out.write('[operator-proxy] Opening browser for operator login (PKCE loopback)…\n');
@@ -2523,6 +2539,39 @@ export async function pkceLoopbackLogin({
 }
 
 const AUTOMATIC_STEP_UP_HINT_SLUG = 'cynap-e2e';
+const NOTICE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * ask the portal to tell the org's Owners, in-app and by email, that a browser step-up
+ * is waiting. Keyed by `noticeId` (one per consent), so the portal dedupes a retry. Never throws and
+ * never blocks the consent: it resolves with whether an Owner was notified, which the caller prints.
+ */
+export async function requestStepUpNotice({ mintHost, commitSha, noticeId, getAuthHeaders, pluginVersion, fetchImpl = fetch }) {
+  const authHeaders = typeof getAuthHeaders === 'function' ? getAuthHeaders() : null;
+  if (!authHeaders || Object.keys(authHeaders).length === 0) return { notified: false, reason: 'not_connected' };
+  try {
+    const res = await fetchImpl(`${mintHost}/api/auth/operator-cli/activation-notice`, {
+      method: 'POST',
+      headers: upstreamHeaders(pluginVersion, {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...stagingProtectionBypassHeaders(),
+      }),
+      body: JSON.stringify({ notice_id: noticeId, commit_sha: commitSha }),
+      signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
+    });
+    const body = await res.json().catch(() => null);
+    if (body?.notified === true) return { notified: true };
+    return { notified: false, reason: upstreamReason(body) ?? `http_${res.status}` };
+  } catch (error) {
+    return { notified: false, reason: error?.name === 'TimeoutError' ? 'timeout' : 'unreachable' };
+  }
+}
+
+/** The portal's `reason` field when it is a plain identifier, else undefined. */
+function upstreamReason(body) {
+  return typeof body?.reason === 'string' && /^[a-z0-9_]{1,64}$/.test(body.reason) ? body.reason : undefined;
+}
 
 /**
  * Ask the portal for an automatic activation step-up (the platform test org only). The server
@@ -2607,6 +2656,7 @@ export async function activateCommitWithStepUp({
   login = pkceLoopbackLogin,
   getAuthHeaders,
   automaticStepUp = requestAutomaticStepUp,
+  stepUpNotice = requestStepUpNotice,
   fetchImpl = fetch,
   out = process.stderr,
   callTimeoutMs = ACTIVATION_CALL_TIMEOUT_MS,
@@ -2623,6 +2673,14 @@ export async function activateCommitWithStepUp({
       ? await automaticStepUp({ mintHost, commitSha, getAuthHeaders, pluginVersion, fetchImpl })
       : null;
   const stepUp = automatic ? 'automatic' : 'browser';
+  // A browser step-up waits on an Owner: tell them, and say whether that worked.
+  const noticeId = automatic ? undefined : randomUUID();
+  if (noticeId) {
+    const notice = await stepUpNotice({ mintHost, commitSha, noticeId, getAuthHeaders, pluginVersion, fetchImpl });
+    out.write(notice.notified
+      ? `[operator-proxy] The org's Owners were notified in Cynap and by email that this approval is waiting (up to ${Math.round(AUTO_CONSENT_TIMEOUT_MS / 60000)} minutes).\n`
+      : `[operator-proxy] The org's Owners were NOT notified (${notice.reason}). Tell an Owner this approval is waiting.\n`);
+  }
   let credential;
   try {
     ({ credential } = automatic
@@ -2633,6 +2691,7 @@ export async function activateCommitWithStepUp({
           pluginVersion,
           requestKind: 'activation',
           commitSha,
+          noticeId,
           out,
         }));
   } catch (error) {

@@ -22,6 +22,11 @@ The local proxy opens the owner PKCE approval page, then uses the resulting
 single-use purpose credential for exactly one `workspace_activate_commit` call.
 Do not use device approval or call `workspace_activate_commit` directly.
 
+The Owner has 15 minutes to approve on that page. While it waits, the org's Owners (only Owners)
+get a Cynap message and an email saying an approval is waiting. The message goes away when the
+approval is given, denied or expires. The proxy log says whether the Owners were notified; if it
+says they were NOT notified, tell an Owner yourself.
+
 The command reads `workspace_status` first. On `handler_preview_required`, it starts each
 preview with `{orgSlug, automationId, commitSha}`, prints `preview_running` and the attempt
 id, and polls status with bounded backoff. After a pass it re-reads `workspace_status`;

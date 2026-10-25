@@ -20,7 +20,7 @@ test('/cynap-connect delegates to the executable product seam, not agent-authore
 });
 
 test('connect health deadline exceeds the PKCE sign-in window', () => {
-  assert.ok(DEFAULT_HEALTH_TIMEOUT_MS > 5 * 60 * 1000);
+  assert.ok(DEFAULT_HEALTH_TIMEOUT_MS > 15 * 60 * 1000);
 });
 
 test('a lower-version same-org connector is launched only after its credential revocation is proven', async () => {
