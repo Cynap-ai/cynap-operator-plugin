@@ -136,7 +136,7 @@ export async function activate({ slug, commitSha, witness = false, reconcile = f
 /** Read only the selected commit's next action through the plugin's local MCP proxy. */
 export async function readActivationAction({ slug, commitSha, fetchImpl = fetch }) {
   const status = await mcpCall(`http://127.0.0.1:${stablePortForSlug(slug)}/mcp`, 'workspace_status', {}, { fetchImpl });
-  if (status?.ok === false) throw Object.assign(new Error(formatRefusal(status, { command: 'cynap-activate', commitSha }).trim()), { code: status.code });
+  if (status?.ok === false) throw Object.assign(new Error(formatRefusal(status, { command: 'cynap-activate' }).trim()), { code: status.code });
   if (status?.ok !== true) throw new Error('workspace status unavailable');
   const selected = status.pending?.find((item) => item.commit_sha === commitSha);
   if (!selected) throw new Error('commit is not pending in this workspace');
@@ -206,7 +206,7 @@ export async function main(argv = process.argv.slice(2)) {
     onProgress: (status) => { const safe = operatorEffectOutput(status); process.stdout.write(`${json ? JSON.stringify(safe) : `preview: ${safe.status ?? 'unknown'}`}\n`); } }));
   if (json) process.stdout.write(`${JSON.stringify(result)}\n`);
   else if (result?.ok === false || result?.code) {
-    process.stdout.write(formatRefusal(result, { command: 'cynap-activate', commitSha }));
+    process.stdout.write(formatRefusal(result, { command: 'cynap-activate' }));
   }
   else if (notActivated(result)) process.stdout.write(describeNotActivated(result.next_action.kind, commitSha));
   else {

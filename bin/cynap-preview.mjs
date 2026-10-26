@@ -117,7 +117,7 @@ export async function runPreview({ slug, automationId, commitSha, fetchImpl = fe
   const started = await start.json();
   if (!start.ok) {
     const refusal = { ...started, code: started?.code ?? started?.error ?? `HTTP ${start.status}` };
-    throw Object.assign(new Error(formatRefusal(refusal, { command: 'cynap-preview', commitSha }).trim()), { code: refusal.code });
+    throw Object.assign(new Error(formatRefusal(refusal, { command: 'cynap-preview' }).trim()), { code: refusal.code });
   }
   const previewId = started?.previewId;
   if (typeof previewId !== 'string') {

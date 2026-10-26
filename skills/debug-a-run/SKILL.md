@@ -100,7 +100,7 @@ The table below is parity-tested against the SDK's closed admission vocabulary.
 | `dedupe_in_flight` | retry | retry with the same key after a delay. |
 | `dedupe_terminal_failure` | operator | handle the failure; a new key can re-spend. |
 | `dedupe_unavailable` | platform | retry with the same key later. |
-| `dedupe_not_enabled` | owner | remove dedupe_key, or ask Cynap to enable keyed calls. |
+| `dedupe_not_enabled` | operator | call without dedupe_key; keyed calls are not enabled for this org. |
 | `deadline_expired` | operator | the Operator starts a new logical call with a valid deadline if work is still required. |
 | `period_changed` | operator | the Operator starts a new logical call bound to the current period. |
 | `committed_authority_changed` | operator | the Operator resolves the current committed authority before starting a new logical call. |

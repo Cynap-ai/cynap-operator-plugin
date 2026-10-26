@@ -23,7 +23,23 @@ test('top-level effect paths, validation run and next action survive formatting'
 
 test('preview admission and proof refusals give the operator a concrete route', () => {
   assert.match(formatRefusal({ code: 'preview_unavailable' }), /chain stays blocked.*check \/cynap-status/);
-  assert.match(formatRefusal({ code: 'handler_unproven' }, { commitSha: 'a'.repeat(64) }), /\/cynap-preview <automation-id> a{64}/);
+});
+
+// The next step comes from the server's resolver, printed once; the plugin invents none.
+test('a refusal prints the server next step once, with its command, and nothing of its own', () => {
+  const sha = 'a'.repeat(64);
+  const line = 'Next step (you): Run /cynap-preview for the automation at this commit, then ask the Owner to approve again.';
+  const text = formatRefusal({ ok: false, code: 'handler_unproven', message: `No pass preview stands.\n${line}`,
+    next_action: { owner: 'operator', retryable: false, reason: line.slice('Next step (you): '.length), command: `/cynap-preview a1 ${sha}` } });
+  assert.equal(text.split(line).length - 1, 1);
+  assert.match(text, new RegExp(`next: /cynap-preview a1 ${sha}`));
+  assert.doesNotMatch(formatRefusal({ code: 'handler_unproven', next_action: { owner: 'operator', reason: 'r' } }), /<automation-id>/);
+});
+
+test('a guard throw keeps its server line through the formatter', () => {
+  const text = formatRefusal({ ok: false, code: 'release_halted',
+    message: "release_halted: Tool 'x' is paused while new work is halted\nNext step (Cynap): Wait until Cynap lifts the halt on new work, then retry the same call; nothing in it needs to change." });
+  assert.match(text, /Next step \(Cynap\): Wait until Cynap lifts the halt/);
 });
 
 test('tool decoder unwraps JSON-RPC and SSE text from the activation proxy', () => {
@@ -50,11 +66,12 @@ test('cynap-activate refusal names the code and failureCode instead of request_r
 
 test('cynap-activate names the preview as the next step when the step-up reports handler_preview_required', () => {
   const sha = 'a'.repeat(64);
-  const text = formatRefusal({ ok: false, code: 'automatic_step_up_failed', failureCode: 'handler_preview_required' },
-    { command: 'cynap-activate', commitSha: sha });
+  const text = formatRefusal({ ok: false, code: 'automatic_step_up_failed', failureCode: 'handler_preview_required',
+    next_action: { owner: 'operator', retryable: false, reason: 'Run /cynap-preview for the automation at this commit.', command: `/cynap-preview a1 ${sha}` } },
+  { command: 'cynap-activate' });
   assert.match(text, /^cynap-activate: automatic_step_up_failed \(handler_preview_required\): no passing preview/);
   assert.doesNotMatch(text, /Re-run \/cynap-activate once/);
-  assert.match(text, new RegExp(`next: /cynap-preview <automation-id> ${sha}`));
+  assert.match(text, new RegExp(`next: /cynap-preview a1 ${sha}`));
 });
 
 // an outcome the CLI could not learn is said to be unknown, never given a guessed cause.
