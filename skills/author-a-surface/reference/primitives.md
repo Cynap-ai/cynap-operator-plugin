@@ -3568,13 +3568,9 @@ Interactive: no.
       "minLength": 1
     },
     "height": {
-      "anyOf": [
-        {
-          "type": "number"
-        },
-        {
-          "type": "string"
-        }
+      "type": [
+        "number",
+        "string"
       ]
     },
     "label": {
