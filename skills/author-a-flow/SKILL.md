@@ -84,9 +84,12 @@ schema-parse rejection, not a silently-ignored key.
    platform-managed `allowedHosts` list. A `baseURL` pointing at
    `169.254.169.254` or an unlisted host is rejected at load time — this
    applies to `model.baseURL` AND every `subagents[*].model.baseURL`.
-   Native routes never accept a customer-set `baseURL`; use the exact qualified
-   catalog model reference and let the platform resolve its endpoint. A custom
-   approved endpoint is a legacy BYOK transport only.
+   A native route serves only a model the platform lists as native-capable: a
+   native provider model with `baseURL: null`, or an `openrouter` model with
+   `baseURL` exactly `https://openrouter.ai/api/v1` (a flow without it fails
+   closed). Any other endpoint or an unlisted model is refused at activation
+   with `model_capacity_unavailable`, and the refusal names the admitted list.
+   A custom approved endpoint is a legacy BYOK transport only.
 
 4. **A declared tool must be permitted, not just approved** — the platform
    computes `declared ∩ grant`, and a tool you declare that IS in the approved
