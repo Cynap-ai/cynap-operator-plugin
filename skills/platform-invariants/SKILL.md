@@ -173,6 +173,14 @@ structural mechanism is the scope-token primitive (`subject_scope`) —
 such in your authoring output. See `author-a-flow` for the `subject_scope`
 config field.
 
+## Automation Actions: declared by you, floored and decided by the platform
+
+An action's `risk` is a declaration the platform checks, never a grant. The platform computes the floor from the
+tools the action reaches and refuses a lower class at commit; it never infers `money` downward. Who may call an
+action is an Owner grant, and a non-read action only runs after an Owner settles its decision. Do not model an
+approval, a "can run this" flag or a caller identity in config or input: `trigger_data.caller` is platform-written.
+See `author-a-code-execution` for the `actions[]` shape.
+
 ## Quick pre-flight checklist before any authoring task
 
 1. Which of the 3 modes does this task need? → `choose-the-right-mode`.

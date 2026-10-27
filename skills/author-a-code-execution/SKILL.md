@@ -378,3 +378,27 @@ a non-empty set drawn from `write`, `message`, `automation_trigger`, `artifact_w
 activity, not truth: a no-op write still counts. To catch "the data went stale", author an
 Operations Condition (`operations/conditions/*.yaml` with `analytics_read` and `stale_after_seconds`)
 as well. A plan-only automation that never applies effects declares no `freshness`.
+
+## Declare Automation Actions (what an Org member may invoke)
+
+A `code_execution` automation becomes a tool a granted member can call by declaring `mcp_exposure.actions[]`
+(strict; one entry per tool). Each action carries `id`, `tool_name`, `description`, `risk`
+(`read` | `reversible_write` | `irreversible_write` | `money`), `handler_action`, `reaches` (a non-empty subset of
+`execution.allowed_tools`), `input_schema`, and for a plan `plan: true` plus `pinned_schema`. A `money` action also
+declares `effect: { automation, key }`: the child automation whose green run proves money moved, and the
+`pinned_schema` array field whose single item it applies.
+
+- **The platform sets a floor under your `risk`.** It is the highest risk any tool in `reaches` can hit
+  (`knowledge.store` is a write, `channel.send` is irreversible, `automation.trigger` is `money`). Declare a lower
+  class and the commit is refused naming the field. A `read` action needs every `allowed_tools` entry to read. An
+  automation with `session_providers`, or `http.*` with a non-GET method, floors at `money`.
+- **Schemas are bounded.** `input_schema` and `pinned_schema` are `type: object` with `additionalProperties: false`
+  at every object, depth at most 6, every string `maxLength` (at most 4096), every array `maxItems` (at most 200), at
+  most 16 KB, and no `$ref`, `$defs`, `patternProperties`, `pattern` or `if/then/else`.
+- **Action ids carry no commitment verb** (`approve`, `decline`, `reject`, `suspend`, `grant`, `pay`, `commit`,
+  `settle`): approval is a separate human decision the platform creates, never an action you declare.
+- **Single key only.** A `money` action's `effect.key` array must set `maxItems: 1`; anything wider is refused as
+  `app_action_batch_unavailable`.
+- `role_templates[]` (`key`, `label`, `actions`, optional `suggested_autonomy`) name this automation's own actions.
+- `trigger_data.caller` is written by the platform on every action run. Never read an identity from input and never
+  write `caller` yourself.

@@ -610,6 +610,12 @@ A surface that shows conversations composes the SDK's Messaging primitives (`Con
   messages with `Message` or `Transcript`, imported from `@cynap/surface-sdk`. Otherwise the build
   is refused.
 
+## Automation Actions are not surface tools
+
+An Org's Automation Actions (`mcp_exposure.actions[]`) are granted to members and called as tools; a surface never
+declares one in `tools.json` and never settles one. A pending action decision is approved on the platform's decision
+card, reached through an owner decision link, not from a surface.
+
 ## Refusal codes
 
 <!-- generated:surface-refusals — do not edit; run scripts/build-surface-contract.mjs -->
