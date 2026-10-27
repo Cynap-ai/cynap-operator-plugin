@@ -95,6 +95,20 @@ test('a recorded activation failure names the code and reason', () => {
   assert.doesNotMatch(text, /timed out/);
 });
 
+test('a long activation refusal keeps its remedy past 200 characters', () => {
+  const prefix = "native route 'openai/gpt-5.5' cannot run: the flow 'support' uses model 'acme/text-only', which has no native input capacity. ";
+  const remedy = `Set the flow model to one of: ${Array.from({ length: 30 }, (_, i) => `provider/native-model-${i}`).join(', ')}.`;
+  const message = `${prefix}\n${remedy}`;
+  const projected = operatorEffectOutput({ ok: false, code: 'activation_failed', commit_sha: 'a'.repeat(64),
+    failure_code: 'native_input_capacity_unavailable', failure_message: message });
+  assert.equal(projected.failure_message, `${prefix} ${remedy}`);
+  assert.ok(projected.failure_message.length > 600);
+  const text = formatRefusal(projected, { command: 'cynap-activate' });
+  assert.ok(text.includes(remedy));
+  const capped = operatorEffectOutput({ ok: false, code: 'activation_failed', failure_code: 'x', failure_message: 'y'.repeat(2500) });
+  assert.equal(capped.failure_message.length, 2000);
+});
+
 test('activation_pending reads as accepted, never as refused', () => {
   const text = formatRefusal({ ok: false, code: 'activation_pending', commit_sha: 'a'.repeat(64) }, { command: 'cynap-activate' });
   assert.match(text, /^cynap-activate: activation_pending: activation accepted; post-deploy is still awaiting/);
