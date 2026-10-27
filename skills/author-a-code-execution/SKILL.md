@@ -397,8 +397,17 @@ declares `effect: { automation, key }`: the child automation whose green run pro
   most 16 KB, and no `$ref`, `$defs`, `patternProperties`, `pattern` or `if/then/else`.
 - **Action ids carry no commitment verb** (`approve`, `decline`, `reject`, `suspend`, `grant`, `pay`, `commit`,
   `settle`): approval is a separate human decision the platform creates, never an action you declare.
-- **Single key only.** A `money` action's `effect.key` array must set `maxItems: 1`; anything wider is refused as
-  `app_action_batch_unavailable`.
+- **Single key only.** A `money` action's `effect.key` array must set `minItems: 1` and `maxItems: 1`, with one
+  `items` schema of `type` `string`, `integer` or `object`; anything wider is refused as
+  `app_action_batch_unavailable`. The other two refusals read `effect.key: "<key>" must set minItems 1` and
+  `effect.key: "<key>" items must be string, integer or object` (a tuple `items`, a type list, `anyOf` or `oneOf`
+  is refused the same way).
+- **The root triggers one child per approved item.** For each item of `trigger_data.caller.pins[<effect.key>]`,
+  trigger `effect.automation` with `{ effect_key_item: <item>, … }`. Other fields are inputs, not authority. Any
+  other shape (no `effect_key_item`, the whole array, another item) is refused as `foreign` and dispatches nothing.
+- **The effect handler acts only on `trigger_data.caller.effect.key_item`.** The platform stamps
+  `caller.effect = { effect_ref, key_item }` on an admitted child. Refuse a run that carries no `caller.effect`, and
+  read every amount from current state (write it with a field-scoped CAS), never from the root's `trigger_data`.
 - `role_templates[]` (`key`, `label`, `actions`, optional `suggested_autonomy`) name this automation's own actions.
 - `trigger_data.caller` is written by the platform on every action run. Never read an identity from input and never
   write `caller` yourself.
