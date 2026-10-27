@@ -209,12 +209,13 @@ test('the CLI budget is computed from the proxy deadlines, so the proxy outcome 
 });
 
 async function withNonce(run) {
-  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { resolveWorkingDir } = await import('../lib/connect.mjs');
   const home = process.env.HOME;
-  process.env.HOME = mkdtempSync(join(tmpdir(), 'activate-outcome-'));
+  const tmpHome = mkdtempSync(join(tmpdir(), 'activate-outcome-'));
+  process.env.HOME = tmpHome;
   try {
     const dir = resolveWorkingDir('cynap-e2e');
     mkdirSync(dir, { recursive: true });
@@ -222,6 +223,7 @@ async function withNonce(run) {
     return await run();
   } finally {
     process.env.HOME = home;
+    rmSync(tmpHome, { recursive: true, force: true });
   }
 }
 

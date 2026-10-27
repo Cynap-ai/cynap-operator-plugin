@@ -134,7 +134,7 @@ test('planHook: no plan outside an operator workspace, without .mcp.json, or for
 });
 
 test('readHandlerContext reads execution.mode; a top-level mode is not a mode', () => {
-  const root = mkdtempSync(join(tmpdir(), 'bf-hook-mode-'));
+  const root = scratch('bf-hook-mode-');
   write(join(root, 'automations', 'handlers', 'h', 'config.json'), JSON.stringify({ mode: 'code_execution', execution: { allowed_tools: ['knowledge.advancedQuery'] } }));
   assert.deepEqual(readHandlerContext(root, 'h'), { tools: ['knowledge.advancedQuery'] });
   write(join(root, 'automations', 'handlers', 'h', 'config.json'), JSON.stringify({ execution: { mode: 'code_execution', allowed_tools: ['knowledge.advancedQuery'] } }));
