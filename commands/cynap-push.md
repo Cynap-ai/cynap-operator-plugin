@@ -29,7 +29,7 @@ Plans creates/updates/deletes against `.cynap/state.json`, then:
    `validation run:` id.
 4. **Commits** with `workspace_commit` (`expected_head_sha` = the last pull's sha, a required
    `-m`). `parent_mismatch` means the tip moved — run `/cynap-pull` first. `chain_full` names
-   the commit to activate or discard before pushing again. A byte-identical retry reports as a
+   the commit to activate or discard (`/cynap-discard`) before pushing again. A byte-identical retry reports as a
    replay, not a new commit.
 5. **Updates state** atomically, then prints the chain position.
 

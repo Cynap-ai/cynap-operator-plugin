@@ -47,6 +47,11 @@ the commit SHA; do not repeatedly activate it. A frozen chain
 (`workspace_writes_frozen`) needs a platform admin today; the operator has no
 unfreeze command.
 
+A refused activation leaves that commit at the head of the pending chain, and every commit pushed
+behind it answers `blocked_by_chain`. Pushing a fix on top does not help: discard the refused commit
+with `/cynap-discard <commit-sha> --reason <text>`, run `/cynap-pull`, then push the fix as a new
+commit. Do not discard a commit that can still pass, such as one waiting on `/cynap-preview`.
+
 `gate_change_not_alone` means an existing check was edited or deleted in the
 same commit as a runtime change. Ship the check change separately.
 `checks_uncovered_path` means a changed managed path has no exact-path check
