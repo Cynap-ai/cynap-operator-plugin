@@ -29,15 +29,19 @@ import {
   writeStateAtomic,
 } from '../lib/workspace-sync.mjs';
 import { applyGlobalFlags } from '../lib/cli-globals.mjs';
+import { BASELINE_COMPATIBLE_FLAGS, formatBaselineResult, pushBaseline } from '../lib/baseline-push.mjs';
 
-const VALID_INTENTS = new Set(['edit', 'repair', 'revert', 'provision', 'migration', 'drift_repair']);
+// The server's intent vocabulary (`WORKSPACE_COMMIT_INTENTS`, commit-types.ts), pinned by a parity test.
+// `baseline` is reachable only as `--baseline`: it carries no changes, so it never rides `--intent`.
+export const VALID_INTENTS = new Set(['edit', 'repair', 'revert', 'provision', 'migration', 'drift_repair', 'baseline']);
 const SURFACE_ID_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
 // The overview the `summarize-your-change` skill wrote for this push (spec R-3.3). The file is the
 // whole contract: push gains no flag and no Request selector, and forwards the object as written.
 const CHANGE_OVERVIEW_FILE = 'change-overview.json';
 
 export function parsePushArgs(argv) {
-  const args = { dir: null, dryRun: false, json: false, message: null, intent: 'edit', proxyUrl: null, rebuild: null };
+  if (argv.includes('--baseline')) return parseBaselineArgs(argv);
+  const args = { dir: null, dryRun: false, json: false, message: null, intent: 'edit', proxyUrl: null, rebuild: null, baseline: false };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === '--dir') args.dir = argv[++i];
@@ -50,11 +54,27 @@ export function parsePushArgs(argv) {
     else throw new Error(`cynap-push: unrecognized argument "${flag}"`);
   }
   if (!args.dryRun && !args.message) throw new Error('cynap-push: -m/--message is required (unless --dry-run)');
+  if (args.intent === 'baseline') throw new Error('cynap-push: a baseline is requested with --baseline alone, never --intent baseline');
   if (!VALID_INTENTS.has(args.intent)) {
-    throw new Error(`cynap-push: --intent must be one of ${[...VALID_INTENTS].join(', ')}`);
+    throw new Error(`cynap-push: --intent must be one of ${[...VALID_INTENTS].filter((intent) => intent !== 'baseline').join(', ')}`);
   }
   if (args.rebuild !== null && !SURFACE_ID_PATTERN.test(args.rebuild ?? '')) {
     throw new Error('cynap-push: --rebuild needs a surface id (the <id> of surfaces/<id>/)');
+  }
+  return args;
+}
+
+/** `--baseline` refuses to combine with any flag that would shape a push. */
+function parseBaselineArgs(argv) {
+  const args = { dir: null, dryRun: false, json: false, message: null, intent: 'baseline', proxyUrl: null, rebuild: null, baseline: true };
+  for (let i = 0; i < argv.length; i += 1) {
+    const flag = argv[i];
+    if (!BASELINE_COMPATIBLE_FLAGS.has(flag)) {
+      throw new Error(`cynap-push: --baseline takes no other flag ("${flag}"); it sends only the baseline request for the last pulled tip`);
+    }
+    if (flag === '--dir') args.dir = argv[++i];
+    else if (flag === '--json') args.json = true;
+    else if (flag === '--proxy-url') args.proxyUrl = argv[++i];
   }
   return args;
 }
@@ -110,12 +130,19 @@ async function readMintHost(proxyUrl, fetchImpl) {
   }
 }
 
-export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, onPhase = () => {} } = {}) {
+export async function push({ cwd = process.cwd(), argv = [], fetchImpl = fetch, onPhase = () => {}, sleepImpl } = {}) {
   const args = parsePushArgs(argv);
   onPhase('reading local workspace…');
   const org = resolveOrgSlug({ cwd });
   const proxyUrl = args.proxyUrl ?? `http://127.0.0.1:${stablePortForSlug(org)}/mcp`;
   const dir = resolveWorkspaceDir({ cwd, dir: args.dir, org });
+
+  if (args.baseline) {
+    const call = (name, callArgs) => mcpCall(proxyUrl, name, callArgs, { fetchImpl });
+    const result = await pushBaseline({ dir, org, call, sleepImpl, onPhase });
+    if (!result.ok || result.pending) return result;
+    return { ...result, mintHost: result.portalPath ? await readMintHost(proxyUrl, fetchImpl) : null };
+  }
 
   const state = readState(dir);
   if (!state) return { ok: false, reason: 'no_state', message: `${dir}: no .cynap/state.json — run /cynap-pull first.` };
@@ -362,6 +389,10 @@ export async function main(argv = process.argv.slice(2), { cwd, fetchImpl } = {}
     process.stdout.write(`${result.message}\n`);
     return result;
   }
+  if (result.baseline) {
+    process.stdout.write(argv.includes('--json') ? `${JSON.stringify(result, null, 2)}\n` : formatBaselineResult(result, result.mintHost ?? null));
+    return result;
+  }
   if (result.dryRun) {
     if (argv.includes('--json')) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else {
@@ -403,7 +434,7 @@ export async function main(argv = process.argv.slice(2), { cwd, fetchImpl } = {}
     for (const warning of result.surfaceWarnings) process.stdout.write(`${formatSurfaceWarning(warning)}\n`);
     if (result.customerAiConfigMissing.length > 0) process.stdout.write(`${formatCustomerAiConfigWarning(result.customerAiConfigMissing)}\n`);
     if (result.nextAction?.command) process.stdout.write(`next: ${result.nextAction.command}${result.nextAction.reason ? ` — ${result.nextAction.reason}` : ''}\n`);
-    if (result.nextAction?.kind === 'baseline_required') process.stdout.write('This commit needs --reconcile before activation.\n');
+    if (result.nextAction?.kind === 'baseline_required') process.stdout.write('This commit needs /cynap-activate --reconcile before activation (not /cynap-push --baseline, which is the first checkpoint only).\n');
     if (result.nextAction?.kind === 'handler_preview_required') process.stdout.write(`Preview the handler before activation: /cynap-preview <automation-id> ${result.commitSha}\n`);
   }
   return result;

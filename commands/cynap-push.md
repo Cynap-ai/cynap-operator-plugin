@@ -1,6 +1,6 @@
 ---
 description: Commit the local working directory's changes against the connected org's chain.
-argument-hint: "-m <message> [--intent <edit|repair|revert|provision|migration|drift_repair>] [--rebuild <surfaceId>] [--dry-run] [--dir <path>]"
+argument-hint: "-m <message> [--intent <edit|repair|revert|provision|migration|drift_repair>] [--rebuild <surfaceId>] [--dry-run] [--dir <path>] | --baseline [--dir <path>] [--json]"
 ---
 
 # /cynap-push
@@ -82,10 +82,29 @@ containing only commit-only files auto-activates.
 
 `--dry-run` stops after step 3 (validate) — nothing is committed.
 
+## `--baseline` (Owner, first checkpoint only)
+
+`/cynap-push --baseline` asks the server to record the Org's current live tree as the first proven
+checkpoint of its history (intent `baseline`). It sends only `{ intent: 'baseline', expected_head_sha }`
+from `.cynap/state.json`: it does not read the working directory, plans nothing, and refuses every other
+flag except `--dir`, `--json` and `--proxy-url`. Only the Org Owner may mint one, once per Org; a second
+is refused `baseline_not_needed`.
+
+The server assembles the commit in the background. The command waits a bounded time for the outcome;
+past it, it prints `/cynap-status --baseline <request-id>` to read the outcome instead of re-sending. On
+acceptance it prints the commit SHA, the file count, the drift against the published head, any action
+configs that keep the Org fenced, and the portal review-pane link. The Owner approves the baseline there;
+`/cynap-activate` cannot.
+
+A baseline is a bootstrap, never a drift repair. When `next_action.kind` is `baseline_required`, the
+repair is `/cynap-activate <sha> --reconcile`, not `--baseline`. Against a server that predates the
+intent, the command prints a version-skew message and sends nothing else.
+
 ## Usage
 
 ```
 /cynap-push -m "<message>" [--intent edit] [--rebuild <surfaceId>] [--dry-run] [--dir <path>]
+/cynap-push --baseline [--dir <path>] [--json]
 ```
 
 Requires a prior `/cynap-pull` into the same directory — there is no `.cynap/state.json`

@@ -186,8 +186,14 @@ config declares: a new action appears, an edited one is revised, and deleting an
 or Solution from `solutions.json`) retires it. Until that publication lands, every action of the Org is refused
 with `catalog_pending`. If it stays refused, `workspace_status.publication.last_refusal_code` says why:
 
-- `selected_workspace_tree_unprovable` — the chain cannot prove the tree from its first commit. Fix: one
-  Owner-approved baseline commit whose operations put every current file.
+- `selected_workspace_tree_unprovable` — the chain cannot prove the tree from its first commit. Fix: the
+  Org Owner runs `/cynap-push --baseline` once; the server assembles a byte-identical baseline commit of the
+  live tree, and the Owner approves it in the portal review pane. Never hand-build a commit that puts every
+  file: only the server-assembled baseline is recognized. `--baseline` is the first checkpoint only; drift
+  (`baseline_required`) is repaired with `/cynap-activate --reconcile`.
+- `selected_workspace_baseline_malformed` / `selected_workspace_baseline_uncovered` /
+  `selected_workspace_baseline_digest_mismatch` — the recorded baseline cannot be proven; escalate to the
+  platform.
 - `selected_workspace_commit_operations_unavailable` / `selected_workspace_head_commit_not_in_ancestry` /
   `selected_workspace_ancestry_too_long` — the commit history cannot be replayed; escalate to the platform.
 - `selected_workspace_app_overlay_unsupported` — the Org holds an App-installed Solution; ordinary publication

@@ -12,12 +12,14 @@ import { assertConnectedOrg, mcpCall, readState, resolveOrgSlug, resolveWorkspac
 import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 export function parseStatusArgs(argv) {
-  if (argv.length === 0) return { dir: null, json: false };
-  const args = { dir: null, json: false };
+  if (argv.length === 0) return { dir: null, json: false, baseline: null };
+  const args = { dir: null, json: false, baseline: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--dir' && argv[i + 1]) args.dir = argv[++i];
     else if (argv[i] === '--json') args.json = true;
-    else throw new Error('Usage: cynap-status.mjs [--dir <workspace>] [--json]');
+    // Read one baseline outcome by the id `/cynap-push --baseline` printed.
+    else if (argv[i] === '--baseline' && argv[i + 1]) args.baseline = argv[++i];
+    else throw new Error('Usage: cynap-status.mjs [--dir <workspace>] [--json] [--baseline <request-id>]');
   }
   return args;
 }
@@ -39,7 +41,8 @@ export async function status({ cwd = process.cwd(), argv = [], fetchImpl = fetch
   const selected = proxies.find((item) => item.slug === org);
   if (!selected.health?.ok) return { ok: false, reason: 'proxy_down', org, workspace, proxies, installedVersion: manifest.version,
     message: `the ${org} proxy is not healthy — run /cynap-connect ${org}.` };
-  const platform = await mcpCall(`http://127.0.0.1:${selected.port}/mcp`, 'workspace_status', {}, { fetchImpl });
+  const platform = await mcpCall(`http://127.0.0.1:${selected.port}/mcp`, 'workspace_status',
+    args.baseline ? { baseline_request_id: args.baseline } : {}, { fetchImpl });
   if (platform?.ok === false) return { ok: false, reason: platform.code, result: platform, org, workspace, proxies, installedVersion: manifest.version, message: platform.message };
   return { ok: true, org, workspace, proxies, platform, installedVersion: manifest.version, localBase: state?.base ?? null,
     behind: Boolean(state && state.base !== platform.accepted_tip) };
@@ -76,6 +79,11 @@ export function formatStatus(result) {
     if (next) lines.push(`    ${next.replaceAll('\n', '\n    ')}`);
     else if (action?.kind) lines.push(`    next: ${action.kind}${action.reason ? ` — ${action.reason}` : ''}`);
   }
+  const baseline = s.baseline;
+  if (baseline && baseline.state !== 'none') {
+    lines.push(`baseline: ${baseline.state}${baseline.commit_sha ? ` ${baseline.commit_sha}` : ''}${baseline.code ? ` (${baseline.code}${baseline.path ? ` ${baseline.path}` : ''})` : ''}`);
+  }
+  if (baseline?.next_action) lines.push(`  next: ${baseline.next_action}`);
   if (result.behind) lines.push(`local base ${result.localBase ?? 'none'} is behind the accepted tip — pull before editing.`);
   return `${lines.join('\n')}\n`;
 }
