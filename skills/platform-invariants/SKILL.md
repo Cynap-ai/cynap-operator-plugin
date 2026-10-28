@@ -181,6 +181,20 @@ action is an Owner grant, and a non-read action only runs after an Owner settles
 approval, a "can run this" flag or a caller identity in config or input: `trigger_data.caller` is platform-written.
 See `author-a-code-execution` for the `actions[]` shape.
 
+Actions publish on activation. Once the activated commit's tree is published, the Org's catalog equals what its
+config declares: a new action appears, an edited one is revised, and deleting an action (or removing its automation
+or Solution from `solutions.json`) retires it. Until that publication lands, every action of the Org is refused
+with `catalog_pending`. If it stays refused, `workspace_status.publication.last_refusal_code` says why:
+
+- `selected_workspace_tree_unprovable` — the chain cannot prove the tree from its first commit. Fix: one
+  Owner-approved baseline commit whose operations put every current file.
+- `selected_workspace_commit_operations_unavailable` / `selected_workspace_head_commit_not_in_ancestry` /
+  `selected_workspace_ancestry_too_long` — the commit history cannot be replayed; escalate to the platform.
+- `selected_workspace_app_overlay_unsupported` — the Org holds an App-installed Solution; ordinary publication
+  of such Orgs is not built yet.
+- `app_action_*`, `business_map_*`, `bootstrap_*` — the activated config itself is refused (an invalid action,
+  a missing `context/business-map-capabilities.json` row for a new Solution, an unmanaged file). Commit a fix.
+
 ## Quick pre-flight checklist before any authoring task
 
 1. Which of the 3 modes does this task need? → `choose-the-right-mode`.
