@@ -55,9 +55,18 @@ it with the commit you expect before blaming the code.
 | `not_enrolled` | the Owner | The Owner enrolls the login in Integrations. |
 | `descriptor_digest_mismatch` | the Owner | The descriptor changed since enrollment. The Owner re-enrolls. |
 | `connection_not_connected` | the Owner | The Owner reconnects it in Integrations. |
-| `login_failed` | you | The selectors or `requestedOrigins` did not complete a login. Fix the descriptor. |
+| `credential_missing` | the Owner | No login credential is stored for this provider. The Owner connects it in Integrations. |
+| `unverifiable_predicate` | you | The descriptor names no probe the platform can verify a session with. Fix the descriptor. |
+| `login_tripped_needs_seed` | you | Automatic logins stopped after consecutive unverified logins. Seed a verified session. |
+| `needs_human_challenge` | you | The login hit a captcha or a second factor the platform cannot pass. Seed a verified session. |
+| `login_unverified` | you | The login completed but its session did not authenticate. Check the descriptor, then seed. |
+| `login_failed` | you | The login did not complete: the vendor refused the credential, or the selectors or `requestedOrigins` do not log in. Check both. |
+| `login_cooldown` | retry | A login ran less than the cooldown ago. The next run after the cooldown logs in again. |
+| `login_daily_cap` | retry | The daily login cap for this provider is spent. Runs log in again once the rolling window frees. |
 | `lease_timeout` | retry | Another run held the login lease too long. Run the job again. |
 | `login_timeout` | Cynap | The login engine ran past its wait. Report it to Cynap; do not retry in a loop. |
+| `probe_unavailable` | retry | The provider did not answer the session probe. That is an outage, not a login verdict. Run the job again. |
+| `ensure_error` | Cynap | The platform failed while ensuring the session. Report it to Cynap. |
 | `unknown` | Cynap | Report it to Cynap. Never assume an Owner action. |
 
 ### Customer AI admission
