@@ -23,7 +23,7 @@ single-use purpose credential for exactly one `workspace_activate_commit` call.
 Do not use device approval or call `workspace_activate_commit` directly.
 
 The Owner has 15 minutes to approve on that page. While it waits, the org's Owners (only Owners)
-get a Cynap message and an email saying an approval is waiting. The message goes away when the
+get a Cynap message (in the notification bell, no email) saying an approval is waiting. The message goes away when the
 approval is given, denied or expires. The proxy log says whether the Owners were notified; if it
 says they were NOT notified, tell an Owner yourself.
 

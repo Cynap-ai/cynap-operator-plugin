@@ -2542,7 +2542,7 @@ const AUTOMATIC_STEP_UP_HINT_SLUG = 'cynap-e2e';
 const NOTICE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
- * ask the portal to tell the org's Owners, in-app and by email, that a browser step-up
+ * ask the portal to tell the org's Owners in Cynap (in-app only, no email) that a browser step-up
  * is waiting. Keyed by `noticeId` (one per consent), so the portal dedupes a retry. Never throws and
  * never blocks the consent: it resolves with whether an Owner was notified, which the caller prints.
  */
@@ -2678,7 +2678,7 @@ export async function activateCommitWithStepUp({
   if (noticeId) {
     const notice = await stepUpNotice({ mintHost, commitSha, noticeId, getAuthHeaders, pluginVersion, fetchImpl });
     out.write(notice.notified
-      ? `[operator-proxy] The org's Owners were notified in Cynap and by email that this approval is waiting (up to ${Math.round(AUTO_CONSENT_TIMEOUT_MS / 60000)} minutes).\n`
+      ? `[operator-proxy] The org's Owners were notified in Cynap that this approval is waiting (up to ${Math.round(AUTO_CONSENT_TIMEOUT_MS / 60000)} minutes).\n`
       : `[operator-proxy] The org's Owners were NOT notified (${notice.reason}). Tell an Owner this approval is waiting.\n`);
   }
   let credential;
