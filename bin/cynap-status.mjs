@@ -12,14 +12,15 @@ import { assertConnectedOrg, mcpCall, readState, resolveOrgSlug, resolveWorkspac
 import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 
 export function parseStatusArgs(argv) {
-  if (argv.length === 0) return { dir: null, json: false, baseline: null };
-  const args = { dir: null, json: false, baseline: null };
+  if (argv.length === 0) return { dir: null, json: false, baseline: null, commit: null };
+  const args = { dir: null, json: false, baseline: null, commit: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--dir' && argv[i + 1]) args.dir = argv[++i];
     else if (argv[i] === '--json') args.json = true;
     // Read one baseline outcome by the id `/cynap-push --baseline` printed.
     else if (argv[i] === '--baseline' && argv[i + 1]) args.baseline = argv[++i];
-    else throw new Error('Usage: cynap-status.mjs [--dir <workspace>] [--json] [--baseline <request-id>]');
+    else if (argv[i] === '--commit' && /^[a-f0-9]{64}$/.test(argv[i + 1] ?? '')) args.commit = argv[++i];
+    else throw new Error('Usage: cynap-status.mjs [--dir <workspace>] [--json] [--baseline <request-id>] [--commit <exact-sha>]');
   }
   return args;
 }
@@ -44,7 +45,7 @@ export async function status({ cwd = process.cwd(), argv = [], fetchImpl = fetch
   const platform = await mcpCall(`http://127.0.0.1:${selected.port}/mcp`, 'workspace_status',
     args.baseline ? { baseline_request_id: args.baseline } : {}, { fetchImpl });
   if (platform?.ok === false) return { ok: false, reason: platform.code, result: platform, org, workspace, proxies, installedVersion: manifest.version, message: platform.message };
-  return { ok: true, org, workspace, proxies, platform, installedVersion: manifest.version, localBase: state?.base ?? null,
+  return { ok: true, org, workspace, proxies, platform, commit: args.commit, installedVersion: manifest.version, localBase: state?.base ?? null,
     behind: Boolean(state && state.base !== platform.accepted_tip) };
 }
 
@@ -70,6 +71,23 @@ export function formatStatus(result) {
   if (s.last_failure) lines.push(`last failure: ${s.last_failure.code ?? s.last_failure.reason ?? JSON.stringify(s.last_failure)}`);
   if (s.frozen) lines.push(`chain frozen: recovery currently needs a platform admin.\n  next: ${FROZEN_CHAIN_NEXT_STEP}`);
   const chain = Array.isArray(s.chain) ? s.chain : [];
+  if (result.commit) {
+    const target = result.commit;
+    const entry = chain.find((item) => item.sha === target);
+    const activation = Array.isArray(s.pending) ? s.pending.find((item) => item.commit_sha === target) : null;
+    const ready = readinessOf(s, target);
+    if (liveCommit === target && ready === 'yes') {
+      lines.push(`activation ${target}: succeeded (live commit; native readiness yes)`);
+    } else if (entry || activation) {
+      lines.push(`activation ${target}: ${activation?.state ?? 'pending; native activation detail unavailable'}`);
+      if (activation?.failure_code) lines.push(`  failure: ${activation.failure_code}`);
+      const next = formatNextAction(activation?.next_action);
+      lines.push(next ? `  ${next.replaceAll('\n', '\n  ')}` : `  Check status with exact SHA: /cynap-status --commit ${target}`);
+    } else {
+      lines.push(`activation ${target}: unknown; missing from pending is not proof of success.`);
+      lines.push(`  Check status with exact SHA: /cynap-status --commit ${target}`);
+    }
+  }
   lines.push(`pending chain: ${chain.length}`);
   for (const commit of chain) {
     const activation = s.pending?.find((entry) => entry.commit_sha === commit.sha);

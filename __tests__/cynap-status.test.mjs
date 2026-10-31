@@ -3,11 +3,23 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { formatStatus, status } from '../bin/cynap-status.mjs';
+import { formatStatus, parseStatusArgs, status } from '../bin/cynap-status.mjs';
 import { writeStateAtomic } from '../lib/workspace-sync.mjs';
 
 const SHA = 'a'.repeat(64);
 const TIP = 'b'.repeat(64);
+
+test('exact commit status distinguishes pending, failure, success and absent evidence', () => {
+  const base = { ok: true, org: 'cynap-e2e', workspace: { root: '/w' }, proxies: [], commit: SHA };
+  const platform = (over) => ({ ...base, platform: { accepted_tip: SHA, base_ref: { kind: 'digest', value: TIP }, chain: [], pending: [], ...over } });
+  assert.match(formatStatus(platform({ chain: [{ sha: SHA }], pending: [{ commit_sha: SHA, state: 'pending_activation', next_action: { kind: 'owner_approval_required' } }] })), /activation a{64}: pending_activation/);
+  assert.match(formatStatus(platform({ chain: [{ sha: SHA }], pending: [{ commit_sha: SHA, state: 'failed', failure_code: 'activation_failed' }] })), /activation a{64}: failed\n  failure: activation_failed/);
+  assert.match(formatStatus(platform({ base_ref: { kind: 'commit', value: SHA }, readiness: { commit_sha: SHA, state: 'yes' } })), /activation a{64}: succeeded/);
+  assert.match(formatStatus(platform({ base_ref: { kind: 'commit', value: SHA } })), /activation a{64}: unknown; missing from pending is not proof of success/);
+  assert.match(formatStatus(platform({})), /Check status with exact SHA: \/cynap-status --commit a{64}/);
+  assert.equal(parseStatusArgs(['--commit', SHA]).commit, SHA);
+  assert.throws(() => parseStatusArgs(['--commit', 'short']), /Usage/);
+});
 
 test('status reads the chain through MCP, shows degraded cause and stale local base', async () => {
   const root = mkdtempSync(join(tmpdir(), 'cyn-status-'));

@@ -82,9 +82,10 @@ test('an unknown activation outcome says so and points at /cynap-status', () => 
 });
 
 test('consent expiry and consent denial are distinct answers', () => {
-  const expired = formatRefusal({ ok: false, code: 'consent_expired' }, { command: 'cynap-activate' });
+  const expired = formatRefusal({ ok: false, code: 'consent_expired', commit_sha: 'a'.repeat(64) }, { command: 'cynap-activate' });
   const denied = formatRefusal({ ok: false, code: 'consent_denied' }, { command: 'cynap-activate' });
-  assert.match(expired, /^cynap-activate: consent_expired: nobody approved the activation/);
+  assert.match(expired, /^cynap-activate: consent_expired: the temporary browser consent closed/);
+  assert.match(expired, /\/cynap-status --commit a{64}/);
   assert.match(denied, /^cynap-activate: consent_denied: the activation was declined/);
 });
 
