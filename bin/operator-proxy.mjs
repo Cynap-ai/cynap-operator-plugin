@@ -326,6 +326,7 @@ const PREVIEW_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:
  * plugin's parity test pins every value here to that module (and so to the server's owners).
  */
 export const PREVIEW_CONTRACT = Object.freeze({
+  previewStatuses: ['waiting', 'pending', 'pass', 'fail', 'superseded'],
   errorNames: ['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError',
     'EvalError', 'AggregateError', 'AbortError', 'TimeoutError'],
   handlerSite: /^handler\.js:[1-9]\d{0,5}:[1-9]\d{0,4}$/,
@@ -414,7 +415,7 @@ export async function forwardPreviewRequest({ method, input, previewId, orgSlug,
   const answer = await upstream.json().catch(() => ({}));
   return { status: upstream.status, body: {
     ...(typeof answer.previewId === 'string' ? { previewId: answer.previewId } : {}),
-    ...(typeof answer.status === 'string' ? { status: answer.status } : {}),
+    ...(PREVIEW_CONTRACT.previewStatuses.includes(answer.status) || answer.status === 'preview_running' ? { status: answer.status } : {}),
     ...(typeof answer.failureCode === 'string' ? { failureCode: answer.failureCode } : {}),
     ...(typeof answer.operatorText === 'string' ? { operatorText: answer.operatorText } : {}),
     ...(previewFailureLocation(answer.failureLocation) ? { failureLocation: previewFailureLocation(answer.failureLocation) } : {}),
@@ -427,6 +428,17 @@ export async function forwardPreviewRequest({ method, input, previewId, orgSlug,
     ...(PREVIEW_TIMESTAMP.test(answer.startedAt ?? '') ? { startedAt: answer.startedAt } : {}),
     ...(typeof answer.error === 'string' ? { error: answer.error } : {}),
     ...(typeof answer.retryAfterMs === 'number' ? { retryAfterMs: answer.retryAfterMs } : {}),
+    ...(Number.isSafeInteger(answer.position) && answer.position > 0 ? { position: answer.position } : {}),
+    ...(PREVIEW_TIMESTAMP.test(answer.queue_expires_at ?? '') && Number.isFinite(Date.parse(answer.queue_expires_at))
+      ? { queue_expires_at: answer.queue_expires_at } : {}),
+    ...(Number.isSafeInteger(answer.remaining_queue_ms) && answer.remaining_queue_ms >= 0
+      ? { remaining_queue_ms: answer.remaining_queue_ms } : {}),
+    ...(PREVIEW_TIMESTAMP.test(answer.lease_expires_at ?? '') && Number.isFinite(Date.parse(answer.lease_expires_at))
+      ? { lease_expires_at: answer.lease_expires_at } : {}),
+    ...(Number.isSafeInteger(answer.remaining_lease_ms) && answer.remaining_lease_ms >= 0
+      ? { remaining_lease_ms: answer.remaining_lease_ms } : {}),
+    ...(PREVIEW_TIMESTAMP.test(answer.expiresAt ?? '') && Number.isFinite(Date.parse(answer.expiresAt))
+      ? { expiresAt: answer.expiresAt } : {}),
     ...(Array.isArray(answer.effectKinds) ? { effectKinds: answer.effectKinds.filter((item) =>
       typeof item?.kind === 'string' && Number.isInteger(item?.count) && item.count >= 0
     ).map((item) => ({ kind: item.kind, count: item.count })) } : {}),

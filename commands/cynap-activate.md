@@ -28,7 +28,7 @@ approval is given, denied or expires. The proxy log says whether the Owners were
 says they were NOT notified, tell an Owner yourself.
 
 The command reads `workspace_status` first. On `handler_preview_required`, it starts each
-preview with `{orgSlug, automationId, commitSha}`, prints `preview_running` and the attempt
+preview with `{orgSlug, automationId, commitSha}`, prints the running attempt or its `waiting` queue position and the attempt
 id, and polls status with bounded backoff. After a pass it re-reads `workspace_status`;
 only `step_up_and_activate` opens the owner approval. On fail it stops with only the verdict
 code, fixed operator text, and effect kinds with counts. Never show preview row data.

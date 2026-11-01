@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  EXIT_FAILED, EXIT_NOT_DRAINED, exitCodeFor, parseRunArgs, readDeferred, runAutomation, summarizeRun,
+  DEFAULT_DRAIN_KEYS, EXIT_FAILED, EXIT_NOT_DRAINED, exitCodeFor, parseRunArgs, readDeferred, runAutomation, summarizeRun,
 } from '../bin/cynap-run.mjs';
 
 // Exactly as the platform evidence reader defines it (the redacted operator read).
@@ -21,6 +21,7 @@ function fakePlatform(runs) {
     calls.push({ name, args });
     if (name === 'automation_run_trigger') { triggered += 1; return { ok: true, run_id: `run-${triggered}`, status: 'dispatched' }; }
     const script = runs[Number(args.logId.split('-')[1]) - 1];
+    assert.ok(script, `unexpected evidence read for ${args.logId}; drain triggered beyond fixture`);
     const seen = reads.get(args.logId) ?? 0;
     reads.set(args.logId, seen + 1);
     return script[Math.min(seen, script.length - 1)];
@@ -30,6 +31,61 @@ function fakePlatform(runs) {
 
 const clock = () => { let t = 0; return { now: () => t, wait: async (ms) => { t += ms; } }; };
 const args = (over = {}) => ({ ...parseRunArgs(['sync', '--until-drained']), ...over });
+
+test('the default drain contract reads only remaining', () => {
+  assert.deepEqual(DEFAULT_DRAIN_KEYS, ['remaining']);
+  assert.equal(readDeferred({ valueCounters: { rows_deferred: 5 } }), null);
+  assert.deepEqual(readDeferred({ valueCounters: { remaining: 5 } }), { key: 'remaining', count: 5 });
+});
+
+test('an explicit drain key cannot restore a legacy alias', async () => {
+  assert.throws(() => parseRunArgs(['sync', '--until-drained', '--drain-key', 'rows_deferred']),
+    (error) => error.code === 'usage' && /remaining/.test(error.message));
+  assert.equal(parseRunArgs(['sync', '--drain-key', 'remaining']).drainKey, 'remaining');
+  assert.equal(readDeferred({ valueCounters: { rows_deferred: 7 } }, 'rows_deferred'), null);
+  const { call, calls } = fakePlatform([[bundle('success', { rows_deferred: 7 })]]);
+  const { now, wait } = clock();
+  const result = await runAutomation({ args: args({ drainKey: 'rows_deferred' }), call, now, wait });
+  assert.equal(result.outcome, 'no_deferred_count');
+  assert.equal(calls.filter(({ name }) => name === 'automation_run_trigger').length, 1);
+});
+
+test('only a valid whole remaining count can continue or finish a drain', async () => {
+  for (const invalid of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, 'patient Jo', undefined]) {
+    const valueCounters = invalid === undefined ? {} : { remaining: invalid };
+    const { call, calls } = fakePlatform([[bundle('success', valueCounters)]]);
+    const { now, wait } = clock();
+    const lines = [];
+    const result = await runAutomation({ args: args(), call, now, wait, log: (line) => lines.push(line) });
+    assert.equal(result.outcome, 'no_deferred_count');
+    assert.equal(exitCodeFor(result.outcome), EXIT_NOT_DRAINED);
+    assert.equal(calls.filter(({ name }) => name === 'automation_run_trigger').length, 1);
+    assert.match(lines[0], /no deferred count/);
+    assert.ok(!JSON.stringify({ result, lines }).includes('patient Jo'));
+  }
+  const { call } = fakePlatform([[bundle('success', { remaining: 4 })], [bundle('success', { remaining: 0 })]]);
+  const { now, wait } = clock();
+  const drained = await runAutomation({ args: args(), call, now, wait });
+  assert.equal(drained.outcome, 'drained');
+  assert.deepEqual(drained.iterations.map(({ deferred }) => deferred), [4, 0]);
+});
+
+test('legacy drain aliases never trigger an extra run', async () => {
+  for (const alias of ['rows_deferred', 'deferred', 'rows_remaining']) {
+    const { call, calls } = fakePlatform([[bundle('success', { [alias]: 7 })]]);
+    const { now, wait } = clock();
+    assert.equal((await runAutomation({ args: args(), call, now, wait })).outcome, 'no_deferred_count');
+    assert.equal(calls.filter(({ name }) => name === 'automation_run_trigger').length, 1);
+  }
+});
+
+test('retrying remains nonterminal even when an evidence projection claims terminal', async () => {
+  const { call } = fakePlatform([[bundle('retrying', undefined, { terminal: true }), bundle('success', { remaining: 0 })]]);
+  const { now, wait } = clock();
+  const result = await runAutomation({ args: parseRunArgs(['sync', '--wait']), call, now, wait });
+  assert.equal(result.outcome, 'finished');
+  assert.equal(result.iterations[0].status, 'success');
+});
 
 test('parseRunArgs: --until-drained implies --wait; caps are bounded; bad input is a usage error', () => {
   const parsed = parseRunArgs(['sync', '--until-drained', '--max-iterations', '5', '--input', '{"month":"2026-09"}']);
@@ -44,13 +100,13 @@ test('parseRunArgs: --until-drained implies --wait; caps are bounded; bad input 
   assert.deepEqual(parseRunArgs(['sync', '--input-file', 'p.json'], { readFile: () => '{"a":1}' }).input, { a: 1 });
 });
 
-test('readDeferred reads valueCounters (top-level only), an object value, and a named key', () => {
+test('readDeferred reads remaining from valueCounters or an object value, top-level only', () => {
   const redacted = (valueCounters) => ({ value: FREE_TEXT_OMITTED, valueCounters });
-  assert.deepEqual(readDeferred(redacted({ rows_deferred: 7 })), { key: 'rows_deferred', count: 7 });
-  assert.deepEqual(readDeferred(redacted({ left: 3 }), 'left'), { key: 'left', count: 3 });
+  assert.deepEqual(readDeferred(redacted({ remaining: 7 })), { key: 'remaining', count: 7 });
+  assert.equal(readDeferred(redacted({ left: 3 }), 'left'), null);
   assert.deepEqual(readDeferred({ value: { remaining: 0 } }), { key: 'remaining', count: 0 });
   assert.equal(readDeferred({ value: FREE_TEXT_OMITTED }), null);
-  assert.equal(readDeferred({ value: { metrics: { rows_deferred: 9 } } }), null);
+  assert.equal(readDeferred({ value: { metrics: { remaining: 9 } } }), null);
   assert.equal(readDeferred(redacted({ ok: true })), null);
   assert.equal(readDeferred(undefined), null);
 });
@@ -70,7 +126,7 @@ test('without --wait it dispatches once and returns the run id', async () => {
 });
 
 test('--wait polls until terminal and reports the run', async () => {
-  const { call } = fakePlatform([[bundle('running'), bundle('running'), bundle('success', { rows_deferred: 0 })]]);
+  const { call } = fakePlatform([[bundle('running'), bundle('running'), bundle('success', { remaining: 0 })]]);
   const { now, wait } = clock();
   const result = await runAutomation({ args: parseRunArgs(['sync', '--wait']), call, now, wait });
   assert.equal(result.outcome, 'finished');
@@ -80,7 +136,7 @@ test('--wait polls until terminal and reports the run', async () => {
 
 test('--until-drained re-triggers with the same input while rows are deferred, then stops at 0', async () => {
   const { call, calls } = fakePlatform([
-    [bundle('success', { rows_deferred: 40 })], [bundle('success', { rows_deferred: 15 })], [bundle('success', { rows_deferred: 0 })],
+    [bundle('success', { remaining: 40 })], [bundle('success', { remaining: 15 })], [bundle('success', { remaining: 0 })],
   ]);
   const { now, wait } = clock();
   const lines = [];
@@ -91,12 +147,12 @@ test('--until-drained re-triggers with the same input while rows are deferred, t
   assert.equal(triggers.length, 3);
   assert.ok(triggers.every((t) => JSON.stringify(t.args.input) === '{"month":"2026-09"}'));
   assert.equal(lines.length, 3, 'one printed summary per iteration');
-  assert.match(lines[0], /iteration 1\/20: run run-1 success, 40 deferred \(rows_deferred\)/);
+  assert.match(lines[0], /iteration 1\/20: run run-1 success, 40 deferred \(remaining\)/);
   assert.equal(exitCodeFor('drained'), 0);
 });
 
 test('the iteration cap is hard', async () => {
-  const runs = Array.from({ length: 10 }, (_, i) => [bundle('success', { rows_deferred: 1000 - i * 10 })]);
+  const runs = Array.from({ length: 10 }, (_, i) => [bundle('success', { remaining: 1000 - i * 10 })]);
   const { call, calls } = fakePlatform(runs);
   const { now, wait } = clock();
   const result = await runAutomation({ args: args({ maxIterations: 3 }), call, now, wait });
@@ -115,7 +171,7 @@ test('the wall-time cap stops a run that never finishes', async () => {
 
 test('a failed run stops the loop with the error, and no further run is triggered', async () => {
   const { call, calls } = fakePlatform([
-    [bundle('success', { rows_deferred: 9 })],
+    [bundle('success', { remaining: 9 })],
     [bundle('failure', undefined, { errorClass: 'handler_reported', errorReason: { code: 'BOOM' } })],
   ]);
   const { now, wait } = clock();
@@ -129,7 +185,7 @@ test('a failed run stops the loop with the error, and no further run is triggere
 
 test('a degraded run that reports its backlog continues the drain; only a failure stops it', async () => {
   const { call, calls } = fakePlatform([
-    [bundle('degraded', { rows_deferred: 30 })], [bundle('degraded', { rows_deferred: 12 })], [bundle('success', { rows_deferred: 0 })],
+    [bundle('degraded', { remaining: 30 })], [bundle('degraded', { remaining: 12 })], [bundle('success', { remaining: 0 })],
   ]);
   const { now, wait } = clock();
   const result = await runAutomation({ args: args(), call, now, wait });
@@ -140,17 +196,17 @@ test('a degraded run that reports its backlog continues the drain; only a failur
 
 test('a degraded run with no backlog count, or outside a drain, still stops as failed', async () => {
   const { now, wait } = clock();
-  const uncounted = fakePlatform([[bundle('degraded', { rows_hydrated: 5 })], [bundle('success', { rows_deferred: 0 })]]);
+  const uncounted = fakePlatform([[bundle('degraded', { rows_hydrated: 5 })], [bundle('success', { remaining: 0 })]]);
   const drain = await runAutomation({ args: args(), call: uncounted.call, now, wait });
   assert.equal(drain.outcome, 'failed');
   assert.equal(uncounted.calls.filter((c) => c.name === 'automation_run_trigger').length, 1);
-  const single = fakePlatform([[bundle('degraded', { rows_deferred: 30 })]]);
+  const single = fakePlatform([[bundle('degraded', { remaining: 30 })]]);
   const once = await runAutomation({ args: parseRunArgs(['sync', '--wait']), call: single.call, now, wait });
   assert.equal(once.outcome, 'failed');
 });
 
 test('two re-triggers that do not shrink the backlog stop as no_progress', async () => {
-  const { call } = fakePlatform([[bundle('success', { rows_deferred: 50 })], [bundle('success', { rows_deferred: 50 })], [bundle('success', { rows_deferred: 60 })], [bundle('success', { rows_deferred: 1 })]]);
+  const { call } = fakePlatform([[bundle('success', { remaining: 50 })], [bundle('success', { remaining: 50 })], [bundle('success', { remaining: 60 })], [bundle('success', { remaining: 1 })]]);
   const { now, wait } = clock();
   const result = await runAutomation({ args: args(), call, now, wait });
   assert.equal(result.outcome, 'no_progress');
@@ -165,7 +221,7 @@ test('a result with no deferred count is reported, not looped on', async () => {
   assert.equal(calls.filter((c) => c.name === 'automation_run_trigger').length, 1);
 });
 
-test('a nested metrics.rows_deferred is not read: the run stops as no_deferred_count, not drained', async () => {
+test('a nested metrics.remaining is not read: the run stops as no_deferred_count, not drained', async () => {
   const nested = { ...bundle('success', { ok: true }), summary: { value: FREE_TEXT_OMITTED } };
   const { call, calls } = fakePlatform([[nested]]);
   const { now, wait } = clock();

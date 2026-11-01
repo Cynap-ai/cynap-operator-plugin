@@ -179,7 +179,7 @@ test('preview_running names the running attempt, its automation and start, and t
     assert.equal(error.code, 'preview_running');
     assert.equal(error.message, `cynap-preview: preview_running: an org runs one preview at a time, and attempt ${running} `
       + '(automation clinician-sync, started 2026-10-07T17:20:00.123+00:00) is still running. '
-      + `Wait for its verdict with /cynap-preview status ${running}, then preview again.`);
+      + `Wait for its verdict with /cynap-preview status ${running}, then preview again. Update the plugin to queue another preview.`);
     return true;
   });
 });
@@ -193,6 +193,112 @@ test('the proxy forwards the running attempt fields only in their closed shapes'
   assert.deepEqual(ok.body, { previewId: 'p1', error: 'preview_running', rule: 'one_preview_per_org', automationId: 'clinician-sync', startedAt: '2026-10-07T17:20:00Z' });
   const hostile = await forward({ error: 'preview_running', rule: 'patient Jo', automationId: '../patient Jo', startedAt: 'yesterday, patient Jo' });
   assert.ok(!JSON.stringify(hostile.body).includes('patient Jo'));
+});
+
+test('both proxy copies preserve validated queue and lease horizons separately from verdict expiry', async () => {
+  const { forwardPreviewRequest: canonicalForward } = await import('../../operator/operator-proxy.mjs');
+  const answer = { previewId: ATTEMPT, status: 'waiting', position: 2,
+    queue_expires_at: '2026-10-31T12:00:00Z', remaining_queue_ms: 120_000,
+    lease_expires_at: '2026-10-31T12:20:00Z', remaining_lease_ms: 600_000,
+    expiresAt: '2026-11-14T12:00:00Z', privateNote: 'patient Jo' };
+  for (const forward of [forwardPreviewRequest, canonicalForward]) {
+    const call = (body) => forward({ method: 'GET', previewId: ATTEMPT, orgSlug: 'cynap-e2e',
+      mcpHost: 'https://staging.mcp.cynap.ai', pluginVersion: '0.19.196',
+      tokenManager: { getToken: async () => 't' }, fetchImpl: async () => ({ status: 200, json: async () => body }) });
+    const valid = await call(answer);
+    assert.deepEqual(valid.body, { previewId: ATTEMPT, status: 'waiting', position: 2,
+      queue_expires_at: answer.queue_expires_at, remaining_queue_ms: 120_000,
+      lease_expires_at: answer.lease_expires_at, remaining_lease_ms: 600_000,
+      expiresAt: answer.expiresAt });
+    const invalid = await call({ ...answer, position: 0, queue_expires_at: 'private', remaining_queue_ms: -1,
+      lease_expires_at: 'yesterday', remaining_lease_ms: Infinity, expiresAt: 'private' });
+    assert.deepEqual(invalid.body, { previewId: ATTEMPT, status: 'waiting' });
+  }
+});
+
+test('preview summary discloses position and server horizons while waiting', () => {
+  assert.deepEqual(previewSummary({ previewId: ATTEMPT, status: 'waiting', position: 3,
+    queue_expires_at: '2026-10-31T12:00:00Z', remaining_queue_ms: 90_000,
+    secret: 'patient Jo' }), { status: 'waiting', attemptId: ATTEMPT, effectKinds: [],
+    position: 3, queue_expires_at: '2026-10-31T12:00:00Z', remaining_queue_ms: 90_000 });
+});
+
+test('waiting preview survives the old 36 polls, prints position, then waits through promoted lease', async () => {
+  let reads = 0;
+  const positions = [];
+  const waits = [];
+  const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
+    onPosition: (position) => positions.push(position),
+    wait: async (ms) => { waits.push(ms); }, probeVerdict: async () => false,
+    fetchImpl: async (url) => {
+      if (!String(url).includes('/status/')) return { ok: true, status: 202, json: async () => ({ previewId: ATTEMPT, status: 'waiting' }) };
+      reads += 1;
+      const body = reads <= 40 ? { status: 'waiting', position: reads <= 20 ? 2 : 1,
+        queue_expires_at: '2026-10-31T12:00:00Z', remaining_queue_ms: 600_000 }
+        : reads <= 44 ? { status: 'pending', lease_expires_at: '2026-10-31T12:20:00Z', remaining_lease_ms: 600_000 }
+          : { status: 'pass', effectKinds: [] };
+      return { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, ...body }) };
+    },
+  });
+  assert.equal(result.status, 'pass');
+  assert.equal(reads, 45);
+  assert.deepEqual([...new Set(positions)], [2, 1]);
+  assert.ok(waits.every((ms) => ms <= 10_000));
+});
+
+test('the queue deadline stops waiting without using verdict expiry', async () => {
+  const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
+    wait: async () => {}, probeVerdict: async () => false,
+    fetchImpl: async (url) => ({ ok: true, status: String(url).includes('/status/') ? 200 : 202,
+      json: async () => ({ previewId: ATTEMPT, status: 'waiting', position: 1,
+        queue_expires_at: '2026-10-31T12:00:00Z', remaining_queue_ms: 0,
+        expiresAt: '2026-11-14T12:00:00Z' }) }) });
+  assert.equal(result.status, 'waiting');
+  assert.equal(result.remaining_queue_ms, 0);
+});
+
+test('a promoted attempt gets the server lease plus 60 seconds of verdict grace', async () => {
+  const waits = [];
+  const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
+    wait: async (ms) => { waits.push(ms); }, probeVerdict: async () => false,
+    fetchImpl: async (url) => ({ ok: true, status: String(url).includes('/status/') ? 200 : 202,
+      json: async () => ({ previewId: ATTEMPT, status: 'pending',
+        lease_expires_at: '2026-10-31T12:20:00Z', remaining_lease_ms: 0,
+        expiresAt: '2026-11-14T12:00:00Z' }) }) });
+  assert.equal(result.status, 'pending');
+  assert.ok(waits.reduce((total, ms) => total + ms, 0) >= 60_000);
+  assert.ok(waits.length < 36);
+});
+
+test('lease grace begins after the first zero-remaining server response', async () => {
+  const waits = [];
+  let zeroResponseSeen = false;
+  const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
+    wait: async (ms) => { waits.push(ms); }, probeVerdict: async () => false,
+    fetchImpl: async (url) => ({ ok: true, status: String(url).includes('/status/') ? 200 : 202,
+      json: async () => {
+        if (String(url).includes('/status/')) zeroResponseSeen = true;
+        return { previewId: ATTEMPT, status: 'pending', lease_expires_at: '2026-10-31T12:20:00Z',
+          remaining_lease_ms: 0 };
+      } }) });
+  assert.equal(zeroResponseSeen, true);
+  assert.equal(result.status, 'pending');
+  assert.ok(waits.slice(1).reduce((total, ms) => total + ms, 0) >= 60_000,
+    'the first wait was before the server reported zero and cannot count as grace');
+});
+
+test('waiting refuses missing or malformed server queue duration without a legacy poll fallback', async () => {
+  for (const remaining_queue_ms of [undefined, -1, '120000', Number.MAX_SAFE_INTEGER + 1]) {
+    let statusReads = 0;
+    await assert.rejects(runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
+      maxPolls: 2, wait: async () => {}, probeVerdict: async () => false,
+      fetchImpl: async (url) => {
+        if (String(url).includes('/status/')) statusReads += 1;
+        return { ok: true, status: 202, json: async () => ({ previewId: ATTEMPT, status: 'waiting', position: 1,
+          queue_expires_at: '2026-10-31T12:00:00Z', remaining_queue_ms, secret: 'patient Jo' }) };
+      } }), (error) => error.code === 'preview_status_invalid' && !String(error.message).includes('patient Jo'));
+    assert.equal(statusReads, 1, 'malformed waiting horizon must stop on the first status read');
+  }
 });
 
 // The attempt's status read lagged its verdict for minutes (12:38 DB verdict, `pending` through 12:45).

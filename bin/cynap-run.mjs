@@ -9,21 +9,21 @@ import { pathToFileURL } from 'node:url';
 import { stablePortForSlug } from '../lib/connect.mjs';
 import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 import { PLUGIN_OUTDATED_EXIT_CODE } from '../lib/format-refusal.mjs';
+import { RUN_STATUS_TERMINAL } from '../lib/preview-contract.generated.mjs';
 import { isProxyUnreachableError, mcpCall, resolveOrgSlug } from '../lib/workspace-sync.mjs';
 
 const USAGE = 'Usage: cynap-run.mjs <automation-id> [--input <json> | --input-file <path>] [--wait] [--until-drained] ' +
-  '[--drain-key <field>] [--max-iterations <n>] [--max-minutes <n>] [--json]';
+  '[--drain-key remaining] [--max-iterations <n>] [--max-minutes <n>] [--json]';
 const AUTOMATION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export const DEFAULT_MAX_ITERATIONS = 20;
 export const HARD_MAX_ITERATIONS = 100;
 export const DEFAULT_MAX_MINUTES = 60;
 export const HARD_MAX_MINUTES = 360;
 /** The numeric fields a handler's result may carry to say "this many rows are left for another run". */
-export const DEFAULT_DRAIN_KEYS = Object.freeze(['rows_deferred', 'deferred', 'rows_remaining', 'remaining']);
+export const DEFAULT_DRAIN_KEYS = Object.freeze(['remaining']);
 /** Exit codes: 0 finished (drained when asked), 1 run failed or a call was refused, 3 a cap or no-progress stop. */
 export const EXIT_FAILED = 1;
 export const EXIT_NOT_DRAINED = 3;
-const IN_FLIGHT = new Set(['running', 'dispatched', 'pending']);
 
 function positiveInt(value, max, flag) {
   const n = Number(value);
@@ -51,7 +51,7 @@ export function parseRunArgs(argv, { readFile = (path) => readFileSync(path, 'ut
     else if (arg === '--input-file') args.input = parseJson(readFile(next()), '--input-file');
     else if (arg === '--drain-key') {
       args.drainKey = next();
-      if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(args.drainKey)) throw usage('--drain-key must be a plain field name');
+      if (args.drainKey !== 'remaining') throw usage('--drain-key only accepts remaining');
     } else if (arg === '--max-iterations') args.maxIterations = positiveInt(next(), HARD_MAX_ITERATIONS, '--max-iterations');
     else if (arg === '--max-minutes') args.maxMinutes = positiveInt(next(), HARD_MAX_MINUTES, '--max-minutes');
     else if (arg.startsWith('--')) throw usage(`unrecognized argument "${arg}"`);
@@ -68,7 +68,8 @@ export function parseRunArgs(argv, { readFile = (path) => readFileSync(path, 'ut
  * `summary.valueCounters`. A full-free-text caller gets `summary.value` as an object. Top-level keys only.
  */
 export function readDeferred(summary, drainKey = null) {
-  const keys = drainKey ? [drainKey] : DEFAULT_DRAIN_KEYS;
+  if (drainKey !== null && drainKey !== 'remaining') return null;
+  const keys = DEFAULT_DRAIN_KEYS;
   const layers = [summary?.valueCounters];
   const value = summary?.value;
   if (value && typeof value === 'object' && !Array.isArray(value)) layers.push(value);
@@ -76,7 +77,7 @@ export function readDeferred(summary, drainKey = null) {
     if (!layer || typeof layer !== 'object') continue;
     for (const key of keys) {
       const count = layer[key];
-      if (typeof count === 'number' && Number.isFinite(count) && count >= 0) return { key, count };
+      if (typeof count === 'number' && Number.isSafeInteger(count) && count >= 0) return { key, count };
     }
   }
   return null;
@@ -136,7 +137,7 @@ export async function runAutomation({ args, call, wait = sleep, now = Date.now, 
         throw error;
       }
       summary = summarizeRun(bundle, args.drainKey);
-      if (summary.terminal && !IN_FLIGHT.has(summary.status)) break;
+      if (summary.terminal && RUN_STATUS_TERMINAL.has(summary.status)) break;
     }
     const record = { n, runId, status: summary.status, deferred: summary.deferred?.count ?? null,
       deferredKey: summary.deferred?.key ?? null, error: summary.error, errorClass: summary.errorClass, executionMs: summary.executionMs };
@@ -166,7 +167,7 @@ const OUTCOME_TEXT = Object.freeze({
   wall_cap: 'stopped at the wall-time cap; the run may still be going',
   iteration_cap: 'stopped at the iteration cap; rows are still deferred',
   no_progress: 'stopped: two re-triggers in a row did not shrink the deferred count',
-  no_deferred_count: 'finished, but the result carries no deferred count to drain (set --drain-key if it uses another field)',
+  no_deferred_count: 'finished, but the result carries no valid top-level remaining count to drain',
 });
 
 export function exitCodeFor(outcome) {

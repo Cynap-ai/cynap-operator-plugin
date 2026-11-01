@@ -14,6 +14,7 @@ import { applyGlobalFlags } from '../lib/cli-globals.mjs';
 const SHA = /^[a-f0-9]{40,64}$/;
 const AUTOMATION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ATTEMPT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const safeDuration = (value) => Number.isSafeInteger(value) && value >= 0;
 export const MAX_STATUS_POLLS = 36;
 const USAGE = 'Usage: cynap-preview.mjs <automation-id> <commit-sha> | cynap-preview.mjs status <attempt-id>';
 
@@ -34,6 +35,14 @@ export function parsePreviewArgs(argv) {
 /** What to run once the bounded poll gives up on an attempt that is still running. */
 export function stillRunningHint(attemptId) {
   return `cynap-preview: the poll budget ran out before the verdict was ready (the preview has not hung; its verdict can wait on the baseline run). Resume with /cynap-preview status ${attemptId}`;
+}
+
+function horizonHint(result) {
+  if (result.status === 'waiting') return `cynap-preview: the queue wait reached its server deadline. Read /cynap-preview status ${result.attemptId} for the final state.`;
+  if (result.status === 'pending' && Number.isSafeInteger(result.remaining_lease_ms)) {
+    return `cynap-preview: the run lease and 60-second verdict grace ended. Read /cynap-preview status ${result.attemptId} for the final state.`;
+  }
+  return stillRunningHint(result.attemptId);
 }
 
 /** A pass the chain already honours while the attempt's own status read still says `pending`. Effect kinds are not known from here. */
@@ -71,6 +80,9 @@ async function readStatus({ base, nonce, previewId, fetchImpl }) {
   if (!response.ok) {
     throw Object.assign(new Error(`operator preview status failed: HTTP ${response.status}`), { code: `status_http_${response.status}` });
   }
+  if (body.status === 'waiting' && !safeDuration(body.remaining_queue_ms)) {
+    throw Object.assign(new Error('operator preview status omitted a valid queue duration'), { code: 'preview_status_invalid' });
+  }
   return body;
 }
 
@@ -107,7 +119,7 @@ export const WROTE_NOTHING_NOTE = 'cynap-preview: warning preview_wrote_nothing 
   + 'but its preview recorded no write. A dry_run input or a branch the fixture never reaches proves nothing about the write path; '
   + 'preview with input that exercises it. The owner sees this warning on the effect review.';
 
-export async function runPreview({ slug, automationId, commitSha, fetchImpl = fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPolls = MAX_STATUS_POLLS, onStart = () => {}, nonceOverride = null,
+export async function runPreview({ slug, automationId, commitSha, fetchImpl = fetch, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxPolls = MAX_STATUS_POLLS, onStart = () => {}, onPosition = () => {}, nonceOverride = null,
   probeVerdict = (probe) => passVerdictCleared({ ...probe, fetchImpl }) }) {
   const { nonce, base } = previewRoute(slug, nonceOverride);
   const headers = { 'Content-Type': 'application/json', [CONTROL_HEADER]: nonce };
@@ -125,19 +137,51 @@ export async function runPreview({ slug, automationId, commitSha, fetchImpl = fe
   }
   const initial = { status: 'preview_running', attemptId: previewId, effectKinds: [] };
   onStart(initial);
-  for (let poll = 0; poll < maxPolls; poll += 1) {
-    await wait(Math.min(2000 * (poll + 1), 10_000));
+  let lastPosition = null;
+  let queueBudgetMs = null;
+  let leaseBudgetMs = null;
+  let leaseZeroSeen = false;
+  for (let poll = 0; ; poll += 1) {
+    const delay = Math.min(2000 * (poll + 1), 10_000);
+    await wait(delay);
+    if (queueBudgetMs !== null) queueBudgetMs = Math.max(0, queueBudgetMs - delay);
+    if (leaseBudgetMs !== null) leaseBudgetMs = Math.max(0, leaseBudgetMs - delay);
     const body = await readStatus({ base, nonce, previewId, fetchImpl });
-    if (body.status !== 'pending' && body.status !== 'preview_running') return previewSummary(body);
-    if (poll % VERDICT_PROBE_EVERY_POLLS === VERDICT_PROBE_EVERY_POLLS - 1 && await probeVerdict({ slug, automationId, commitSha })) {
-      return lagInferredPass(previewId);
+    if (body.status !== 'pending' && body.status !== 'preview_running' && body.status !== 'waiting') return previewSummary(body);
+    if (body.status === 'waiting') {
+      const position = Number.isSafeInteger(body.position) && body.position > 0 ? body.position : null;
+      if (position !== null && position !== lastPosition) onPosition(position);
+      lastPosition = position;
+      queueBudgetMs = queueBudgetMs === null ? body.remaining_queue_ms : Math.min(queueBudgetMs, body.remaining_queue_ms);
+      if (queueBudgetMs === 0) return previewSummary(body);
+      continue;
+    } else {
+      if (safeDuration(body.remaining_lease_ms)) {
+        if (!leaseZeroSeen && body.remaining_lease_ms === 0) {
+          leaseZeroSeen = true;
+          leaseBudgetMs = 60_000;
+        } else if (!leaseZeroSeen) {
+          const serverBudget = Math.min(Number.MAX_SAFE_INTEGER, body.remaining_lease_ms + 60_000);
+          leaseBudgetMs = leaseBudgetMs === null ? serverBudget : Math.min(leaseBudgetMs, serverBudget);
+        }
+      }
+      if (leaseBudgetMs === 0) break;
+      if (poll % VERDICT_PROBE_EVERY_POLLS === VERDICT_PROBE_EVERY_POLLS - 1 && await probeVerdict({ slug, automationId, commitSha })) {
+        return lagInferredPass(previewId);
+      }
+      if (leaseBudgetMs !== null) continue;
     }
+    // Legacy servers expose no horizon. Keep their bounded poll and status-resume path.
+    if (poll + 1 < maxPolls) continue;
+    break;
   }
   // One last read of both sources before calling a long wait "still running".
   const last = await readStatus({ base, nonce, previewId, fetchImpl });
-  if (last.status !== 'pending' && last.status !== 'preview_running') return previewSummary(last);
-  if (await probeVerdict({ slug, automationId, commitSha })) return lagInferredPass(previewId);
-  return initial;
+  if (last.status !== 'pending' && last.status !== 'preview_running' && last.status !== 'waiting') return previewSummary(last);
+  if (last.status !== 'waiting' && await probeVerdict({ slug, automationId, commitSha })) {
+      return lagInferredPass(previewId);
+  }
+  return last.status === 'waiting' || Number.isSafeInteger(last.remaining_lease_ms) ? previewSummary(last) : initial;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -147,12 +191,13 @@ export async function main(argv = process.argv.slice(2)) {
     : await runPreview({
       slug: resolveOrgSlug(), ...args,
       onStart: (started) => process.stdout.write(`${JSON.stringify(operatorEffectOutput(started))}\n`),
+      onPosition: (position) => process.stdout.write(`cynap-preview: waiting at queue position ${position}\n`),
     });
   process.stdout.write(`${JSON.stringify(operatorEffectOutput(result))}\n`);
   process.stdout.write(lagInferredNote(result));
   if (result.status === 'fail') process.stdout.write(`cynap-preview: ${formatPreviewFailure(result)}\n`);
   if (result.warnings?.includes('preview_wrote_nothing')) process.stdout.write(`${WROTE_NOTHING_NOTE}\n`);
-  if (result.status === 'pending' || result.status === 'preview_running') process.stdout.write(`${stillRunningHint(result.attemptId)}\n`);
+  if (result.status === 'pending' || result.status === 'preview_running' || result.status === 'waiting') process.stdout.write(`${horizonHint(result)}\n`);
   return result;
 }
 

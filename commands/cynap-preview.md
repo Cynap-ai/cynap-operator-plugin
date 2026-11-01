@@ -12,13 +12,13 @@ supplies `orgSlug`; the command sends `{orgSlug, automationId, commitSha}` to th
 node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-preview.mjs" $ARGUMENTS
 ```
 
-The command prints `preview_running` with the attempt id while the backend runs, then polls
-status for a bounded time. A preview that outlives that wait is still running: the command
-prints `/cynap-preview status <attempt-id>`, and running it later reads that attempt's state
-and verdict once (`GET /preview/status/{previewId}`, the same `workspace:execute-preview`
-read). Do not start a second preview to find out: an org runs one preview at a time, so it is
-refused `preview_running`, and the refusal names the running attempt, its automation and
-when it started.
+The command prints the attempt id and polls until its verdict. If another preview holds the
+org's slot, this attempt reports `waiting` and its queue position. It waits through the server's
+queue deadline, then through the promoted run's lease plus a 60-second verdict grace.
+`preview_queue_full` means the org already has ten waiting attempts. Older clients receive
+`preview_running`; update the plugin to use the queue.
+If the wait ends before a verdict, use `/cynap-preview status <attempt-id>` to read that
+attempt once. Do not start another attempt to check the original one's progress.
 `preview_not_found` means the attempt is not in this org or its verdict has expired. On pass, re-read `workspace_status` and follow its activation
 `next_action`. A pass reports counts and effect kinds only. A failure reports the
 typed verdict code and its closed facts: `failureLocation` (the error class and
