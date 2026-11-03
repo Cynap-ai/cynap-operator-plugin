@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  failureCode, failureReason, lagInferredNote, parsePreviewArgs, previewSummary, readPreviewStatus, runPreview, stillRunningHint,
+  failureCode, failureReason, parsePreviewArgs, previewSummary, readPreviewStatus, runPreview, stillRunningHint,
 } from '../bin/cynap-preview.mjs';
 import { forwardPreviewRequest } from '../bin/operator-proxy.mjs';
 
@@ -229,7 +229,7 @@ test('waiting preview survives the old 36 polls, prints position, then waits thr
   const waits = [];
   const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
     onPosition: (position) => positions.push(position),
-    wait: async (ms) => { waits.push(ms); }, probeVerdict: async () => false,
+    wait: async (ms) => { waits.push(ms); },
     fetchImpl: async (url) => {
       if (!String(url).includes('/status/')) return { ok: true, status: 202, json: async () => ({ previewId: ATTEMPT, status: 'waiting' }) };
       reads += 1;
@@ -248,7 +248,7 @@ test('waiting preview survives the old 36 polls, prints position, then waits thr
 
 test('the queue deadline stops waiting without using verdict expiry', async () => {
   const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
-    wait: async () => {}, probeVerdict: async () => false,
+    wait: async () => {},
     fetchImpl: async (url) => ({ ok: true, status: String(url).includes('/status/') ? 200 : 202,
       json: async () => ({ previewId: ATTEMPT, status: 'waiting', position: 1,
         queue_expires_at: '2026-10-31T12:00:00Z', remaining_queue_ms: 0,
@@ -260,7 +260,7 @@ test('the queue deadline stops waiting without using verdict expiry', async () =
 test('a promoted attempt gets the server lease plus 60 seconds of verdict grace', async () => {
   const waits = [];
   const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
-    wait: async (ms) => { waits.push(ms); }, probeVerdict: async () => false,
+    wait: async (ms) => { waits.push(ms); },
     fetchImpl: async (url) => ({ ok: true, status: String(url).includes('/status/') ? 200 : 202,
       json: async () => ({ previewId: ATTEMPT, status: 'pending',
         lease_expires_at: '2026-10-31T12:20:00Z', remaining_lease_ms: 0,
@@ -274,7 +274,7 @@ test('lease grace begins after the first zero-remaining server response', async 
   const waits = [];
   let zeroResponseSeen = false;
   const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
-    wait: async (ms) => { waits.push(ms); }, probeVerdict: async () => false,
+    wait: async (ms) => { waits.push(ms); },
     fetchImpl: async (url) => ({ ok: true, status: String(url).includes('/status/') ? 200 : 202,
       json: async () => {
         if (String(url).includes('/status/')) zeroResponseSeen = true;
@@ -291,7 +291,7 @@ test('waiting refuses missing or malformed server queue duration without a legac
   for (const remaining_queue_ms of [undefined, -1, '120000', Number.MAX_SAFE_INTEGER + 1]) {
     let statusReads = 0;
     await assert.rejects(runPreview({ slug: 's', automationId: 'a', commitSha: SHA, nonceOverride: 'n',
-      maxPolls: 2, wait: async () => {}, probeVerdict: async () => false,
+      maxPolls: 2, wait: async () => {},
       fetchImpl: async (url) => {
         if (String(url).includes('/status/')) statusReads += 1;
         return { ok: true, status: 202, json: async () => ({ previewId: ATTEMPT, status: 'waiting', position: 1,
@@ -301,39 +301,32 @@ test('waiting refuses missing or malformed server queue duration without a legac
   }
 });
 
-// The attempt's status read lagged its verdict for minutes (12:38 DB verdict, `pending` through 12:45).
-const pendingStatus = (url) => String(url).includes('/status/');
+// The CLI once printed `pass` for an attempt still `pending` (one later failed) because it read the
+// chain's next_action as a verdict; `blocked_by_chain` answers before handler proof is even checked.
+// The attempt this run started is the only verdict it may report.
 const workspaceStatus = (nextAction) => ({ ok: true, json: async () => ({ result: { structuredContent: {
   pending: [{ commit_sha: SHA, next_action: nextAction }] } } }) });
 
-test('a pass the chain already honours ends the wait while the attempt status still reads pending', async () => {
-  let statusReads = 0;
-  const fetchImpl = async (url) => {
-    if (String(url).includes('/mcp')) return workspaceStatus({ kind: 'step_up_and_activate', command: `/cynap-activate ${SHA}` });
-    if (pendingStatus(url)) { statusReads += 1; return { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) }; }
-    return { ok: true, status: 202, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) };
-  };
-  const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, fetchImpl, wait: async () => {}, maxPolls: 36, nonceOverride: 'n' });
-  assert.equal(result.status, 'pass');
-  assert.equal(result.verdictSource, 'workspace_status');
-  assert.ok(statusReads < 6, `stopped early, after ${statusReads} status reads, not the full 36`);
-  assert.match(lagInferredNote(result), new RegExp(`pass verdict already covers this commit.*status ${ATTEMPT}`));
-  assert.equal(lagInferredNote({ status: 'pass' }), '');
-});
+for (const nextAction of [
+  { kind: 'blocked_by_chain', next_commit_sha: 'b'.repeat(64), position: 2 },
+  { kind: 'step_up_and_activate', command: `/cynap-activate ${SHA}` },
+]) {
+  test(`a pending attempt never reports pass, whatever the chain says (${nextAction.kind})`, async () => {
+    let chainReads = 0;
+    const fetchImpl = async (url) => {
+      if (String(url).includes('/mcp')) { chainReads += 1; return workspaceStatus(nextAction); }
+      return { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) };
+    };
+    const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, fetchImpl, wait: async () => {}, maxPolls: 6, nonceOverride: 'n' });
+    assert.equal(result.status, 'preview_running');
+    assert.equal(result.attemptId, ATTEMPT);
+    assert.equal(chainReads, 0, 'the chain is not a verdict source');
+  });
+}
 
-test('while the handler still needs a preview, the wait goes on and ends as still running', async () => {
-  const fetchImpl = async (url) => {
-    if (String(url).includes('/mcp')) return workspaceStatus({ kind: 'handler_preview_required', handlers: [{ automation_id: 'a' }] });
-    return { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) };
-  };
-  const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, fetchImpl, wait: async () => {}, maxPolls: 4, nonceOverride: 'n' });
-  assert.equal(result.status, 'preview_running');
-});
-
-test('another handler needing a preview does not clear this one; a verdict landing during the last wait is not missed', async () => {
+test('a verdict landing during the last wait is not missed', async () => {
   let reads = 0;
-  const fetchImpl = async (url) => {
-    if (String(url).includes('/mcp')) return workspaceStatus({ kind: 'handler_preview_required', handlers: [{ automation_id: 'other' }] });
+  const fetchImpl = async () => {
     reads += 1;
     return { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: reads >= 3 ? 'fail' : 'pending', failureCode: 'copy_create_failed' }) };
   };
