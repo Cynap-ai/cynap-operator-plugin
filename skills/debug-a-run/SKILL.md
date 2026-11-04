@@ -57,17 +57,29 @@ it with the commit you expect before blaming the code.
 | `connection_not_connected` | the Owner | The Owner reconnects it in Integrations. |
 | `credential_missing` | the Owner | No login credential is stored for this provider. The Owner connects it in Integrations. |
 | `unverifiable_predicate` | you | The descriptor names no probe the platform can verify a session with. Fix the descriptor. |
-| `login_tripped_needs_seed` | you | Automatic logins stopped after consecutive unverified logins. Seed a verified session. |
-| `needs_human_challenge` | you | The login hit a captcha or a second factor the platform cannot pass. Seed a verified session. |
-| `login_unverified` | you | The login completed but its session did not authenticate. Check the descriptor, then seed. |
+| `login_tripped_needs_seed` | you | Automatic logins stopped after consecutive unverified logins. Stop and hand off to authorized staff for human sign-in and verified reseeding. |
+| `needs_human_challenge` | you | The login requires human recovery. Stop and hand off to authorized staff for human sign-in and verified reseeding. |
+| `login_unverified` | you | The login completed but its session did not authenticate. Check the descriptor, then hand off to authorized staff for human sign-in and verified reseeding. |
 | `login_failed` | you | The login did not complete: the vendor refused the credential, or the selectors or `requestedOrigins` do not log in. Check both. |
 | `login_cooldown` | retry | A login ran less than the cooldown ago. The next run after the cooldown logs in again. |
 | `login_daily_cap` | retry | The daily login cap for this provider is spent. Runs log in again once the rolling window frees. |
 | `lease_timeout` | retry | Another run held the login lease too long. Run the job again. |
 | `login_timeout` | Cynap | The login engine ran past its wait. Report it to Cynap; do not retry in a loop. |
 | `probe_unavailable` | retry | The provider did not answer the session probe. That is an outage, not a login verdict. Run the job again. |
-| `ensure_error` | Cynap | The platform failed while ensuring the session. Report it to Cynap. |
+| `ensure_error` | Cynap | The platform failed while ensuring the session, possibly with unknown settlement. Hand off to Cynap; do not infer a challenge hold or retry diagnostically. |
 | `unknown` | Cynap | Report it to Cynap. Never assume an Owner action. |
+
+For WriteUpp, the founder alone performs human sign-in and verified reseeding, including
+seed-related reasons. If unavailable, browser jobs wait. The AI operator has no seed path.
+Do not request credentials, codes, seeds or exported cookie material. Do not rerun a job
+to diagnose a login. A healthy session-row flag or reconnect does not clear a challenge hold.
+
+Settlement and ledger evidence require founder or platform access: join the password
+intent/response and `session-ensure.done` by `attemptId`, then check the attempt row.
+`settlement:confirmed` with `settledOutcome:challenge` confirms the hold; `unknown` may
+have committed, and `pending` charges the budget without establishing a hold. Unknown
+settlement alone does not authorize founder sign-in. Follow the platform's WriteUpp
+second sign-in step runbook after a challenge/trip hold is confirmed.
 
 ### Customer AI admission
 
