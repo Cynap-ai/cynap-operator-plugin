@@ -45,6 +45,7 @@ function makePluginRoot(version) {
   const root = join(scratchDir('cynap-selfheal-root-'), version);
   mkdirSync(join(root, 'bin'), { recursive: true });
   copyFileSync(join(PLUGIN_ROOT, 'bin', 'operator-proxy.mjs'), join(root, 'bin', 'operator-proxy.mjs'));
+  copyFileSync(join(PLUGIN_ROOT, 'bin', 'approval-landing.mjs'), join(root, 'bin', 'approval-landing.mjs'));
   return root;
 }
 

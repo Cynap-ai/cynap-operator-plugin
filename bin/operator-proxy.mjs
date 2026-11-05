@@ -21,10 +21,8 @@
 //      signals to mint a FRESH operator token (session-capture scope) and upload
 //      the session's transcript to the backend session-trail endpoint.
 //
-// Zero external dependencies — Node built-ins only. Single file, build-copied
-// byte-for-byte into the plugin package (scripts/build-copy-proxy.mjs) — so
-// the marker/session-end logic below is INLINED here rather than
-// split into a sibling module the copy mechanism doesn't know about.
+// Zero external dependencies — Node built-ins only. Build-copied byte-for-byte
+// into the plugin package with approval-landing.mjs (scripts/build-copy-proxy.mjs).
 //
 // Safety: refuses any targetOrgId other than the reserved test org id unless
 // --allow-org <id> is passed explicitly. Cookie/token are held in memory only
@@ -42,6 +40,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { sendApprovalLanding } from './approval-landing.mjs';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2438,14 +2437,10 @@ function startLoopbackListener(expectedState) {
         res.end();
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(
-        '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;text-align:center;padding:3rem">' +
-          '<h2>Cynap Operator CLI</h2><p>You can close this window and return to your terminal.</p></body>'
-      );
       const err = url.searchParams.get('error');
       const state = url.searchParams.get('state');
       const code = url.searchParams.get('code');
+      sendApprovalLanding(res, state === expectedState && !err && Boolean(code));
       if (state !== expectedState) {
         rejectCode(new Error('loopback state mismatch (possible CSRF) — login aborted'));
       } else if (err === 'access_denied') {
