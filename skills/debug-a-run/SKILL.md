@@ -161,6 +161,30 @@ Use the reason returned by the platform; table order does not select admission. 
 whose actor is the Owner is an expected state, not a fault: tell the Owner
 exactly what to do and stop.
 
+### Locked egress (`broker.egress_refused`)
+
+A locked Org's run reaches the outside world only through the broker, and only the exact hosts in
+its run token. A refused call surfaces to the handler as `egress_blocked`; the
+`broker.egress_refused` event carries one `reason`:
+
+| Reason | Who acts | What to do next |
+|---|---|---|
+| `host_claim_invalid` | Cynap | The run token's host list is missing or malformed. Report it to Cynap; do not retry in a loop. |
+| `scheme_not_https` | you | Call the host over `https://`. Plain `http:` is never allowed. |
+| `port_not_443` | you | Drop the explicit port. Only 443 is allowed. |
+| `ip_literal` | you | Call the host by name, never by IP address. |
+| `host_shape_invalid` | you | The URL's host is not an exact hostname. Fix the URL. |
+| `host_denied` | you | The host is a platform host that no approval can admit. Use the platform's own tools instead. |
+| `host_not_in_claim` | you | The host is not in this automation's `http_allowlist`, or the Owner has not approved the content that adds it. Add the exact host, push, and ask the Owner to approve. |
+| `caller_host_header` | you | Remove the `Host` header from the request. The broker sets it from the URL. |
+
+A redirect to a host outside the list is refused the same way, on the redirect's host.
+
+`code_execution_unavailable` on a locked Org names the containment canary's state
+(`workspace_status.canary_state`): `never_green`, `stale`, `red` or `unreadable`. None of these is
+yours to fix: flows and `deterministic` automations still run. Tell the Owner code is paused on a
+platform check and report a `red` or `unreadable` that lasts more than an hour to Cynap.
+
 ## 5. Queued work, read separately
 
 Queued work is its own step. It reads the queue state of a run that has not

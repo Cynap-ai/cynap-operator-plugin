@@ -52,6 +52,23 @@ this skill if you haven't this session. If the handler uses `ctx.tools.llm`,
 also read `configure-customer-ai` and explain
 native versus BYOK billing before choosing a model.
 
+## Hosts (`http_allowlist`)
+
+List every host the handler calls, **exactly**: `api.example.com`, never `*.example.com`.
+
+- An exact hostname on 443 only: no `*.` wildcard, no IP address, no port, no scheme, no path.
+- At most 50 hosts and 2,000 bytes in total. A commit over either is refused.
+- A locked Org refuses a `*` entry outright.
+- In a locked Org (every self-serve Org) the run reaches only these hosts, through the broker
+  (`ctx.tools.http`). The broker refuses `http:`, a non-443 port, an IP literal, a host outside
+  the list, a caller-supplied `Host` header, and a redirect to a host outside the list. Each
+  refusal is `egress_blocked`; `debug-a-run` maps its reason to the next step.
+- A locked run has no other network route: raw sockets (`node:net`, `node:dgram`, `fetch`) reach
+  nothing, and there is no locked browser route yet, so `capabilities: ["browser"]` and
+  `session_providers` are refused on a locked run.
+- A locked Org runs code only while the platform's containment canary is green
+  (`workspace_status.canary_state`); flows and `deterministic` automations always run.
+
 ## One entrypoint
 
 `execution.entrypoint` is `'worker'` (the default, and the only accepted
@@ -79,7 +96,7 @@ A logged-in browser job adds a **stored session**:
   "entrypoint": "worker",
   "capabilities": ["browser"],
   "session_providers": ["<provider>"],
-  "http_allowlist": ["*.<provider-host>"],
+  "http_allowlist": ["<exact.provider.host>"],
   "allowed_tools": ["knowledge.storeBatch"],
   "max_runtime_ms": 900000
 }
@@ -94,7 +111,8 @@ A logged-in browser job adds a **stored session**:
   unset. The handler must fail closed when it is absent — return a failure,
   never scrape logged-out pages and report success. An `org:<id>` provider
   (next section) works differently: none of this cookie handling applies.
-- Egress is still gated by `http_allowlist`: list the provider's hosts.
+- Egress is still gated by `http_allowlist`: list each provider host exactly
+  (see "Hosts" above; no `*.` wildcard).
 - `session_providers` also works WITHOUT the browser capability, for a worker
   that calls the provider over `ctx.tools.http` with the session's cookies.
 - Browser runs are switched on per environment by the platform. A config the
