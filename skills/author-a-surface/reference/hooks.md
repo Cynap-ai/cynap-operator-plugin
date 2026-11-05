@@ -313,7 +313,7 @@ useMetric(name: string, params?: MetricParams, options?: { refreshInterval?: num
 | `data` | `MetricData \| null` | yes |
 | `state` | `'denied' \| 'empty' \| 'error' \| 'loading' \| 'ready'` | yes |
 | `provenance` | `MetricProvenance \| null` | yes |
-| `denial` | `'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
+| `denial` | `'access_model_unsupported' \| 'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
 | `refresh` | `() => void` | yes |
 Children: not accepted. Standard DOM props: not accepted.
 
@@ -372,7 +372,7 @@ useQuery<T>(tool: string, args: Readonly<Record<string, SurfaceJsonValue | undef
 |---|---|---|
 | `data` | `T \| null` | yes |
 | `state` | `'denied' \| 'empty' \| 'error' \| 'idle' \| 'loading' \| 'ready'` | yes |
-| `denial` | `'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
+| `denial` | `'access_model_unsupported' \| 'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
 | `isFetching` | `boolean` | yes |
 | `isStale` | `boolean` | yes |
 | `isPreviousData` | `boolean` | yes |
@@ -412,7 +412,7 @@ useEntityForm(entityType: string, options: { readonly fields: readonly string[];
 | `state` | `'denied' \| 'empty' \| 'error' \| 'idle' \| 'loading' \| 'ready'` | yes |
 | `fields` | `readonly SurfaceFormField[]` | yes |
 | `omitted` | `readonly { readonly name: string; readonly reason: 'not_in_schema' \| 'json' \| 'no_options'; }[]` | yes |
-| `denial` | `'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
+| `denial` | `'access_model_unsupported' \| 'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
 | `refresh` | `() => void` | yes |
 Children: not accepted. Standard DOM props: not accepted.
 
@@ -532,7 +532,7 @@ useEntityHistory(entityType: string, entityId: string, options?: { readonly limi
 |---|---|---|
 | `data` | `EntityHistoryData \| null` | yes |
 | `state` | `'denied' \| 'empty' \| 'error' \| 'idle' \| 'loading' \| 'ready'` | yes |
-| `denial` | `'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
+| `denial` | `'access_model_unsupported' \| 'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
 | `isFetching` | `boolean` | yes |
 | `isStale` | `boolean` | yes |
 | `isPreviousData` | `boolean` | yes |
@@ -575,7 +575,7 @@ useMutation<TVars extends Record<string, SurfaceJsonValue>, TData = unknown>(too
 | `state` | `'accepted' \| 'applied' \| 'conflict' \| 'denied' \| 'error' \| 'failed' \| 'idle' \| 'pending' \| 'refused' \| 'unknown'` | yes |
 | `variables` | `TVars \| null` | yes |
 | `data` | `TData \| null` | yes |
-| `denial` | `'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
+| `denial` | `'access_model_unsupported' \| 'surface_gesture_required' \| 'surface_stale' \| 'surface_tool_denied' \| 'surface_transport_error' \| null` | yes |
 | `refusal` | `'consent_missing' \| 'forbidden' \| 'invalid_state' \| 'not_entitled' \| 'not_found' \| 'not_owner' \| 'stale_version' \| 'unavailable' \| 'window_closed' \| null` | yes |
 | `reset` | `() => void` | yes |
 Children: not accepted. Standard DOM props: not accepted.
