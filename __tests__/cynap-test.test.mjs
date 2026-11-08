@@ -2,7 +2,7 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -101,6 +101,46 @@ test('marks Vitest and unavailable packages unsupported with a concrete fix', ()
   assert.match(inspectOrgTest(dir, 'vitest.test.ts').reason, /Vitest/);
   assert.match(inspectOrgTest(dir, 'vitest.test.ts').fix, /node:test/);
   assert.match(inspectOrgTest(dir, 'missing.test.mjs').reason, /not-installed-anywhere/);
+});
+
+test('rejects relative imports outside the org before spawning and recommends the portable mock', async () => {
+  const file = 'automations/__tests__/legacy.test.ts';
+  const specifier = '../../../../testing/mock-cynap-context.ts';
+  write(file, `import { createMockContext } from '${specifier}';\n`);
+  const result = await runOrgTests({ cwd, stdio: 'pipe',
+    spawnImpl: () => { throw new Error('unsupported test must not execute'); },
+  });
+  assert.equal(result.exitCode, UNSUPPORTED_EXIT_CODE);
+  assert.deepEqual(result.files, []);
+  assert.equal(result.unsupported[0].file, file);
+  assert.ok(result.unsupported[0].reason.includes(specifier));
+  assert.match(result.unsupported[0].reason, /outside.*org/);
+  assert.match(result.unsupported[0].fix, /#cynap\/testing/);
+});
+
+test('checks static, side-effect, dynamic and CommonJS relative imports for org containment', () => {
+  for (const source of [
+    "import helper from '../cynap-acme-sibling/helper.ts';",
+    "import '../cynap-acme-sibling/helper.ts';",
+    "const helper = import('../cynap-acme-sibling/helper.ts');",
+    "const helper = require('../cynap-acme-sibling/helper.ts');",
+    "export { helper } from '../cynap-acme-sibling/helper.ts';",
+  ]) {
+    write('escape.test.mjs', source);
+    const result = inspectOrgTest(dir, 'escape.test.mjs');
+    assert.ok(result, source);
+    assert.ok(result.reason.includes('../cynap-acme-sibling/helper.ts'));
+  }
+  write('automations/helper.ts', 'export const helper = 1;');
+  write('automations/__tests__/local.test.ts', "import { helper } from '../helper.ts';");
+  assert.equal(inspectOrgTest(dir, 'automations/__tests__/local.test.ts'), null);
+});
+
+test('rejects a relative helper symlink that resolves outside the org', () => {
+  writeFileSync(join(cwd, 'outside.mjs'), 'export const helper = 1;');
+  symlinkSync(join(cwd, 'outside.mjs'), join(dir, 'helper.mjs'));
+  write('symlink.test.mjs', "import { helper } from './helper.mjs';");
+  assert.match(inspectOrgTest(dir, 'symlink.test.mjs')?.reason ?? '', /outside.*org/);
 });
 
 test('runs a CommonJS .js test (require) although the plugin-owned package.json is type:module', needsInProcess, async () => {

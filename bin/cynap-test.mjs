@@ -18,9 +18,9 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve as resolvePath } from 'node:path';
+import { dirname, isAbsolute, relative, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { assertConnectedOrg, listLocalFiles, readState, resolveOrgSlug, resolveWorkspaceDir } from '../lib/workspace-sync.mjs';
@@ -36,6 +36,16 @@ export const UNSUPPORTED_EXIT_CODE = 2;
 
 const BUILTIN_SPECIFIERS = new Set([ 'node:test', 'node:assert', 'node:assert/strict' ]);
 
+function relativeImportEscapesOrg(dir, file, specifier) {
+  const target = resolvePath(dirname(resolvePath(dir, file)), specifier);
+  const outside = (root, path) => {
+    const rel = relative(root, path);
+    return rel === '..' || rel.startsWith('../') || isAbsolute(rel);
+  };
+  return outside(resolvePath(dir), target) ||
+    (existsSync(target) && outside(realpathSync(dir), realpathSync(target)));
+}
+
 /** Detect runner/import shapes that this dependency-free sandbox cannot execute. */
 export function inspectOrgTest(dir, file) {
   const source = readFileSync(resolvePath(dir, file), 'utf8');
@@ -48,11 +58,20 @@ export function inspectOrgTest(dir, file) {
   }
 
   const requireFromTest = createRequire(resolvePath(dir, file));
-  const specifiers = [...source.matchAll(/(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*['"]([^'"]+)['"]/g)]
+  const specifiers = [...source.matchAll(/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\()\s*['"]([^'"]+)['"]/g)]
     .map((match) => match[1]);
   for (const specifier of specifiers) {
+    if (specifier.startsWith('.')) {
+      if (relativeImportEscapesOrg(dir, file, specifier)) {
+        return {
+          file,
+          reason: `imports "${specifier}" outside the org directory`,
+          fix: 'keep relative helpers inside the org; use the published SDK mock context via #cynap/testing instead of monorepo testing/mock-cynap-context imports',
+        };
+      }
+      continue;
+    }
     if (
-      specifier.startsWith('.') ||
       specifier.startsWith('/') ||
       specifier.startsWith('#') ||
       specifier.startsWith('node:') ||
