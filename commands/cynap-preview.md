@@ -19,7 +19,15 @@ queue deadline, then through the promoted run's lease plus a 60-second verdict g
 `preview_running`; update the plugin to use the queue.
 If the wait ends before a verdict, use `/cynap-preview status <attempt-id>` to read that
 attempt once. Do not start another attempt to check the original one's progress.
-`preview_not_found` means the attempt is not in this org or its verdict has expired. On pass, re-read `workspace_status` and follow its activation
+`preview_not_found` means the attempt is not in this org or its verdict has expired.
+A gateway timeout, a 502 from the proxy or a 503 `operator_authz_unavailable` during the poll
+says nothing about the attempt, so the poll keeps going through up to five of them in a row.
+Previews run only at the accepted tip. A `superseded` result names its reason and prints the next
+step. `key_changed` means the commit is no longer the tip, or its handler inputs changed before the
+run started. Preview the automation at the tip instead (`/cynap-status` names it). A pass there also
+proves an earlier pending commit whose handler and context are unchanged. If a later commit changed
+that handler, `/cynap-discard` the commit after the one you need, preview and activate that one,
+then push the rest again. On pass, re-read `workspace_status` and follow its activation
 `next_action`. A pass reports counts and effect kinds only. A failure reports the
 typed verdict code and its closed facts: `failureLocation` (the error class and
 `handler.js` line where the candidate threw) and whether the baseline, the accepted

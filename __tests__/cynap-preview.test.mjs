@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  failureCode, failureReason, parsePreviewArgs, previewSummary, readPreviewStatus, runPreview, stillRunningHint,
+  failureCode, failureReason, MAX_TRANSIENT_STATUS_READS, parsePreviewArgs, previewSummary, readPreviewStatus, runPreview, stillRunningHint,
+  SUPERSEDED_HINTS,
 } from '../bin/cynap-preview.mjs';
 import { forwardPreviewRequest } from '../bin/operator-proxy.mjs';
 
@@ -339,4 +340,50 @@ test('previewSummary keeps preview_wrote_nothing and drops unknown warnings', ()
   const summary = previewSummary({ previewId: 'p-1', status: 'pass', effectKinds: [], warnings: ['preview_wrote_nothing', 'made_up'] });
   assert.deepEqual(summary.warnings, ['preview_wrote_nothing']);
   assert.equal(previewSummary({ previewId: 'p-1', status: 'pass', effectKinds: [] }).warnings, undefined);
+});
+
+// A gateway timeout and an authorization outage must not end a wait whose preview then passes.
+test('a running poll rides out gateway timeouts and an authorization outage, then reports the verdict', async () => {
+  const replies = [
+    { ok: false, status: 504, json: async () => { throw new SyntaxError('not json'); } },
+    { ok: false, status: 503, json: async () => ({ error: 'operator_authz_unavailable', retryAfterMs: 2000 }) },
+    { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) },
+    { ok: false, status: 502, json: async () => ({ error: 'fetch failed' }) },
+    { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'pass', effectKinds: [] }) },
+  ];
+  const fetchImpl = async (url) => (String(url).includes('/status/')
+    ? replies.shift()
+    : { ok: true, status: 202, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) });
+  const result = await runPreview({ slug: 's', automationId: 'a', commitSha: SHA, fetchImpl, wait: async () => {}, nonceOverride: 'n' });
+  assert.equal(result.status, 'pass');
+  assert.equal(replies.length, 0);
+});
+
+test('a streak of transient reads still ends the poll, and a 403 ends it at once', async () => {
+  let reads = 0;
+  const failing = (status) => async (url) => {
+    if (!String(url).includes('/status/')) return { ok: true, status: 202, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) };
+    reads += 1;
+    return { ok: false, status, json: async () => ({}) };
+  };
+  await assert.rejects(runPreview({ slug: 's', automationId: 'a', commitSha: SHA, fetchImpl: failing(504), wait: async () => {}, nonceOverride: 'n' }),
+    (error) => error.code === 'status_http_504');
+  assert.equal(reads, MAX_TRANSIENT_STATUS_READS);
+  reads = 0;
+  await assert.rejects(runPreview({ slug: 's', automationId: 'a', commitSha: SHA, fetchImpl: failing(403), wait: async () => {}, nonceOverride: 'n' }),
+    (error) => error.code === 'status_http_403');
+  assert.equal(reads, 1);
+});
+
+test('a superseded attempt carries its closed reason through the proxy and the summary, and each reason has a next step', async () => {
+  const forward = (answer) => forwardPreviewRequest({
+    method: 'GET', previewId: ATTEMPT, orgSlug: 'cynap-e2e', mcpHost: 'https://staging.mcp.cynap.ai',
+    tokenManager: { getToken: async () => 't' }, fetchImpl: async () => ({ status: 200, json: async () => answer }),
+  });
+  const ok = await forward({ previewId: ATTEMPT, status: 'superseded', supersedeReason: 'key_changed' });
+  assert.equal(ok.body.supersedeReason, 'key_changed');
+  assert.ok(!('supersedeReason' in (await forward({ previewId: ATTEMPT, status: 'superseded', supersedeReason: 'private text' })).body));
+  assert.deepEqual(previewSummary(ok.body), { status: 'superseded', attemptId: ATTEMPT, supersedeReason: 'key_changed', effectKinds: [] });
+  assert.deepEqual(Object.keys(SUPERSEDED_HINTS).sort(), ['commit_discarded', 'key_changed', 'queue_expired', 'replaced_by_newer']);
+  assert.match(SUPERSEDED_HINTS.key_changed, /accepted tip/);
 });

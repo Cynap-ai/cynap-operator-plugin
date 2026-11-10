@@ -326,6 +326,7 @@ const PREVIEW_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:
  */
 export const PREVIEW_CONTRACT = Object.freeze({
   previewStatuses: ['waiting', 'pending', 'pass', 'fail', 'superseded'],
+  supersedeReasons: ['key_changed', 'replaced_by_newer', 'commit_discarded', 'queue_expired'],
   errorNames: ['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError',
     'EvalError', 'AggregateError', 'AbortError', 'TimeoutError'],
   handlerSite: /^handler\.js:[1-9]\d{0,5}:[1-9]\d{0,4}$/,
@@ -415,6 +416,7 @@ export async function forwardPreviewRequest({ method, input, previewId, orgSlug,
   return { status: upstream.status, body: {
     ...(typeof answer.previewId === 'string' ? { previewId: answer.previewId } : {}),
     ...(PREVIEW_CONTRACT.previewStatuses.includes(answer.status) || answer.status === 'preview_running' ? { status: answer.status } : {}),
+    ...(PREVIEW_CONTRACT.supersedeReasons.includes(answer.supersedeReason) ? { supersedeReason: answer.supersedeReason } : {}),
     ...(typeof answer.failureCode === 'string' ? { failureCode: answer.failureCode } : {}),
     ...(typeof answer.operatorText === 'string' ? { operatorText: answer.operatorText } : {}),
     ...(previewFailureLocation(answer.failureLocation) ? { failureLocation: previewFailureLocation(answer.failureLocation) } : {}),

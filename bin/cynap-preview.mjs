@@ -16,6 +16,9 @@ const AUTOMATION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ATTEMPT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const safeDuration = (value) => Number.isSafeInteger(value) && value >= 0;
 export const MAX_STATUS_POLLS = 36;
+/** Consecutive gateway/outage reads (502/503/504) a running poll rides out before it gives up. */
+export const MAX_TRANSIENT_STATUS_READS = 5;
+const TRANSIENT_STATUS_HTTP = new Set([502, 503, 504]);
 const USAGE = 'Usage: cynap-preview.mjs <automation-id> <commit-sha> | cynap-preview.mjs status <attempt-id>';
 
 /**
@@ -62,7 +65,11 @@ function previewRoute(slug, nonceOverride) {
 /** One read of `GET /preview/status/{previewId}` through the local proxy; the body as the server sent it. */
 async function readStatus({ base, nonce, previewId, fetchImpl }) {
   const response = await fetchImpl(`${base}/status/${previewId}`, { headers: { [CONTROL_HEADER]: nonce } });
-  const body = await response.json();
+  // A gateway timeout can carry a non-JSON body; its status code is the signal.
+  const body = await response.json().catch(() => ({}));
+  if (TRANSIENT_STATUS_HTTP.has(response.status)) {
+    throw Object.assign(new Error(`operator preview status failed: HTTP ${response.status}`), { code: `status_http_${response.status}`, transient: true });
+  }
   if (response.status === 404) {
     throw Object.assign(new Error('operator preview status: no such attempt in this org, or its verdict has expired'), { code: 'preview_not_found' });
   }
@@ -75,11 +82,39 @@ async function readStatus({ base, nonce, previewId, fetchImpl }) {
   return body;
 }
 
+/**
+ * One status read inside a running poll. A gateway timeout or an authorization-store outage says
+ * nothing about the attempt, which keeps running: one such read must not end a wait whose
+ * preview then passes. Those reads return null, up to a bounded streak.
+ */
+async function pollStatus(read, streak) {
+  try {
+    const body = await read();
+    streak.count = 0;
+    return body;
+  } catch (error) {
+    if (error?.transient !== true) throw error;
+    streak.count += 1;
+    if (streak.count >= MAX_TRANSIENT_STATUS_READS) throw error;
+    return null;
+  }
+}
+
 /** `cynap-preview status <attempt-id>`: the attempt's state and verdict, after the start's bounded poll has ended. */
 export async function readPreviewStatus({ slug, attemptId, fetchImpl = fetch, nonceOverride = null }) {
   const { nonce, base } = previewRoute(slug, nonceOverride);
   return previewSummary(await readStatus({ base, nonce, previewId: attemptId, fetchImpl }));
 }
+
+/** What to do after a superseded attempt, per closed reason. Previews run only at the accepted tip. */
+export const SUPERSEDED_HINTS = Object.freeze({
+  key_changed: 'cynap-preview: superseded (key_changed) — this commit is no longer the accepted tip, or the handler inputs changed before the run started. '
+    + 'Previews run only at the accepted tip. Run /cynap-status and preview this automation at the tip. A pass there also proves an earlier pending commit '
+    + 'whose handler and context are unchanged. If a later commit changed this handler, /cynap-discard the commit after the one you need, preview and activate that one, then push the rest again.',
+  replaced_by_newer: 'cynap-preview: superseded (replaced_by_newer) — a preview of this automation at a newer commit replaced it in the queue. Read that attempt instead.',
+  commit_discarded: 'cynap-preview: superseded (commit_discarded) — its commit was discarded from the chain. Preview the commit that replaced it.',
+  queue_expired: 'cynap-preview: superseded (queue_expired) — it waited past the queue deadline without starting. Start it again.',
+});
 
 /** printed under a pass whose write-capable handler recorded no write. */
 export const WROTE_NOTHING_NOTE = 'cynap-preview: warning preview_wrote_nothing — this handler can write (executeSql, knowledge.store or a send tool) '
@@ -112,12 +147,20 @@ export async function runPreview({ slug, automationId, commitSha, fetchImpl = fe
   let queueBudgetMs = null;
   let leaseBudgetMs = null;
   let leaseZeroSeen = false;
+  const streak = { count: 0 };
+  const read = () => readStatus({ base, nonce, previewId, fetchImpl });
   for (let poll = 0; ; poll += 1) {
     const delay = Math.min(2000 * (poll + 1), 10_000);
     await wait(delay);
     if (queueBudgetMs !== null) queueBudgetMs = Math.max(0, queueBudgetMs - delay);
     if (leaseBudgetMs !== null) leaseBudgetMs = Math.max(0, leaseBudgetMs - delay);
-    const body = await readStatus({ base, nonce, previewId, fetchImpl });
+    const body = await pollStatus(read, streak);
+    if (body === null) {
+      // The horizons already counted this tick's delay down; a spent one ends the wait as usual.
+      if (leaseBudgetMs === 0 || queueBudgetMs === 0) break;
+      if (leaseBudgetMs !== null || queueBudgetMs !== null || poll + 1 < maxPolls) continue;
+      break;
+    }
     if (body.status !== 'pending' && body.status !== 'preview_running' && body.status !== 'waiting') return previewSummary(body);
     if (body.status === 'waiting') {
       const position = Number.isSafeInteger(body.position) && body.position > 0 ? body.position : null;
@@ -144,7 +187,8 @@ export async function runPreview({ slug, automationId, commitSha, fetchImpl = fe
     break;
   }
   // One last read before calling a long wait "still running".
-  const last = await readStatus({ base, nonce, previewId, fetchImpl });
+  const last = await pollStatus(read, streak);
+  if (last === null) return initial;
   if (last.status !== 'pending' && last.status !== 'preview_running' && last.status !== 'waiting') return previewSummary(last);
   return last.status === 'waiting' || Number.isSafeInteger(last.remaining_lease_ms) ? previewSummary(last) : initial;
 }
@@ -160,6 +204,7 @@ export async function main(argv = process.argv.slice(2)) {
     });
   process.stdout.write(`${JSON.stringify(operatorEffectOutput(result))}\n`);
   if (result.status === 'fail') process.stdout.write(`cynap-preview: ${formatPreviewFailure(result)}\n`);
+  if (result.status === 'superseded' && SUPERSEDED_HINTS[result.supersedeReason]) process.stdout.write(`${SUPERSEDED_HINTS[result.supersedeReason]}\n`);
   if (result.warnings?.includes('preview_wrote_nothing')) process.stdout.write(`${WROTE_NOTHING_NOTE}\n`);
   if (result.status === 'pending' || result.status === 'preview_running' || result.status === 'waiting') process.stdout.write(`${horizonHint(result)}\n`);
   return result;
