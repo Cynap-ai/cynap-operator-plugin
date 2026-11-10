@@ -69,6 +69,8 @@ it with the commit you expect before blaming the code.
 | `ensure_error` | Cynap | The platform failed while ensuring the session, possibly with unknown settlement. Hand off to Cynap; do not infer a challenge hold or retry diagnostically. |
 | `unknown` | Cynap | Report it to Cynap. Never assume an Owner action. |
 
+**App install Preview 409 `workspace_setup_incomplete`** is not a run reason, and it is not retryable: the Org's database is not set up for Apps. Hand it off to a Cynap operator, who runs the readiness check for that Org and repairs a `gaps` result under their admin profile. A `blocked` (kernel or shape) or `birth_incomplete` result stops for an RCA and is never repaired by the check.
+
 For WriteUpp, the founder alone performs human sign-in and verified reseeding, including
 seed-related reasons. If unavailable, browser jobs wait. The AI operator has no seed path.
 Do not request credentials, codes, seeds or exported cookie material. Do not rerun a job
