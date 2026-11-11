@@ -346,7 +346,7 @@ test('previewSummary keeps preview_wrote_nothing and drops unknown warnings', ()
 test('a running poll rides out gateway timeouts and an authorization outage, then reports the verdict', async () => {
   const replies = [
     { ok: false, status: 504, json: async () => { throw new SyntaxError('not json'); } },
-    { ok: false, status: 503, json: async () => ({ error: 'operator_authz_unavailable', retryAfterMs: 2000 }) },
+    { ok: false, status: 503, json: async () => ({ error: 'auth_dependency_unavailable', retryAfterMs: 2000 }) },
     { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'pending' }) },
     { ok: false, status: 502, json: async () => ({ error: 'fetch failed' }) },
     { ok: true, status: 200, json: async () => ({ previewId: ATTEMPT, status: 'pass', effectKinds: [] }) },

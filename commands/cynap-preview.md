@@ -20,7 +20,7 @@ queue deadline, then through the promoted run's lease plus a 60-second verdict g
 If the wait ends before a verdict, use `/cynap-preview status <attempt-id>` to read that
 attempt once. Do not start another attempt to check the original one's progress.
 `preview_not_found` means the attempt is not in this org or its verdict has expired.
-A gateway timeout, a 502 from the proxy or a 503 `operator_authz_unavailable` during the poll
+A gateway timeout, a 502 from the proxy or a 503 `auth_dependency_unavailable` during the poll
 says nothing about the attempt, so the poll keeps going through up to five of them in a row.
 Previews run only at the accepted tip. A `superseded` result names its reason and prints the next
 step. `key_changed` means the commit is no longer the tip, or its handler inputs changed before the
