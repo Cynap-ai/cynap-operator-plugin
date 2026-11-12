@@ -58,7 +58,12 @@ List every host the handler calls, **exactly**: `api.example.com`, never `*.exam
 
 - An exact hostname on 443 only: no `*.` wildcard, no IP address, no port, no scheme, no path.
 - At most 50 hosts and 2,000 bytes in total. A commit over either is refused.
-- A locked Org refuses a `*` entry outright.
+- Every Org refuses new or changed noncanonical `execution.http_allowlist` fields with
+  `host_shape_invalid`, naming the field and array index. Author lowercase ASCII/punycode hosts
+  without whitespace, a trailing dot, escapes, scheme, path, credentials, port, or IP literals.
+- Temporary Ship A window: an unchanged legacy field may survive unrelated edits against the
+  platform's trusted accepted baseline. Once repaired, it cannot regress. Locked runs still refuse
+  wildcard claims. Repair the complete exact set, push, and obtain fresh Owner approval.
 - In a locked Org (every self-serve Org) the run reaches only these hosts, through the broker
   (`ctx.tools.http`). The broker refuses `http:`, a non-443 port, an IP literal, a host outside
   the list, a caller-supplied `Host` header, and a redirect to a host outside the list. Each

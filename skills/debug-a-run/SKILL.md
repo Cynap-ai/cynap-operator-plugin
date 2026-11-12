@@ -176,7 +176,7 @@ its run token. A refused call surfaces to the handler as `egress_blocked`; the
 | `scheme_not_https` | you | Call the host over `https://`. Plain `http:` is never allowed. |
 | `port_not_443` | you | Drop the explicit port. Only 443 is allowed. |
 | `ip_literal` | you | Call the host by name, never by IP address. |
-| `host_shape_invalid` | you | The URL's host is not an exact hostname. Fix the URL. |
+| `host_shape_invalid` | you | Check the reported `execution.http_allowlist` field and array index. New or changed declarations must already be canonical exact ASCII/punycode hosts; repair the complete exact set, push, and obtain fresh Owner approval. Ship A permits only unchanged legacy fields against the platform's trusted accepted baseline; a repaired field cannot regress. A locked run also refuses non-exact URL hosts. |
 | `host_denied` | you | The host is a platform host that no approval can admit. Use the platform's own tools instead. |
 | `host_not_in_claim` | you | The host is not in this automation's `http_allowlist`, or the Owner has not approved the content that adds it. Add the exact host, push, and ask the Owner to approve. |
 | `caller_host_header` | you | Remove the `Host` header from the request. The broker sets it from the URL. |

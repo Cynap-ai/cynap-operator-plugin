@@ -20,6 +20,19 @@ If the step graph includes an `llm` tool, read `configure-customer-ai` and
 read the generated Customer AI paragraph in base context part 5 for payers
 and preview spend before authoring the call.
 
+## HTTP host declarations
+
+For `execution.http_allowlist`, author each destination as a canonical exact lowercase ASCII/punycode
+hostname. No wildcards, IP literals, whitespace, trailing dot, percent escapes, scheme, path,
+credentials or port. New or changed invalid fields refuse with `host_shape_invalid` and field/index;
+one invalid member refuses the entire list. Repair the complete exact set and obtain fresh Owner
+approval through normal activation. An absent list retains deterministic HTTP's existing SSRF-only
+contract; an empty list admits nothing.
+
+During Ship A only, byte-unchanged legacy fields can survive unrelated edits against the platform's
+trusted accepted baseline. Once repaired, they cannot regress. Ship B closes this temporary window
+after the all-source census reaches zero.
+
 ## Deliverable shape — ONE file
 
 ```

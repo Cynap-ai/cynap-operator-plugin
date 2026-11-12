@@ -205,3 +205,19 @@ test('a frozen workspace refusal points the agent at the runbook decision tree',
   assert.match(text, /next: read-only diagnosis, then draft the platform-admin request from the "Frozen handler activation: decision tree" section of the workspace-activation-incomplete runbook/);
   assert.match(text, /do not retry or re-activate/);
 });
+
+
+test('host refusal carries the known field/index without exposing rejected declarations', () => {
+  const raw = { ok: false, code: 'host_shape_invalid', field: 'execution.http_allowlist', index: 2,
+    message: 'private host', requested: ['private.example.com'] };
+  const safe = operatorEffectOutput(raw);
+  assert.equal(safe.field, 'execution.http_allowlist');
+  assert.equal(safe.index, 2);
+  assert.equal(safe.requested, undefined);
+  assert.match(formatRefusal(safe, { command: 'cynap-activate' }), /host_shape_invalid: execution\.http_allowlist\[2\]/);
+  for (const command of ['cynap-push', 'cynap-checks']) {
+    assert.match(formatRefusal({ errors: [{ code: raw.code, path: 'automations/job.json',
+      field: raw.field, index: raw.index, message: 'execution.http_allowlist[2]: wildcards are not allowed' }] }, { command }),
+      /\[host_shape_invalid\].*execution\.http_allowlist\[2\]/);
+  }
+});
