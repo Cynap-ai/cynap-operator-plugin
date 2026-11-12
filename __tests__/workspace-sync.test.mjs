@@ -423,3 +423,18 @@ test('non-JSON text on a SUCCESSFUL result still throws — only refusals are re
     })
   );
 });
+
+for (const [status, code] of [[401, 'reauth_required'], [503, 'ops_unavailable']]) {
+  test(`mcpCall preserves degraded-family ${code} and its actionable message`, async () => {
+    const message = status === 401 ? 'Reauthorize with /cynap-connect, then retry.' : 'Ops tools unavailable; retry.';
+    await assert.rejects(mcpCall('http://127.0.0.1:8790/mcp', 'runs_query', {}, {
+      fetchImpl: async () => new Response(JSON.stringify({ error: code, message }), {
+        status, headers: { 'content-type': 'application/json' },
+      }),
+    }), (error) => {
+      assert.equal(error.reason, code);
+      assert.equal(error.message, message);
+      return true;
+    });
+  });
+}

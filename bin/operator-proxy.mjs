@@ -3429,6 +3429,17 @@ export async function listenWithControlAuthority({
   });
 }
 
+class FamilyUnavailableError extends Error {
+  constructor(family, cause) {
+    const reauth = cause?.status === 401 || cause?.code === 'reauth_required';
+    super(reauth
+      ? `${family} tools require reauthorization. Reauthorize with /cynap-connect, then retry the call.`
+      : `${family} tools are temporarily unavailable. Retry the call; workspace tools remain available.`);
+    this.code = reauth ? 'reauth_required' : `${family}_unavailable`;
+    this.status = reauth ? 401 : 503;
+  }
+}
+
 export function createProxyServer({
   mcpHost,
   mcpPath,
@@ -3490,14 +3501,16 @@ export function createProxyServer({
   // Each family keeps its own token and single-flight list load. A refused optional
   // family hides only its tools; workspace forwarding remains available.
   const families = [
-    { name: 'ops', manager: opsTokenManager, toolNames: null, listInFlight: null },
-    { name: 'request', manager: requestTokenManager, toolNames: null, listInFlight: null },
+    { name: 'ops', manager: opsTokenManager, toolNames: null, listInFlight: null, failure: null },
+    { name: 'request', manager: requestTokenManager, toolNames: null, listInFlight: null, failure: null },
   ].filter((family) => family.manager);
+
+  const workspaceFamily = { name: 'workspace', manager: tokenManager, toolNames: null, listInFlight: null, failure: null };
 
   function fetchFamilyTools(family) {
     if (family.listInFlight) return family.listInFlight;
     family.listInFlight = (async () => {
-      const token = await family.manager.getToken({ allowConsent: false });
+      const token = await family.manager.getToken({ allowConsent: family.name === 'workspace' });
       const listRes = await fetchImpl(`${mcpHost}${mcpPath}`, {
         method: 'POST',
         headers: upstreamHeaders(pluginVersion, {
@@ -3507,15 +3520,21 @@ export function createProxyServer({
         }),
         body: JSON.stringify({ jsonrpc: '2.0', id: `cynap-operator-${family.name}-list`, method: 'tools/list', params: {} }),
       });
-      if (!listRes.ok) throw new Error(`${family.name} tools/list returned ${listRes.status}`);
+      if (!listRes.ok) throw Object.assign(new Error(`${family.name} tools/list returned ${listRes.status}`), { status: listRes.status });
       const tools = (await listRes.json())?.result?.tools;
-      return Array.isArray(tools) ? tools : [];
+      if (!Array.isArray(tools) || tools.some((tool) => typeof tool?.name !== 'string')) {
+        throw new Error(`${family.name} tools/list returned an invalid catalog`);
+      }
+      family.toolNames = new Set(tools.map((tool) => tool.name));
+      family.failure = null;
+      return tools;
     })()
       .catch((err) => {
         process.stderr.write(
           `[operator-proxy] ${family.name} tools unavailable (workspace tools still served): ${err instanceof Error ? err.message : err}\n`
         );
-        return [];
+        family.failure = err;
+        return null;
       })
       .finally(() => { family.listInFlight = null; });
     return family.listInFlight;
@@ -3523,13 +3542,18 @@ export function createProxyServer({
 
   /** Reclassify cached-client calls after relaunch using the server's actual catalogs. */
   async function managerFor(toolName) {
-    if (toolName === null) return tokenManager;
+    if (toolName === null || families.length === 0) return tokenManager;
+    // Confirm workspace membership before routing a call whose optional catalog
+    // may be unavailable. Unknown tools must never inherit the workspace token
+    // merely because their family's discovery failed (including after relaunch).
+    if (workspaceFamily.toolNames === null || workspaceFamily.failure) await fetchFamilyTools(workspaceFamily);
+    if (workspaceFamily.toolNames?.has(toolName)) return tokenManager;
     for (const family of families) {
-      if (family.toolNames === null) {
-        family.toolNames = new Set((await fetchFamilyTools(family)).map((t) => t.name));
-      }
-      if (family.toolNames.has(toolName)) return family.manager;
+      if (family.toolNames === null || family.failure) await fetchFamilyTools(family);
+      if (!family.failure && family.toolNames.has(toolName)) return family.manager;
     }
+    const degraded = families.find((family) => family.failure);
+    if (degraded) throw new FamilyUnavailableError(degraded.name, degraded.failure);
     return tokenManager;
   }
 
@@ -3834,7 +3858,15 @@ export function createProxyServer({
         ? Promise.all(families.map(fetchFamilyTools)) : null;
 
       async function attemptOnce() {
-        const token = await route.getToken();
+        let token;
+        try {
+          token = await route.getToken();
+        } catch (error) {
+          const family = families.find((entry) => entry.manager === route);
+          if (!family) throw error;
+          family.failure = error;
+          throw new FamilyUnavailableError(family.name, error);
+        }
         return fetchImpl(upstreamUrl, {
           method: req.method,
           headers: upstreamHeaders(pluginVersion, {
@@ -3918,10 +3950,17 @@ export function createProxyServer({
       if (familyToolsPending && upstreamRes.ok && outHeaders['content-type'].includes('application/json')) {
         // Buffer only the bounded JSON catalog; tool call streams stay unchanged.
         let mergedText = await upstreamRes.text();
+        try {
+          const tools = JSON.parse(mergedText)?.result?.tools;
+          if (Array.isArray(tools) && tools.every((tool) => typeof tool?.name === 'string')) {
+            workspaceFamily.toolNames = new Set(tools.map((tool) => tool.name));
+            workspaceFamily.failure = null;
+          }
+        } catch { /* Preserve an upstream non-JSON response unchanged. */ }
         const lists = await familyToolsPending;
-        for (const [index, family] of families.entries()) {
+        for (const [index] of families.entries()) {
+          if (lists[index] === null) continue;
           const merged = mergeToolLists(mergedText, lists[index]);
-          family.toolNames = merged.opsOnly;
           mergedText = merged.text;
         }
         res.writeHead(upstreamRes.status, outHeaders);
@@ -3962,6 +4001,11 @@ export function createProxyServer({
       // and must never read as one. It gets its own status + named outcome so
       // a command (or an MCP client) can print the sentence verbatim instead
       // of a generic 502 the operator cannot act on.
+      if (err instanceof FamilyUnavailableError) {
+        res.writeHead(err.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: err.code, message: err.message }));
+        return;
+      }
       if (err instanceof ConsentError) {
         res.writeHead(UNAUTHORIZED_STATUS, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ error: err.code, outcome: err.outcome, message: err.message }));
