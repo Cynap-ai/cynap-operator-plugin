@@ -400,7 +400,10 @@ a non-empty set drawn from `write`, `message`, `automation_trigger`, `artifact_w
 `outbound_request`; omitted, it counts every kind except `artifact_write`. Freshness measures
 activity, not truth: a no-op write still counts. To catch "the data went stale", author an
 Operations Condition (`operations/conditions/*.yaml` with `analytics_read` and `stale_after_seconds`)
-as well. A plan-only automation that never applies effects declares no `freshness`.
+as well. Only `schema_version: 1` condition documents run. A document with top-level `enabled: false`
+is inert (skipped, of any version). A `schema_version: 2` document with `enabled: true` faults the
+Org's Outlook (`active_config_invalid`) until activation refuses it, so keep v2 documents
+`enabled: false`. A plan-only automation that never applies effects declares no `freshness`.
 
 ## Declare Automation Actions (what an Org member may invoke)
 
