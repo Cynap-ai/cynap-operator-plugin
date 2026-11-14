@@ -49,6 +49,9 @@ import { sendApprovalLanding } from './approval-landing.mjs';
 /** The TEXT organization.id for the reserved test org (NOT the slug). */
 export const CYNAP_E2E_ORG_ID = 'cynap-e2e-test-org-00000000';
 
+/** The slug of that same reserved test org — the only org the headless --e2e leg serves. */
+export const CYNAP_E2E_ORG_SLUG = 'cynap-e2e';
+
 /** The token endpoint returns an expiry measured in seconds. */
 export const OPERATOR_TTL_SECONDS = 15 * 60;
 
@@ -2321,6 +2324,29 @@ export function hydrateBypassSecretFromKeychain(env = process.env, reader = read
 // ---------------------------------------------------------------------------
 // Cookie acquisition — headless staging login via the e2e-session route.
 // ---------------------------------------------------------------------------
+
+/**
+ * The headless --e2e leg's org pin. The PKCE/device legs learn their org from
+ * the credential the server issues; the e2e-session cookie carries no org binding and no
+ * consent step can state one, so this leg pins ITSELF to the reserved test org. Before
+ * this, the pin came only from a caller-supplied `--allow-org` (the old cynap-e2e default was
+ * removed), so a bare `--staging --e2e` died with `org_unknown` at
+ * createTokenManager. A slug or `--allow-org` naming any other org is refused — the leg
+ * never serves a real org.
+ *
+ * @param {{ orgSlug: string | null, allowedOrgId: string | null }} opts
+ * @returns {{ orgSlug: string, orgId: string }}
+ */
+export function resolveE2eOrgPin({ orgSlug, allowedOrgId }) {
+  const slug = orgSlug ?? CYNAP_E2E_ORG_SLUG;
+  if (slug !== CYNAP_E2E_ORG_SLUG) {
+    throw new Error(`--e2e serves only ${CYNAP_E2E_ORG_SLUG}; refusing --org-slug ${slug}`);
+  }
+  if (allowedOrgId && allowedOrgId !== CYNAP_E2E_ORG_ID) {
+    throw new Error(`--e2e serves only ${CYNAP_E2E_ORG_ID}; refusing --allow-org ${allowedOrgId}`);
+  }
+  return { orgSlug: slug, orgId: CYNAP_E2E_ORG_ID };
+}
 
 /**
  * POSTs { org_slug: 'cynap-e2e' } to /api/auth/e2e-session and returns a raw
@@ -4685,13 +4711,23 @@ export async function main(argv = process.argv.slice(2)) {
       );
       process.exit(1);
     }
+    let pin;
+    try {
+      pin = resolveE2eOrgPin({ orgSlug: opts.orgSlug, allowedOrgId: opts.allowedOrgId });
+    } catch (error) {
+      process.stderr.write(`[operator-proxy] ${error.message}. Refusing.\n`);
+      process.exit(1);
+    }
+    opts.orgSlug = pin.orgSlug;
+    opts.targetOrgId = pin.orgId;
+    opts.allowedOrgId = pin.orgId;
     const cookie = await acquireStagingCookie({ mintHost, orgSlug: opts.orgSlug, pluginVersion: opts.pluginVersion });
     getAuthHeaders = () => ({ Cookie: cookie });
     // The headless cookie leg has no browser to open. An UNAVAILABLE gate says
     // exactly that when a credential fails, instead of hanging on a consent
     // that can never arrive.
     consentGate = createConsentGate({});
-    process.stderr.write('[operator-proxy] staging e2e-session cookie acquired.\n');
+    process.stderr.write(`[operator-proxy] staging e2e-session cookie acquired for org ${opts.targetOrgId}.\n`);
   } else {
     const login = opts.authMode === 'device' ? deviceCodeLogin : pkceLoopbackLogin;
     const session = createOperatorCredentialSession({
