@@ -1,6 +1,6 @@
 ---
 description: Request owner step-up and activate an accepted Cynap workspace commit.
-argument-hint: "<commit-sha> [--reconcile]"
+argument-hint: "<commit-sha> [--reconcile] [--auto] | --through <commit-sha>"
 ---
 
 # /cynap-activate
@@ -18,9 +18,25 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-activate.mjs" $ARGUMENTS
 Run this when the work is ready; do not ask in chat first. The owner's browser step-up is the approval, so
 run it and tell the human the step-up is waiting. See the lifecycle rule in `platform-invariants`.
 
+**Changes-page Orgs.** When `workspace_status` reports `activation_entrance: "grant"`,
+the Owner approves on the Changes page instead (`changes_url`). The command prints that link and
+waits up to 15 minutes for the commit to start activating, then follows it like any activation; it
+never opens a step-up for such an Org. `grant_approval_pending` means the Owner has not approved yet:
+tell them the link, do not re-run in a loop. `--auto` is for the platform test Org only: the
+portal accepts the pending prefix as its seeded Owner persona, or refuses with
+`automatic_grant_refused` and a reason. A legacy-entrance Org refuses `--auto` locally.
+
 The local proxy opens the owner PKCE approval page, then uses the resulting
 single-use purpose credential for exactly one `workspace_activate_commit` call.
 Do not use device approval or call `workspace_activate_commit` directly.
+
+The proxy runs the activation in the background and the command follows it with short reads, so
+a dropped local connection does not end it: a connection error is retried up to three times within
+ten seconds, then reported as `proxy_unreachable` with the socket error code. Re-running the same
+command attaches to the activation already running; a different one answers
+`activation_run_in_progress`. A request still waiting for the Owner is `consent_pending`, never
+`failed`. The page opens only once its review is ready (`review_not_ready` if it never becomes
+ready, `review_changed` if a commit changed underneath it).
 
 The Owner has 15 minutes to approve on that page. While it waits, the org's Owners (only Owners)
 get a Cynap message (in the notification bell, no email) saying an approval is waiting. The message goes away when the
@@ -63,6 +79,27 @@ A commit that changes `communication/webchat/<bot-slug>.json` also installs the 
 (see the `install-website-chat` skill). `webchat_provisioning_failed` means the files are live but the install
 did not finish: re-run the same activation to resume. A commit may change only one channel binding file,
 `communication/webchat/*.json` or `communication/email/*.json` (`binding_change_not_single`).
+
+## `--through <sha>`: one approval for several pending commits
+
+When `next_action` offers `/cynap-activate --through <tip>`, run that instead of activating each
+commit separately. The Owner sees the grantable prefix of the pending chain up to `<tip>` on one page,
+each commit with its own review, and approves them once; they then go live in order, oldest first.
+The server can end that prefix before `<tip>` at a commit it cannot grant yet. The page names the
+stop, and the commits from it onward are not part of this approval: they stay pending. Compare the
+result's `members` with the range you asked for, then activate the rest after the stop is resolved.
+
+```sh
+node "${CLAUDE_PLUGIN_ROOT}/bin/cynap-activate.mjs" --through <commit-sha> [--json]
+```
+
+- Handler commits in the range are previewed first, in chain order; the first non-pass stops the
+  command before any approval page opens.
+- After approval it prints one line per commit as it activates, and exits when the run is
+  `completed`, `stopped` or `expired`. `stopped` and `expired` exit non-zero and name where it
+  stopped and which commits are still pending.
+- `--json` prints `{state, through, members:[{sha, position, outcome}], stopped?:{at_position, reason, remaining:[sha]}}`.
+- `--through` cannot be combined with `--reconcile`.
 
 ## `--reconcile` (rare, opt-in)
 

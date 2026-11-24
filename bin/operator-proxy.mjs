@@ -314,6 +314,8 @@ export const CONTEXT_PATH = '/context';
 
 /** Owner-only, nonce-gated local control route used by /cynap-activate. */
 export const ACTIVATE_PATH = '/activate';
+/** Nonce-gated route for `/cynap-activate --auto` on a grant Org (the test Org only). */
+export const ACTIVATE_GRANT_PATH = '/activate-grant';
 /** Nonce-gated local control route used by /cynap-propose. The proof credential stays inside the proxy. */
 export const PREPARE_PROOF_PATH = '/prepare-proof';
 /** Nonce-gated preview control route. The operator token remains inside the proxy. */
@@ -1685,28 +1687,28 @@ export function deleteMarker(slug, sessionId, baseDir) {
 // ---------------------------------------------------------------------------
 
 /** How long a browser consent waits for the owner before giving up and saying so.
- * The one consent deadline: pkceLoopbackLogin's default, the consent gate and
- * `ACTIVATE_RESPONSE_BUDGET_MS` all derive from it, so no leg abandons a consent another is still
- * waiting on. Only this pre-approval wait is 15 minutes: the portal mints the PKCE code at approval
- * with its own 5-minute TTL, and the purpose credential keeps its 5 minutes. The loopback
- * listener stays bound for the whole wait. */
+ * The one consent deadline: pkceLoopbackLogin's default and the consent gate derive from it, and an
+ * activation run ends `consent_expired` with it. Only this pre-approval wait is
+ * 15 minutes: the portal mints the PKCE code at approval with its own 5-minute TTL, and the purpose
+ * credential keeps its 5 minutes. The loopback listener stays bound for the whole wait. */
 export const AUTO_CONSENT_TIMEOUT_MS = 15 * 60 * 1000;
 
-// Every hop after consent has an explicit bound, and the CLI's wait for /activate is
-// computed from them (`ACTIVATE_RESPONSE_BUDGET_MS`), so the proxy's typed outcome always arrives
-// before the CLI gives up. AUTO_CONSENT_TIMEOUT_MS above is the one consent deadline.
+// Every hop after consent has an explicit bound. The CLI never holds a request open across the
+// consent: POST /activate answers 202 with a run id at once and the CLI polls the run.
 /** The code-for-credential exchange and the automatic step-up request. */
 export const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000;
 /** The workspace_activate_commit call. API Gateway answers within 29 s; a longer activation
  * returns `activation_pending` and finishes server-side. */
 export const ACTIVATION_CALL_TIMEOUT_MS = 45_000;
 const ACTIVATION_OUTCOME_MARGIN_MS = 15_000;
-export const ACTIVATE_RESPONSE_BUDGET_MS =
-  AUTO_CONSENT_TIMEOUT_MS + TOKEN_EXCHANGE_TIMEOUT_MS + ACTIVATION_CALL_TIMEOUT_MS + ACTIVATION_OUTCOME_MARGIN_MS;
 
-/** The closed set of terminal answers /activate gives. `consent_*` follow RFC 8628's
- * `expired_token` / `access_denied` split: nobody answered is not somebody said no. */
-export const ACTIVATION_OUTCOMES = Object.freeze(['consent_expired', 'consent_denied', 'activating', 'activated', 'failed']);
+/** The closed set of terminal answers an activation run gives. `consent_*` follow RFC 8628's
+ * `expired_token` / `access_denied` split: nobody answered is not somebody said no. `activating`
+ * and `activated` keep their single-commit meanings; `accepted` is a chain grant the server now
+ * runs, and `replayed` is a grant credential someone else already presented. */
+export const ACTIVATION_OUTCOMES = Object.freeze([
+  'consent_expired', 'consent_denied', 'activating', 'activated', 'accepted', 'replayed', 'failed',
+]);
 
 const consentError = (outcome, message) => Object.assign(new Error(message), { consentOutcome: outcome });
 
@@ -2519,10 +2521,15 @@ export async function pkceLoopbackLogin({
   timeoutMs = AUTO_CONSENT_TIMEOUT_MS,
   requestKind = 'login',
   commitSha,
+  throughSha,
   noticeId,
+  onOpened,
 }) {
   if (requestKind === 'activation' && !/^[a-f0-9]{64}$/i.test(commitSha ?? '')) {
     throw new Error('activation PKCE requires a 64-character commit sha');
+  }
+  if (requestKind === 'activation_chain' && !/^[a-f0-9]{64}$/i.test(throughSha ?? '')) {
+    throw new Error('activation chain PKCE requires a 64-character through sha');
   }
   const { verifier, challenge } = generatePkcePair();
   const state = base64url(randomBytes(16));
@@ -2536,15 +2543,17 @@ export async function pkceLoopbackLogin({
   authUrl.searchParams.set('code_challenge_method', 'S256');
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('org', orgSlug);
-  if (requestKind === 'activation') {
-    authUrl.searchParams.set('request_kind', 'activation');
-    authUrl.searchParams.set('commit_sha', commitSha);
+  if (requestKind === 'activation' || requestKind === 'activation_chain') {
+    authUrl.searchParams.set('request_kind', requestKind);
+    if (requestKind === 'activation') authUrl.searchParams.set('commit_sha', commitSha);
+    else authUrl.searchParams.set('through_sha', throughSha);
     // The owner step-up notice this consent retracts when it is answered.
     if (typeof noticeId === 'string' && NOTICE_ID.test(noticeId)) authUrl.searchParams.set('notice_id', noticeId);
   }
 
   out.write('[operator-proxy] Opening browser for operator login (PKCE loopback)…\n');
   open(authUrl.toString(), out);
+  if (typeof onOpened === 'function') onOpened();
 
   let code;
   try {
@@ -2571,7 +2580,12 @@ export async function pkceLoopbackLogin({
   }
   const data = await res.json();
   if (!data.credential) throw new Error('operator-cli token exchange returned no credential');
-  return { credential: data.credential, orgId: data.org_id, expiresAt: data.expires_at };
+  return {
+    credential: data.credential,
+    orgId: data.org_id,
+    expiresAt: data.expires_at,
+    ...(typeof data.activation_grant_id === 'string' ? { activationGrantId: data.activation_grant_id } : {}),
+  };
 }
 
 const AUTOMATIC_STEP_UP_HINT_SLUG = 'cynap-e2e';
@@ -2675,6 +2689,34 @@ export async function requestAutomaticStepUp({ mintHost, commitSha, getAuthHeade
 }
 
 /**
+ * Ask the portal to accept the pending prefix through `throughSha` as the test Org's
+ * seeded Owner persona. The portal enforces every gate and refuses any other Org; this proxy only
+ * presents the operator credential. Returns the portal's status and JSON body unchanged.
+ */
+export async function requestAutomaticGrant({ mintHost, throughSha, getAuthHeaders, pluginVersion,
+  fetchImpl = fetch, acceptanceRequestId = randomUUID() }) {
+  if (!/^[a-f0-9]{64}$/.test(throughSha ?? '')) {
+    throw new ActivationError('invalid_commit_sha', 'automatic acceptance requires a 64-character commit sha');
+  }
+  const authHeaders = getAuthHeaders();
+  if (!authHeaders || Object.keys(authHeaders).length === 0) {
+    throw new ActivationError('not_connected', 'No operator credential available — run /cynap-connect first.');
+  }
+  const res = await fetchImpl(`${mintHost}/api/auth/operator-cli/activation-grant`, {
+    method: 'POST',
+    headers: upstreamHeaders(pluginVersion, {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+      ...stagingProtectionBypassHeaders(),
+    }),
+    body: JSON.stringify({ through_sha: throughSha, acceptance_request_id: acceptanceRequestId }),
+    signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
+  });
+  const body = await res.json().catch(() => null);
+  return { status: res.status, body: body ?? { error: `http_${res.status}` } };
+}
+
+/**
  * Complete the owner step-up without ever placing the five-minute purpose
  * credential in a file or the long-lived token cache. The portal owns the
  * binding (commit + generation) at approval; this proxy only presents it and
@@ -2696,6 +2738,9 @@ export async function activateCommitWithStepUp({
   fetchImpl = fetch,
   out = process.stderr,
   callTimeoutMs = ACTIVATION_CALL_TIMEOUT_MS,
+  // resolves once every member's review is ready, before any page opens.
+  awaitReady = null,
+  onOpened,
 }) {
   if (!/^[a-f0-9]{64}$/i.test(commitSha ?? '')) {
     throw new ActivationError('invalid_commit_sha', 'activation requires a 64-character commit sha');
@@ -2709,6 +2754,7 @@ export async function activateCommitWithStepUp({
       ? await automaticStepUp({ mintHost, commitSha, getAuthHeaders, pluginVersion, fetchImpl })
       : null;
   const stepUp = automatic ? 'automatic' : 'browser';
+  if (!automatic && typeof awaitReady === 'function') await awaitReady([commitSha]);
   // A browser step-up waits on an Owner: tell them, and say whether that worked.
   const noticeId = automatic ? undefined : randomUUID();
   if (noticeId) {
@@ -2728,6 +2774,7 @@ export async function activateCommitWithStepUp({
           requestKind: 'activation',
           commitSha,
           noticeId,
+          onOpened,
           out,
         }));
   } catch (error) {
@@ -2794,6 +2841,359 @@ export async function activateCommitWithStepUp({
       foreignTool: summarizeToolAnswer(foreignTool.status, foreignTool.text),
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// the activation run: the consent wait the proxy owns.
+//
+// POST /activate answers 202 {run_id} at once and the CLI polls GET /activate/<run_id>, so no
+// request is held open across the Owner's consent. The run covers ONLY that wait: for a chain it
+// ends `accepted` the moment the server accepts the grant, and the server runs every step.
+// ---------------------------------------------------------------------------
+
+/** How often the readiness gate re-reads the members, and how many reads it allows (3 minutes),
+ * before the run ends `failed {review_not_ready}` without opening a page. */
+export const REVIEW_READINESS_POLL_MS = 5_000;
+export const REVIEW_READINESS_MAX_READS = 36;
+/** How a non-definitive grant presentation is settled: reads of `workspace_status.activation_grant`
+ * for this exact grant, never a second presentation. */
+export const GRANT_RECOVERY_POLL_MS = 5_000;
+export const GRANT_RECOVERY_MAX_READS = 60;
+
+const SHA64 = /^[a-f0-9]{64}$/;
+
+/** Call one MCP tool with the proxy's own seat credential (background read: never opens a browser).
+ * Resolves `{ status, structured }`; a transport failure throws a typed ActivationError. */
+export async function callSeatTool({ mcpHost, mcpPath, tokenManager, pluginVersion, fetchImpl = fetch,
+  timeoutMs = TOKEN_EXCHANGE_TIMEOUT_MS }, name, args) {
+  let token;
+  try {
+    token = await tokenManager.getToken({ allowConsent: false });
+  } catch {
+    throw new ActivationError('not_connected', 'The operator credential expired; run /cynap-connect again.');
+  }
+  let response;
+  try {
+    response = await fetchImpl(`${mcpHost}${mcpPath}`, {
+      method: 'POST',
+      headers: upstreamHeaders(pluginVersion, {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${token}`,
+      }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: `cynap-operator-${name}`, method: 'tools/call', params: { name, arguments: args } }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new ActivationError('activation_read_failed', `${name} read failed: ${error?.message ?? 'network error'}`,
+      error?.name === 'TimeoutError' ? 'timeout' : 'unreachable');
+  }
+  // A non-2xx answer is a failed read, never a missing result: a readiness wait would otherwise
+  // report an auth or upstream failure as `preparing` until it timed out.
+  if (!response.ok) {
+    throw new ActivationError(response.status === 401 ? 'not_connected' : 'activation_read_failed',
+      response.status === 401 ? 'The operator credential was refused; run /cynap-connect again.'
+        : `${name} read failed: HTTP ${response.status}`, `http_${response.status}`);
+  }
+  const text = await readUpstreamResponseText(response);
+  return { status: response.status, structured: structuredToolAnswer(text).structured };
+}
+
+/** The seat-readable readiness of one member (§4.2): `ready`, `preparing`, or `changed` when it
+ * left the pending chain. A member with a handler effect review is ready only once its preview
+ * carries a verdict; the reader omits `handler_approval` without a preview, so that absence alone
+ * never counts as preparing. */
+export function memberReadiness(detail) {
+  if (!detail || detail.ok !== true) return 'preparing';
+  if (detail.state !== undefined && detail.state !== 'pending') return 'changed';
+  if (typeof detail.plan_digest !== 'string' || !SHA64.test(detail.plan_digest) || !detail.approved_plan) return 'preparing';
+  if (detail.handler_approval && typeof detail.handler_approval?.plan?.preview?.verdict_id !== 'string') return 'preparing';
+  return 'ready';
+}
+
+/**
+ * Resolve once every member is `ready`. Reports `preparing` while waiting. A member that was ready
+ * and then is not, or whose plan digest moved, ends the run `failed {review_changed}`; a range that
+ * never becomes ready ends `failed {review_not_ready}`. Never opens anything itself.
+ */
+export async function awaitReviewReady({ shas, readCommit, onReview = () => {},
+  pollMs = REVIEW_READINESS_POLL_MS, maxReads = REVIEW_READINESS_MAX_READS,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+  const seen = new Map();
+  for (let read = 1; ; read += 1) {
+    const details = await Promise.all(shas.map((sha) => readCommit(sha)));
+    let ready = true;
+    for (const [index, detail] of details.entries()) {
+      const state = memberReadiness(detail);
+      const before = seen.get(shas[index]);
+      if (state === 'changed' || (before && (state !== 'ready' || before !== detail.plan_digest))) {
+        onReview('changed');
+        throw new ActivationError('review_changed', `commit ${shas[index].slice(0, 7)} changed while its review was prepared`);
+      }
+      if (state === 'ready') seen.set(shas[index], detail.plan_digest);
+      else ready = false;
+    }
+    if (ready) {
+      onReview('ready');
+      return;
+    }
+    onReview('preparing');
+    if (read >= maxReads) {
+      throw new ActivationError('review_not_ready',
+        `the review of ${shas.length === 1 ? 'this commit' : 'these commits'} was not ready after ${Math.round((pollMs * maxReads) / 1000)} seconds`);
+    }
+    await sleep(pollMs);
+  }
+}
+
+/** The grantable range the proxy prepares for. The Owner-operator reads the server's prefix; any
+ * other seat falls back to the pending chain up to `throughSha`, and the page shows the real prefix. */
+export async function readChainRange({ readTool, throughSha }) {
+  const prefix = (await readTool('workspace_get_grant_prefix', { through_sha: throughSha })).structured;
+  if (prefix?.ok === true && Array.isArray(prefix.shas) && prefix.shas.length > 0) {
+    return { shas: prefix.shas, ...(prefix.stopped ? { stopped: prefix.stopped } : {}) };
+  }
+  if (prefix?.ok === false && prefix.code !== 'forbidden_scope') {
+    throw new ActivationError(prefix.code, prefix.message ?? 'the pending chain has no grantable prefix',
+      prefix.activation_grant_id ? undefined : prefix.stopped?.reason);
+  }
+  const status = (await readTool('workspace_status', {})).structured;
+  const pending = Array.isArray(status?.pending) ? status.pending.map((entry) => entry.commit_sha ?? entry.sha) : [];
+  const end = pending.indexOf(throughSha);
+  if (end === -1) throw new ActivationError('grant_sha_not_pending', 'That commit is no longer pending.');
+  return { shas: pending.slice(0, end + 1) };
+}
+
+/** `workspace_status.activation_grant` for one exact grant id, or null. */
+async function readGrant(readTool, activationGrantId) {
+  const status = (await readTool('workspace_status', { activation_grant_id: activationGrantId })).structured;
+  const grant = status?.activation_grant;
+  return grant && grant.id === activationGrantId ? grant : null;
+}
+
+/**
+ * Settle a grant whose one presentation was not definitive. Reads its durable acceptance evidence
+ * (`accepted_at`), never its current status alone: any grant with acceptance evidence is accepted,
+ * including one already `stopped` or `expired`. `approved` means keep reading; only a terminal grant
+ * WITHOUT acceptance evidence is `consent_expired`.
+ */
+export async function recoverGrantOutcome({ readTool, activationGrantId,
+  pollMs = GRANT_RECOVERY_POLL_MS, maxReads = GRANT_RECOVERY_MAX_READS,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+  for (let read = 1; ; read += 1) {
+    let grant = null;
+    try {
+      grant = await readGrant(readTool, activationGrantId);
+    } catch (error) {
+      if (!(error instanceof ActivationError) || error.code !== 'activation_read_failed') throw error;
+    }
+    if (grant?.accepted_at) return { outcome: 'accepted', grant };
+    if (grant && grant.status !== 'approved') return { outcome: 'consent_expired', reason: `grant_${grant.status}`, grant };
+    if (read >= maxReads) return { outcome: 'failed', reason: 'grant_acceptance_unconfirmed', grant };
+    await sleep(pollMs);
+  }
+}
+
+/** A consent error from the login leg, typed for the run. */
+function consentFailure(error) {
+  if (error?.consentOutcome) return new ActivationError(error.consentOutcome, error.message);
+  if (typeof error?.oauthError === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(error.oauthError)) {
+    return new ActivationError(error.oauthError, error.oauthErrorDescription ?? error.message);
+  }
+  return error;
+}
+
+/**
+ * One Owner consent for a pending range through `throughSha`, then ONE
+ * presentation of the five-minute `activate-chain` credential. The browser consent always applies
+ * here, cynap-e2e included (§4.1.6): the automatic step-up never mints `activate-chain`.
+ */
+export async function activateChainWithGrant({
+  mintHost, mcpHost, mcpPath, orgSlug, throughSha, pluginVersion, readTool,
+  login = pkceLoopbackLogin, getAuthHeaders, stepUpNotice = requestStepUpNotice, fetchImpl = fetch,
+  out = process.stderr, callTimeoutMs = ACTIVATION_CALL_TIMEOUT_MS, awaitReady = null, onOpened,
+  recover = recoverGrantOutcome, range: preparedRange = null,
+}) {
+  if (!SHA64.test(throughSha ?? '')) throw new ActivationError('invalid_commit_sha', 'activation requires a 64-character commit sha');
+  const range = preparedRange ?? await readChainRange({ readTool, throughSha });
+  if (typeof awaitReady === 'function') await awaitReady(range.shas);
+  const noticeId = randomUUID();
+  const notice = await stepUpNotice({ mintHost, commitSha: throughSha, noticeId, getAuthHeaders, pluginVersion, fetchImpl });
+  out.write(notice.notified
+    ? `[operator-proxy] The org's Owners were notified in Cynap that this approval is waiting (up to ${Math.round(AUTO_CONSENT_TIMEOUT_MS / 60000)} minutes).\n`
+    : `[operator-proxy] The org's Owners were NOT notified (${notice.reason}). Tell an Owner this approval is waiting.\n`);
+  let session;
+  try {
+    session = await login({ mintHost, orgSlug, pluginVersion, requestKind: 'activation_chain', throughSha, noticeId, onOpened, out });
+  } catch (error) {
+    throw consentFailure(error);
+  }
+  const activationGrantId = session?.activationGrantId;
+  if (!session?.credential || typeof activationGrantId !== 'string') {
+    throw new ActivationError('activation_failed', 'the chain consent returned no grant credential', 'no_credential');
+  }
+  // Present exactly once. Anything but a definitive answer is settled by reading the grant.
+  let answer = null;
+  try {
+    const response = await fetchImpl(`${mcpHost}${mcpPath}`, {
+      method: 'POST',
+      headers: upstreamHeaders(pluginVersion, {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${session.credential}`,
+      }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'cynap-operator-activate-chain', method: 'tools/call',
+        params: { name: 'workspace_activate_chain', arguments: { activation_grant_id: activationGrantId } } }),
+      signal: AbortSignal.timeout(callTimeoutMs),
+    });
+    if (response.ok) answer = structuredToolAnswer(await readUpstreamResponseText(response)).structured;
+  } catch {
+    answer = null;
+  }
+  // `members` is the grant's own prefix: the portal may grant fewer commits than the range the
+  // proxy prepared (a non-owner seat reads the pending slice), so the slice is never reported as is.
+  const withMembers = async (result, grant) => {
+    const members = await grantMembers({ readTool, activationGrantId, range, grant });
+    return { activationGrantId, ...(members ? { members } : {}), ...(range.stopped ? { stopped: range.stopped } : {}), ...result };
+  };
+  if (answer?.ok === true) return withMembers({ outcome: 'accepted' });
+  if (answer?.ok === false && answer.code !== 'activation_credential_replayed') {
+    return withMembers({ outcome: 'failed', reason: typeof answer.code === 'string' ? answer.code : 'activation_failed' });
+  }
+  const settled = await recover({ readTool, activationGrantId });
+  if (settled.outcome === 'accepted') return withMembers({ outcome: 'accepted', grant: settled.grant }, settled.grant);
+  if (answer?.code === 'activation_credential_replayed') {
+    return withMembers({ outcome: 'replayed', reason: 'activation_credential_replayed' }, settled.grant);
+  }
+  return withMembers({ outcome: settled.outcome, ...(settled.reason ? { reason: settled.reason } : {}) }, settled.grant);
+}
+
+/** The granted shas: the first `total` of the prepared range (a grant is always a prefix of the
+ * pending chain, as is the range). Null when the grant cannot be read or does not fit the range. */
+async function grantMembers({ readTool, activationGrantId, range, grant }) {
+  let known = grant ?? null;
+  if (!known) {
+    try {
+      known = await readGrant(readTool, activationGrantId);
+    } catch (error) {
+      if (!(error instanceof ActivationError)) throw error;
+      known = null;
+    }
+  }
+  const total = known?.total;
+  return Number.isInteger(total) && total >= 1 && total <= range.shas.length ? range.shas.slice(0, total) : null;
+}
+
+const RUN_ID = /^[a-f0-9]{32}$/;
+/** One CLI invocation's id: a retried POST carrying it answers the run it started, even a finished one. */
+const ATTEMPT_ID = /^[a-f0-9]{32}$/;
+const RUN_TERMINAL = new Set(ACTIVATION_OUTCOMES);
+
+/** The POST /activate body, as a run request. Exactly one of `commit_sha` / `through_sha`; a
+ * range never combines with `--reconcile` (§4.1.3) and the witness is single-commit only. */
+export function parseActivationRequest(payload) {
+  const commit = payload?.commit_sha;
+  const through = payload?.through_sha;
+  if ((commit === undefined) === (through === undefined)) throw new Error('exactly one of commit_sha or through_sha is required');
+  const sha = commit ?? through;
+  if (typeof sha !== 'string' || !SHA64.test(sha)) throw new Error('the sha must be 64 hex characters');
+  if (payload.reconcile_operator_edits !== undefined && typeof payload.reconcile_operator_edits !== 'boolean') {
+    throw new Error('reconcile_operator_edits must be a boolean');
+  }
+  const reconcile = payload.reconcile_operator_edits === true;
+  const witness = payload.witness === true;
+  if (through !== undefined && (reconcile || witness)) throw new Error('through_sha never combines with reconcile_operator_edits or witness');
+  const attempt = payload.attempt_id;
+  if (attempt !== undefined && (typeof attempt !== 'string' || !ATTEMPT_ID.test(attempt))) {
+    throw new Error('attempt_id must be 32 lowercase hex characters');
+  }
+  return { kind: through !== undefined ? 'through' : 'commit', sha: sha.toLowerCase(), reconcile, witness,
+    ...(attempt !== undefined ? { attemptId: attempt } : {}) };
+}
+
+/** The request a run serves, as one comparable key: a second POST for the same key attaches. */
+export function activationRunKey(request) {
+  return JSON.stringify([request.kind, request.sha, request.reconcile === true, request.witness === true]);
+}
+
+/**
+ * The proxy's activation runs. One live run per Org (this proxy serves one Org). Runs persist to
+ * `path` when given, so a restarted proxy answers the run id it handed out: any run the previous
+ * process left non-terminal ends `failed {proxy_restarted}`. Its step-up notice is not re-sent and
+ * lapses with the consent window.
+ */
+export function createActivationRunStore({ path = null, now = () => Date.now(), readImpl = readFileSync,
+  writeImpl = writeFileSync, existsImpl = existsSync, out = process.stderr } = {}) {
+  const runs = new Map();
+  if (path && existsImpl(path)) {
+    try {
+      const saved = JSON.parse(readImpl(path, 'utf8'));
+      for (const run of Array.isArray(saved?.runs) ? saved.runs : []) {
+        if (!RUN_ID.test(run?.run_id ?? '')) continue;
+        runs.set(run.run_id, RUN_TERMINAL.has(run.state) ? run : { ...run, state: 'failed', reason: 'proxy_restarted', ended_at: now() });
+      }
+    } catch (error) {
+      out.write(`[operator-proxy] activation runs unreadable, starting empty: ${error?.message ?? error}\n`);
+    }
+  }
+  const persist = () => {
+    if (!path) return;
+    try {
+      writeImpl(path, `${JSON.stringify({ runs: [...runs.values()].slice(-20) })}\n`, { mode: 0o600 });
+    } catch (error) {
+      out.write(`[operator-proxy] activation runs not persisted: ${error?.message ?? error}\n`);
+    }
+  };
+  persist();
+  const update = (runId, patch) => {
+    const run = runs.get(runId);
+    if (!run || RUN_TERMINAL.has(run.state)) return;
+    runs.set(runId, { ...run, ...patch });
+    persist();
+  };
+  const live = () => [...runs.values()].find((run) => !RUN_TERMINAL.has(run.state)) ?? null;
+  return {
+    get: (runId) => (RUN_ID.test(runId ?? '') ? runs.get(runId) ?? null : null),
+    liveCount: () => (live() ? 1 : 0),
+    /** Start `execute(hooks)` as a run, attach to the live run for the same request, or refuse.
+     * A POST retried with the same `attemptId` answers its own run, live or finished. */
+    start(request, execute) {
+      const key = activationRunKey(request);
+      const own = request.attemptId
+        ? [...runs.values()].find((run) => run.attempt_id === request.attemptId && run.key === key)
+        : null;
+      if (own) return { run: own, attached: true };
+      const current = live();
+      if (current) return current.key === key ? { run: current, attached: true } : { error: 'activation_run_in_progress', run: current };
+      const runId = randomBytes(16).toString('hex');
+      const run = { run_id: runId, key, kind: request.kind, sha: request.sha, state: 'consent_pending', review: 'preparing', started_at: now(),
+        ...(request.attemptId ? { attempt_id: request.attemptId } : {}) };
+      runs.set(runId, run);
+      persist();
+      const hooks = {
+        onReview: (review) => update(runId, { review }),
+        onOpened: () => update(runId, { review: 'opened' }),
+      };
+      void (async () => {
+        try {
+          const result = await execute(hooks);
+          update(runId, { ...result, state: RUN_TERMINAL.has(result?.state) ? result.state : 'failed', ended_at: now() });
+        } catch (error) {
+          const code = error instanceof ActivationError ? error.code : 'activation_failed';
+          const state = code === 'consent_expired' || code === 'consent_denied' ? code : 'failed';
+          out.write(`[operator-proxy] activation run ${runId} ended ${state}: ${code}${error?.failureCode ? ` (${error.failureCode})` : ''}: ${error?.message ?? ''}\n`);
+          update(runId, { state, ...(state === 'failed' ? { reason: code } : {}),
+            ...(error?.failureCode ? { failureCode: error.failureCode } : {}), ended_at: now() });
+        }
+      })();
+      return { run: runs.get(runId), attached: false };
+    },
+  };
+}
+
+/** The public view of a run: never the request key or any credential. */
+export function activationRunView(run) {
+  return Object.fromEntries(Object.entries(run).filter(([field]) => field !== 'key'));
 }
 
 /** The last JSON-RPC message in a response body, whether it came back as plain JSON or
@@ -3501,6 +3901,10 @@ export function createProxyServer({
   // exactly like the old live-fetch path on the first /context call.
   briefCache = null,
   requestActivation,
+  // the Org's activation runs. main() passes a persisted store; a standalone run and
+  // the tests get an in-memory one.
+  activationRuns = createActivationRunStore(),
+  requestGrant,
   // Called with `{ minimum }` after a forwarded response
   // carrying a `plugin_outdated` answer has been fully delivered. Optional — a
   // standalone `node operator-proxy.mjs` run passes nothing and simply forwards
@@ -3669,51 +4073,66 @@ export function createProxyServer({
       return;
     }
 
-    if (req.method === 'POST' && req.url === ACTIVATE_PATH) {
+    if (req.method === 'POST' && req.url === ACTIVATE_GRANT_PATH) {
       if (!controlNonce || req.headers[CONTROL_HEADER] !== controlNonce) {
         res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ error: 'invalid_local_control_nonce' }));
         return;
       }
-      if (typeof requestActivation !== 'function') {
+      if (typeof requestGrant !== 'function') {
         res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ error: 'activation_unavailable' }));
         return;
       }
       try {
         const payload = JSON.parse((await readBody(req)).toString('utf8'));
-        if (payload?.reconcile_operator_edits !== undefined && typeof payload.reconcile_operator_edits !== 'boolean') {
-          throw new ActivationError('invalid_request', 'reconcile_operator_edits must be a boolean');
-        }
-        const { body, witness, stepUp, outcome, reason } = await requestActivation(payload?.commit_sha, {
-          witness: payload?.witness === true,
-          reconcile: payload?.reconcile_operator_edits === true,
-        });
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({
-          ok: outcome !== 'failed',
-          outcome,
-          ...(reason ? { reason } : {}),
-          result: body,
-          step_up: stepUp,
-          ...(witness ? { witness } : {}),
-        }));
+        const { status, body } = await requestGrant(payload?.through_sha);
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(body));
       } catch (error) {
-        // `error` is always an identifier so the CLI can name the cause; the prose goes to proxy.log.
         const code = error instanceof ActivationError ? error.code : 'activation_failed';
-        const failureCode = error instanceof ActivationError ? error.failureCode : undefined;
-        const message = error instanceof Error ? error.message : 'activation failed';
-        const outcome = code === 'consent_expired' || code === 'consent_denied' ? code : 'failed';
-        process.stderr.write(`[operator-proxy] activation refused: ${code}${failureCode ? ` (${failureCode})` : ''}: ${message}\n`);
+        process.stderr.write(`[operator-proxy] automatic acceptance refused: ${code}: ${error instanceof Error ? error.message : ''}\n`);
         res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({
-          outcome,
-          ...(outcome === 'failed' ? { reason: failureCode ?? code } : {}),
-          error: code,
-          ...(failureCode ? { failureCode } : {}),
-          message,
-        }));
+        res.end(JSON.stringify({ error: code }));
       }
+      return;
+    }
+
+    // POST starts (or attaches to) the Org's one activation run and answers 202 at
+    // once; GET /activate/<run_id> reads it. Both need the control nonce.
+    if ((req.method === 'POST' && req.url === ACTIVATE_PATH) ||
+        (req.method === 'GET' && req.url?.startsWith(`${ACTIVATE_PATH}/`))) {
+      const reply = (status, payload) => {
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(payload));
+      };
+      if (!controlNonce || req.headers[CONTROL_HEADER] !== controlNonce) {
+        reply(403, { error: 'invalid_local_control_nonce' });
+        return;
+      }
+      if (req.method === 'GET') {
+        const run = activationRuns.get(req.url.slice(ACTIVATE_PATH.length + 1));
+        if (run) reply(200, activationRunView(run));
+        else reply(404, { error: 'activation_run_not_found' });
+        return;
+      }
+      if (typeof requestActivation !== 'function') {
+        reply(503, { error: 'activation_unavailable' });
+        return;
+      }
+      let request;
+      try {
+        request = parseActivationRequest(JSON.parse((await readBody(req)).toString('utf8')));
+      } catch (error) {
+        reply(400, { error: 'invalid_request', message: error instanceof Error ? error.message : 'body must be JSON' });
+        return;
+      }
+      const started = activationRuns.start(request, (hooks) => requestActivation(request, hooks));
+      if (started.error) {
+        reply(409, { error: started.error, run_id: started.run.run_id });
+        return;
+      }
+      reply(202, { run_id: started.run.run_id, attached: started.attached, state: started.run.state });
       return;
     }
 
@@ -4897,6 +5316,9 @@ export async function main(argv = process.argv.slice(2)) {
   // lifecycle server owns the port, and the successor cannot bind it until this
   // process lets go.
   const selfUpdateGuard = createPluginSelfUpdateGuard();
+  // Persisted beside proxy-launch.json, so a restarted proxy still answers a run id it handed out.
+  const activationRuns = createActivationRunStore({ path: join(process.cwd(), 'activation-runs.json') });
+
   const handleOutdated = async ({ minimum }) => {
     const launchRecord = readLaunchRecord();
     const outcome = await handlePluginOutdated({
@@ -4916,6 +5338,13 @@ export async function main(argv = process.argv.slice(2)) {
   let restartStarted = false;
   const restartIntoInstalledBuild = async (launchRecord) => {
     if (restartStarted) return;
+    // never restart under a live activation run; the next trigger retries.
+    const heldForLiveRun = () => {
+      if (activationRuns.liveCount() === 0) return false;
+      process.stderr.write('[operator-proxy] self-update: restart held while an activation run is live.\n');
+      return true;
+    };
+    if (heldForLiveRun()) return;
     // Resolve the SUCCESSOR before retiring anything. The recorded launch
     // command names the plugin root `/cynap-connect` ran from, which the update
     // has just made stale — replaying it verbatim relaunches the predecessor
@@ -4946,7 +5375,9 @@ export async function main(argv = process.argv.slice(2)) {
 
     // The successor inherits this process's credential over a private socket
     // (restartIntoSuccessor); only a failed handoff revokes it and makes the
-    // successor reopen browser consent.
+    // successor reopen browser consent. A run can start during the awaits above,
+    // so the live check is repeated here, with nothing awaited before the restart.
+    if (heldForLiveRun()) return;
     restartStarted = true;
     const held = credentialSession?.current();
     const releasePort = () =>
@@ -4988,7 +5419,8 @@ export async function main(argv = process.argv.slice(2)) {
     void runIdleSelfUpdate({
       pluginVersion: opts.pluginVersion,
       cwd: process.cwd(),
-      inFlightCount: proxyRequestsInFlight.count,
+      // A live activation run counts as work in flight: the proxy never restarts under a consent.
+      inFlightCount: () => proxyRequestsInFlight.count() + activationRuns.liveCount(),
       restart: () => restartIntoInstalledBuild(readLaunchRecord()),
     });
   }, IDLE_SELF_UPDATE_INTERVAL_MS);
@@ -5010,24 +5442,62 @@ export async function main(argv = process.argv.slice(2)) {
     controlNonce,
     consentGate,
     briefCache,
-    requestActivation: async (commitSha, { witness = false, reconcile = false } = {}) => {
-      const result = await activateCommitWithStepUp({
-        mintHost,
-        mcpHost,
-        mcpPath: UPSTREAM_MCP_PATH,
-        orgSlug: opts.orgSlug,
-        commitSha,
-        pluginVersion: opts.pluginVersion,
-        witness,
-        reconcile,
-        getAuthHeaders,
+    activationRuns,
+    requestActivation: async (request, { onReview, onOpened }) => {
+      const readTool = (name, args) => callSeatTool(
+        { mcpHost, mcpPath: UPSTREAM_MCP_PATH, tokenManager, pluginVersion: opts.pluginVersion }, name, args);
+      const awaitReady = (shas) => awaitReviewReady({
+        shas,
+        onReview,
+        readCommit: async (sha) => (await readTool('workspace_get_commit', { sha })).structured,
       });
+      const single = async (commitSha) => {
+        const result = await activateCommitWithStepUp({
+          mintHost,
+          mcpHost,
+          mcpPath: UPSTREAM_MCP_PATH,
+          orgSlug: opts.orgSlug,
+          commitSha,
+          pluginVersion: opts.pluginVersion,
+          witness: request.witness,
+          reconcile: request.reconcile,
+          getAuthHeaders,
+          awaitReady,
+          onOpened,
+        });
+        return { state: result.outcome, step_up: result.stepUp, result: result.body,
+          ...(result.reason ? { reason: result.reason } : {}), ...(result.witness ? { witness: result.witness } : {}) };
+      };
+      let result;
+      if (request.kind === 'commit') {
+        result = await single(request.sha);
+      } else {
+        const range = await readChainRange({ readTool, throughSha: request.sha });
+        // §4.1.6: a range of one keeps today's automatic attempt on the test org.
+        result = range.shas.length === 1 && opts.orgSlug === AUTOMATIC_STEP_UP_HINT_SLUG
+          ? await single(range.shas[0])
+          : await activateChainWithGrant({
+            mintHost,
+            mcpHost,
+            mcpPath: UPSTREAM_MCP_PATH,
+            orgSlug: opts.orgSlug,
+            throughSha: request.sha,
+            pluginVersion: opts.pluginVersion,
+            readTool,
+            getAuthHeaders,
+            awaitReady,
+            onOpened,
+            range,
+          }).then(({ outcome, activationGrantId, ...rest }) => ({ state: outcome, activation_grant_id: activationGrantId, ...rest }));
+      }
       // An activation is the one local event that changes what the brief says
       // about this org, so re-fetch it opportunistically. Fire-and-forget —
-      // refresh() never throws, and the activation's own answer never waits.
+      // refresh() never throws, and the run's own answer never waits.
       void briefCache?.refresh('activation');
       return result;
     },
+    requestGrant: (throughSha) => requestAutomaticGrant({ mintHost, throughSha, getAuthHeaders,
+      pluginVersion: opts.pluginVersion }),
     onPluginOutdated,
   });
   lifecycleStatus = 'ready';

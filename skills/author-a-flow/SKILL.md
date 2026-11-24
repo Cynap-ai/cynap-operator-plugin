@@ -102,7 +102,15 @@ schema-parse rejection, not a silently-ignored key.
 5. **`escalation.enabled: true` is rejected** — escalation is phased and not
    yet implemented. Leave it `false`.
 
-6. **Budget fields are clamped, not rejected** — `max_usd`/`max_rounds`/
+6. **Guard and author-learning text that matches the instruction screen is
+   rejected with `INSTRUCTION_TEXT_REJECTED`**. The error
+   names the matched pattern, never the text. Rephrase the rule so it does not
+   read as a prompt-override ("ignore previous instructions", role tags, and
+   similar). Context-preload docs and skills are never rejected: they are
+   escaped, and a screen hit there only shows up as `boundary_screen_hits` on
+   the run, a signal to fix the doc.
+
+7. **Budget fields are clamped, not rejected** — `max_usd`/`max_rounds`/
    `rate_per_min` are each capped (`Math.min()`) against a platform ceiling.
    Setting a high budget is a request, not a decision — the platform owns
    the ceiling, and the

@@ -146,10 +146,16 @@ before any commit; delete or fix the file.
 
 ## What happens if you omit `change_overview`
 
-Nothing breaks. `change_overview` is **optional** — the commit succeeds
-identically whether or not you supply one. If you omit it (or the backend
-rejects a malformed one), the owner's review pane simply shows "Change
-summary not yet available." instead of your overview. There is no retry,
+On an Org whose Owner approves Changes on the Changes page, a commit the
+Owner must approve **requires** a valid `change_overview`. Without one (or
+with one the backend rejects) the commit is refused with
+`change_overview_required` and nothing is committed: compose the overview
+and commit again. Rebuild-only commits (`/cynap-push --rebuild`) are exempt.
+
+On every other Org nothing breaks: `change_overview` is optional and the
+commit succeeds identically whether or not you supply one. If you omit it
+(or the backend rejects a malformed one), the owner's review pane simply
+shows "Change summary not yet available." instead of your overview. There is no retry,
 no async step, and no separate call to make later — if you want the owner
 to see a summary, supply `change_overview` on the SAME `workspace_commit`
 call.
@@ -183,6 +189,31 @@ refuses. A claim is implementation authority, not Owner approval or paid-quote a
 
 Right after a successful claim, and before authoring, follow the `request-discover` skill: it
 calls `request_discover` once and tells you how to treat what comes back.
+
+### Closing a Request an App install fulfilled
+
+A "Set up <App>" build Request that the Owner fulfilled by installing the App is closed with
+`request_operator_transition` `verb: deliver_install`, while you hold an unexpired claim:
+`{ "id", "verb": "deliver_install", "expected_state_version", "install_operation_ref": "<install
+operation uuid>", "app_id": "<app id>" }`. Read the operation id from `operator_app_install_state`.
+There is no commit, proposal or activation. Only a customer operator may call it; the server reads
+the install itself and refuses unless it binds. An identical retry is a no-op.
+
+| Code | Meaning and next step |
+|---|---|
+| `REQUEST_INSTALL_FIELDS_REQUIRED` / `_NOT_ALLOWED` | Send both install fields with `deliver_install`, and neither with any other verb. |
+| `REQUEST_INSTALL_OPERATOR_CLASS_INVALID` | Only a customer operator may record an install fulfillment. |
+| `REQUEST_INSTALL_KIND_INVALID` | Only a build Request can be fulfilled by an install. |
+| `REQUEST_INSTALL_DELIVERY_IN_FLIGHT` | The Request already has a Scope, quote, funding or Delivery Record; finish it on that path. |
+| `REQUEST_INSTALL_EVIDENCE_UNAVAILABLE` | The install could not be read; nothing changed. Retry later. |
+| `REQUEST_INSTALL_NOT_FOUND` | No install with that operation id in this org. Re-read `operator_app_install_state`. |
+| `REQUEST_INSTALL_NOT_READY` | The install has not reached `ready`. Wait for it, then retry. |
+| `REQUEST_INSTALL_APP_MISMATCH` | That install is for a different App; check `app_id`. |
+| `REQUEST_INSTALL_APPROVAL_MISSING` | The install carries no Owner install approval; it cannot fulfil a Request. |
+| `REQUEST_INSTALL_SUPERSEDED` | That installation is no longer the current one for the App. |
+| `REQUEST_INSTALL_PREDATES_REQUEST` | The install happened before the Request was filed. |
+| `REQUEST_INSTALL_ALREADY_FULFILLED` | The install already fulfilled the Request named in `details.fulfilling_request`. |
+| `REQUEST_STATE_CONFLICT` | Your claim lapsed or the version moved; re-read with `request_get` and re-claim. |
 
 For Request linkage, a Request-bound commit goes through native `workspace_commit` with
 `request_id`, never `/cynap-push`: that is where the `intended_outcomes` rule applies.

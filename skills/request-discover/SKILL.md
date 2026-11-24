@@ -10,6 +10,10 @@ before you author or commit anything for the Request. It tells you which Cynap A
 this org's own existing artifacts may already deliver part of what the Owner asked for, so you do
 not rebuild them.
 
+When the Request is a "Set up <App>" Request and the Owner has already installed that App, you do
+not build anything: close it with `request_operator_transition` `verb: deliver_install`
+(see the `summarize-your-change` skill, "Closing a Request an App install fulfilled").
+
 ## Call it once, with your plan first
 
 Call `request_discover` with exactly:

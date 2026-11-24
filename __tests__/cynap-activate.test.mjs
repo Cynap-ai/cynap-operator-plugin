@@ -4,15 +4,14 @@ import assert from 'node:assert/strict';
 import {
   activatedOnChain, describeReady, parseActivateArgs, readActivationAction, readinessOf, runActivationFlow, settleActivation,
 } from '../bin/cynap-activate.mjs';
-import { ACTIVATE_RESPONSE_BUDGET_MS, ACTIVATION_CALL_TIMEOUT_MS, AUTO_CONSENT_TIMEOUT_MS, TOKEN_EXCHANGE_TIMEOUT_MS } from '../bin/operator-proxy.mjs';
 
 const SHA = 'c'.repeat(64);
 
 test('parseActivateArgs: --reconcile sets reconcile, its absence leaves it false', () => {
-  assert.deepEqual(parseActivateArgs([SHA]), { commitSha: SHA, reconcile: false, json: false });
-  assert.deepEqual(parseActivateArgs([SHA, '--reconcile']), { commitSha: SHA, reconcile: true, json: false });
-  assert.deepEqual(parseActivateArgs(['--reconcile', SHA]), { commitSha: SHA, reconcile: true, json: false });
-  assert.deepEqual(parseActivateArgs([SHA, '--json']), { commitSha: SHA, reconcile: false, json: true });
+  assert.deepEqual(parseActivateArgs([SHA]), { commitSha: SHA, reconcile: false, json: false, auto: false });
+  assert.deepEqual(parseActivateArgs([SHA, '--reconcile']), { commitSha: SHA, reconcile: true, json: false, auto: false });
+  assert.deepEqual(parseActivateArgs(['--reconcile', SHA]), { commitSha: SHA, reconcile: true, json: false, auto: false });
+  assert.deepEqual(parseActivateArgs([SHA, '--json']), { commitSha: SHA, reconcile: false, json: true, auto: false });
 });
 
 test('parseActivateArgs: refuses unknown flags, duplicates and a missing sha', () => {
@@ -32,7 +31,7 @@ test('readActivationAction selects the committed SHA from workspace_status', asy
     return { ok: true, json: async () => ({ result: { content: [{ type: 'text', text: JSON.stringify(status) }] } }) };
   };
   assert.deepEqual(await readActivationAction({ slug: 'cynap-e2e', commitSha: SHA, fetchImpl }),
-    { orgSlug: 'cynap-e2e', nextAction: { kind: 'step_up_and_activate' } });
+    { orgSlug: 'cynap-e2e', nextAction: { kind: 'step_up_and_activate' }, entrance: 'legacy', changesUrl: null });
 });
 
 test('handler_preview_required previews the commit, then rechecks status before owner step-up', async () => {
@@ -124,12 +123,15 @@ test('a free-text activation error reaches the user instead of request_refused',
 test('an error thrown before any refusal names its cause instead of a bare activation_failed', async () => {
   const { describeActivateCrash } = await import('../bin/cynap-activate.mjs');
   const refused = new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } });
-  assert.match(describeActivateCrash(refused), /^cynap-activate: failed \(proxy_unreachable\): .*Run \/cynap-status/);
+  assert.match(describeActivateCrash(refused), /^cynap-activate: failed \(proxy_unreachable, ECONNREFUSED\): .*Run \/cynap-status/);
   assert.equal(describeActivateCrash(new Error('preview request does not match the commit')),
     'cynap-activate: failed (activation_failed): preview request does not match the commit\n');
   const long = describeActivateCrash(new Error(`bad\u0007\nthing ${'x'.repeat(500)}`));
   assert.ok(!/[\u0000-\u0009\u000b-\u001f]/.test(long) && long.length < 260);
   assert.equal(describeActivateCrash(new Error('')), 'cynap-activate: failed (activation_failed)\n');
+  const timedOut = new TypeError('fetch failed', { cause: { code: 'UND_ERR_HEADERS_TIMEOUT' } });
+  assert.equal(describeActivateCrash(timedOut),
+    'cynap-activate: failed (activation_failed): fetch failed (UND_ERR_HEADERS_TIMEOUT)\n');
 });
 
 test('a next action instead of an activation says nothing was activated', async () => {
@@ -204,68 +206,51 @@ test('settleActivation: a recorded failure names its code; an unsettled commit i
   assert.deepEqual(unknown, { ok: false, code: 'activation_outcome_unknown', commit_sha: SHA });
 });
 
-test('the CLI budget is computed from the proxy deadlines, so the proxy outcome arrives first', () => {
-  assert.ok(ACTIVATE_RESPONSE_BUDGET_MS > AUTO_CONSENT_TIMEOUT_MS + TOKEN_EXCHANGE_TIMEOUT_MS + ACTIVATION_CALL_TIMEOUT_MS);
-});
-
-async function withNonce(run) {
-  const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
-  const { resolveWorkingDir } = await import('../lib/connect.mjs');
-  const home = process.env.HOME;
-  const tmpHome = mkdtempSync(join(tmpdir(), 'activate-outcome-'));
-  process.env.HOME = tmpHome;
-  try {
-    const dir = resolveWorkingDir('cynap-e2e');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, '.operator-control'), 'nonce\n');
-    return await run();
-  } finally {
-    process.env.HOME = home;
-    rmSync(tmpHome, { recursive: true, force: true });
-  }
-}
-
-test('activate renders the proxy outcome and derives nothing from timing', async () => {
+test('activate renders the run outcome and derives nothing from timing', async () => {
   const { activate } = await import('../bin/cynap-activate.mjs');
-  const answer = (status, body) => async () => ({ ok: status === 200, status, json: async () => body });
-  await withNonce(async () => {
-    const neverSettle = async () => { throw new Error('a consent outcome must not read the chain'); };
-    assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
-      fetchImpl: answer(400, { outcome: 'consent_expired', error: 'consent_expired' }) }),
-    { ok: false, code: 'consent_expired', commit_sha: SHA });
-    assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
-      fetchImpl: answer(400, { outcome: 'consent_denied', error: 'consent_denied' }) }),
-    { ok: false, code: 'consent_denied', commit_sha: SHA });
-    const failed = await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
-      fetchImpl: answer(200, { ok: false, outcome: 'failed', reason: 'checks_failed',
-        result: { result: { structuredContent: { ok: false, code: 'checks_failed' } } } }) });
-    assert.equal(failed.code, 'checks_failed');
-    const settled = await activate({ slug: 'cynap-e2e', commitSha: SHA,
-      settle: async () => ({ ok: true, state: 'activated', commit_sha: SHA, ready: 'yes' }),
-      fetchImpl: answer(200, { ok: true, outcome: 'activating', reason: 'http_504', result: null, step_up: 'browser' }) });
-    assert.deepEqual(settled, { ok: true, state: 'activated', commit_sha: SHA, ready: 'yes', step_up: 'browser' });
-    // An old proxy (no outcome field) is not guessed at.
-    assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
-      fetchImpl: answer(200, { ok: true, result: {} }) }), { ok: false, code: 'activation_outcome_unknown', commit_sha: SHA });
-  });
+  const runIs = (run) => async ({ body }) => { assert.equal(body.commit_sha, SHA); return run; };
+  const neverSettle = async () => { throw new Error('a consent outcome must not read the chain'); };
+  assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+    follow: runIs({ state: 'consent_expired' }) }), { ok: false, code: 'consent_expired', commit_sha: SHA });
+  assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+    follow: runIs({ state: 'consent_denied' }) }), { ok: false, code: 'consent_denied', commit_sha: SHA });
+  assert.deepEqual(await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+    follow: runIs({ state: 'replayed' }) }), { ok: false, code: 'activation_credential_replayed', commit_sha: SHA });
+  const failed = await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+    follow: runIs({ state: 'failed', reason: 'checks_failed',
+      result: { result: { structuredContent: { ok: false, code: 'checks_failed' } } } }) });
+  assert.equal(failed.code, 'checks_failed');
+  const restarted = await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+    follow: runIs({ run_id: 'r1', state: 'failed', reason: 'proxy_restarted' }) });
+  assert.deepEqual(restarted, { ok: false, code: 'proxy_restarted', run_id: 'r1' });
+  const settled = await activate({ slug: 'cynap-e2e', commitSha: SHA,
+    settle: async () => ({ ok: true, state: 'activated', commit_sha: SHA, ready: 'yes' }),
+    follow: runIs({ state: 'activating', reason: 'http_504', result: null, step_up: 'browser' }) });
+  assert.deepEqual(settled, { ok: true, state: 'activated', commit_sha: SHA, ready: 'yes', step_up: 'browser' });
+  const refused = await activate({ slug: 'cynap-e2e', commitSha: SHA, settle: neverSettle,
+    follow: runIs({ state: 'refused', code: 'activation_run_in_progress', run_id: 'r2' }) });
+  assert.deepEqual(refused, { ok: false, code: 'activation_run_in_progress' });
 });
 
-test('activate: a CLI abort is "outcome unknown", never a guessed cause', async () => {
+test('activate: a run still waiting for the Owner is consent_pending, never failed', async () => {
   const { activate } = await import('../bin/cynap-activate.mjs');
-  await withNonce(async () => {
-    const result = await activate({ slug: 'cynap-e2e', commitSha: SHA, budgetMs: 5,
-      settle: async () => { throw new Error('must not settle'); },
-      // AbortSignal.timeout's timer is unref'd; a real fetch holds a socket open, so this
-      // stand-in holds a ref'd timer until the abort, or the runner sees an empty loop.
-      fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
-        const keepAlive = setInterval(() => {}, 1000);
-        init.signal.addEventListener('abort', () => {
-          clearInterval(keepAlive);
-          reject(init.signal.reason);
-        });
-      }) });
-    assert.deepEqual(result, { ok: false, code: 'activation_outcome_unknown', commit_sha: SHA });
-  });
+  const result = await activate({ slug: 'cynap-e2e', commitSha: SHA,
+    settle: async () => { throw new Error('must not settle'); },
+    follow: async () => ({ run_id: 'r1', state: 'consent_pending', review: 'opened', waited_out: true }) });
+  assert.equal(result.state, 'consent_pending');
+  assert.equal(result.run_id, 'r1');
+  assert.equal(result.ok, undefined);
+  assert.equal(result.code, undefined);
 });
+
+test('activate: the release-journey witness still returns {result, witness} for one commit', async () => {
+  const { activate } = await import('../bin/cynap-activate.mjs');
+  const result = await activate({ slug: 'cynap-e2e', commitSha: SHA, witness: true,
+    settle: async () => { throw new Error('a witness run is not settled'); },
+    follow: async ({ body }) => {
+      assert.equal(body.witness, true);
+      return { state: 'activated', result: { result: { structuredContent: { ok: true } } }, witness: { replay: { refused: true } } };
+    } });
+  assert.deepEqual(result, { result: { ok: true }, witness: { replay: { refused: true } } });
+});
+
